@@ -1,0 +1,3 @@
+[submodule "crates/t-vnc"]
+	path = crates/t-vnc
+	url = https://github.com/trdthg/rust-vnc
