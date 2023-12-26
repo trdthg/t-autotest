@@ -1,0 +1,23 @@
+[package]
+name = "t-lib"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+t-vnc = { workspace = true }
+
+clap = { workspace = true }
+dotenv = { workspace = true }
+home = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+anyhow = { workspace = true }
+shell-escape = { workspace = true }
+
+quick-js = { workspace = true }
+mlua = { workspace = true }
+pyo3 = { workspace = true }
+
+ssh2 = { workspace = true }
