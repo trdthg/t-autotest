@@ -1,3 +1,5 @@
 mod client;
 mod data;
-mod pixel;
+pub mod pixel;
+
+pub use client::VNCClient;

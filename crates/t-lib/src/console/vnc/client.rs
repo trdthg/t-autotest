@@ -9,7 +9,7 @@ use super::{data::FullScreen, pixel::RGBAPixel};
 
 pub struct VNCClient {
     vnc: vnc::Client,
-    screen: Option<FullScreen<RGBAPixel>>,
+    screen: Option<FullScreen>,
 }
 
 impl ScreenControlConsole for VNCClient {}
@@ -19,7 +19,7 @@ impl VNCClient {
         let tcp = TcpStream::connect(addrs)?;
         let vnc = vnc::Client::from_tcp_stream(tcp, false, |methods| {
             debug!("available authentication methods: {:?}", methods);
-            for method in methods {
+            if let Some(method) = methods.iter().next() {
                 match method {
                     vnc::client::AuthMethod::None => return Some(vnc::client::AuthChoice::None),
                     vnc::client::AuthMethod::Password => {
@@ -45,8 +45,12 @@ impl VNCClient {
 
         vnc.format();
 
-        Ok(Self { vnc, screen: None })
+        let mut res = Self { vnc, screen: None };
+        res.spawn_loop();
+        Ok(res)
     }
+
+    fn spawn_loop(&mut self) {}
 
     fn pool(&mut self) {
         self.vnc.format();
@@ -60,7 +64,7 @@ impl VNCClient {
                         error!("server disconnected: {:?}", error);
                         break 'running;
                     }
-                    Event::Resize(new_width, new_height) => {
+                    Event::Resize(_new_width, _new_height) => {
                         // width = new_width;
                         // height = new_height;
                         // renderer
@@ -72,7 +76,7 @@ impl VNCClient {
                         //     .unwrap();
                         // incremental = false;
                     }
-                    Event::PutPixels(vnc_rect, ref pixels) => {
+                    Event::PutPixels(_vnc_rect, ref _pixels) => {
                         // let sdl_rect = SdlRect::new_unwrap(
                         //     vnc_rect.left as i32,
                         //     vnc_rect.top as i32,

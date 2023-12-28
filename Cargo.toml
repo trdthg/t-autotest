@@ -3,6 +3,8 @@ members = [
     "crates/t-cli",
     "crates/t-lib",
     "crates/t-vnc",
+    "crates/t-util",
+    "crates/t-binding",
     # ""
 ]
 resolver = "2"
@@ -11,15 +13,18 @@ resolver = "2"
 t-cli = { path = "./crates/t-cli" }
 t-lib = { path = "./crates/t-lib" }
 t-vnc = { path = "./crates/t-vnc" }
+t-util = { path = "./crates/t-util" }
+t-binding = { path = "./crates/t-binding" }
 
 # normal
-clap = { version = "4.4.11", features = ["derive"] }
+clap = { version = "4.4.11", features = ["derive", "cargo"] }
 dotenv = { version = "0.15.0" }
 home = { version = "0.5.9" }
 log = { version = "0.4.20" }
 env_logger = { version = "0.10.1" }
 anyhow = { version = "1.0.76" }
 shell-escape = { version = "0.1.5" }
+regex = { version = "1.10.2" }
 
 # script engine
 quick-js = { version = "0.4.1" }
@@ -28,3 +33,8 @@ pyo3 = { version = "0.20.0", features = ["auto-initialize"] }
 
 # console
 ssh2 = { version = "0.9.4", features = ["vendored-openssl"] }
+serialport = { version = "4.3.0" }
+vt100 = { version = "0.15.2" }
+
+[profile.dev]
+incremental = true

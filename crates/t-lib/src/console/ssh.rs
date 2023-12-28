@@ -30,12 +30,7 @@ impl SSHClient {
         sess.set_timeout(0);
 
         // Try to authenticate with the first identity in the agent.
-        sess.userauth_pubkey_file(
-            &user.into(),
-            Some(Path::new("/home/trdthg/.ssh/id_rsa.pub")),
-            key_path.as_ref(),
-            None,
-        )?;
+        sess.userauth_pubkey_file(&user.into(), None, key_path.as_ref(), None)?;
 
         // Make sure we succeeded
         assert!(sess.authenticated());

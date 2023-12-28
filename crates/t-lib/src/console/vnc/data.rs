@@ -1,14 +1,18 @@
+use super::pixel::RGBAPixel;
+
 struct IteratorAcc {
     curr: usize,
 }
 
-pub struct FullScreen<Pixel> {
-    inner: Rect<Pixel>,
+pub struct FullScreen {
+    inner: Rect<RGBAPixel>,
 }
 
-impl<Pixel> FullScreen<Pixel> {
+impl FullScreen {
     pub fn new(width: usize, height: usize) -> Self {
-        Self { inner: todo!() }
+        Self {
+            inner: Rect::new(width, height),
+        }
     }
 }
 
@@ -53,6 +57,7 @@ impl<Pixel: Clone> Rect<Pixel> {
         Self {
             width: x,
             height: y,
+            // 
             data: Vec::with_capacity(x * y),
             acc: IteratorAcc { curr: 0 },
         }
@@ -60,7 +65,7 @@ impl<Pixel: Clone> Rect<Pixel> {
 
     pub fn get(&self, x: usize, y: usize) -> Pixel {
         assert!(x < self.width && y < self.height);
-        return self.data[x * self.width + y].clone();
+        self.data[x * self.width + y].clone()
     }
 
     pub fn set(&mut self, x: usize, y: usize, p: Pixel) {

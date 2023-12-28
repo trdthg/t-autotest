@@ -1,5 +1,6 @@
 use clap::Parser;
 use log::info;
+use t_lib::VNCClient;
 
 fn default_host() -> String {
     "localhost".to_string()
@@ -35,4 +36,6 @@ fn main() -> () {
         cli.port,
         cli.password
     );
+
+    let vnc = VNCClient::connect((cli.host, cli.port), cli.password).unwrap();
 }
