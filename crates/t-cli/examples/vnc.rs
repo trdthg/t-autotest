@@ -15,10 +15,10 @@ pub struct Cli {
     #[clap(long, short, default_value_t = 5900)]
     port: u16,
 
-    #[clap(long, short)]
+    #[clap(long, short = 'P')]
     password: Option<String>,
 
-    #[clap(index = 1, required = true)]
+    #[clap(long)]
     command: Vec<String>,
 }
 
@@ -37,5 +37,6 @@ fn main() -> () {
         cli.password
     );
 
-    let vnc = VNCClient::connect((cli.host, cli.port), cli.password).unwrap();
+    let mut vnc = VNCClient::connect(&format!("{}:{}", cli.host, cli.port), cli.password).unwrap();
+    vnc.block_on();
 }

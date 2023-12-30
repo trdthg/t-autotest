@@ -1,7 +1,7 @@
 use clap::Parser;
-use t_lib::SSHClient;
 use log::info;
 use std::path::PathBuf;
+use t_lib::SSHClient;
 
 fn main() -> () {
     env_logger::builder()
@@ -37,10 +37,10 @@ fn main() -> () {
         .map(|x| x.as_ref()) // arguments are escaped manually since the SSH protocol doesn't support quoting
         .collect::<Vec<_>>()
         .join(";");
-    let code = ssh.call(command_str).unwrap();
+    let code = ssh.exec(command_str).unwrap();
     println!("Exitcode: {:?}", code);
 
-    let code = ssh.call(command_str).unwrap();
+    let code = ssh.exec(command_str).unwrap();
     println!("Exitcode: {:?}", code);
     ssh.disconnect().unwrap();
 }
