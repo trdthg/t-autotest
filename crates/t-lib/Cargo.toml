@@ -19,3 +19,8 @@ anyhow = { workspace = true }
 ssh2 = { workspace = true }
 serialport = { workspace = true }
 vt100 = { workspace = true }
+
+# image
+image = { workspace = true }
+png = { workspace = true }
+byteorder = { workspace = true }

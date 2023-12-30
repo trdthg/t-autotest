@@ -1,2 +1,1 @@
-#[derive(Debug, Clone, Copy)]
-pub struct RGBAPixel {}
+pub type RGBPixel = [u8; 3];

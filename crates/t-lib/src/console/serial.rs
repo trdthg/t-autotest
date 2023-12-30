@@ -78,7 +78,7 @@ impl SerialClient {
         Ok(parser.screen().contents())
     }
 
-    pub fn run_cmd_striped(&mut self, cmd: &str) -> Result<String, SerialError> {
+    pub fn exec(&mut self, cmd: &str) -> Result<String, SerialError> {
         let res = self.run_cmd(cmd)?;
         let res = t_util::capture_between(&res, &format!("{}\n", cmd), &self.prompt);
         Ok(res)
@@ -104,13 +104,13 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_rw() {
+    fn test_wr() {
         let file = env::var("SERIAL_FILE").unwrap_or("/dev/ttyUSB0".to_string());
         let mut serial = SerialClient::connect(file, 115_200, Duration::from_secs(1)).unwrap();
 
         let cmds = vec![("export A=1", ""), (r#"echo "A=$A""#, "A=1\n")];
         for cmd in cmds {
-            let res = serial.run_cmd_striped(cmd.0).unwrap();
+            let res = serial.exec(cmd.0).unwrap();
             assert_eq!(res, cmd.1);
         }
     }
