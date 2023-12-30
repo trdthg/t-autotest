@@ -15,13 +15,14 @@ pkgs.mkShell {
     pkg-config
     # build libudev-sys: contains libudev
     systemd.dev
+    # build openssl-sys
+    openssl.dev
   ];
   buildInputs = with pkgs;[
   ];
   shellHook = ''
     export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${
       pkgs.lib.makeLibraryPath  [
-        pkgs.systemd.dev
       ]
     }"'';
 }

@@ -5,7 +5,6 @@ members = [
     "crates/t-vnc",
     "crates/t-util",
     "crates/t-binding",
-    # ""
 ]
 resolver = "2"
 
@@ -32,9 +31,15 @@ mlua = { version = "0.9.1", features = ["lua54", "vendored"] }
 pyo3 = { version = "0.20.0", features = ["auto-initialize"] }
 
 # console
-ssh2 = { version = "0.9.4", features = ["vendored-openssl"] }
+# ssh2 = { version = "0.9.4", features = ["vendored-openssl"] }
+ssh2 = { version = "0.9.4", features = [] }
 serialport = { version = "4.3.0" }
 vt100 = { version = "0.15.2" }
+
+# image
+image = "0.24.7"
+png = "0.17.10"
+byteorder = "1.5.0"
 
 [profile.dev]
 incremental = true
