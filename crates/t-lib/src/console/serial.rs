@@ -10,6 +10,7 @@ use super::DuplexChannelConsole;
 pub struct SerialClient {
     conn: Box<dyn SerialPort>,
     prompt: String,
+    history: Vec<u8>,
 }
 
 impl DuplexChannelConsole for SerialClient {
@@ -40,6 +41,7 @@ impl SerialClient {
         let mut res = Self {
             conn: port,
             prompt: "".to_string(),
+            history: Vec::new(),
         };
 
         res.update_prompt();
@@ -61,6 +63,10 @@ impl SerialClient {
         serial
             .read_to_end(&mut res)
             .map_err(|e| SerialError::Read(e))?;
+
+        // record all history
+        self.history.extend(res.clone());
+
         Ok(res)
     }
 
