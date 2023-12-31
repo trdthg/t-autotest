@@ -1,9 +1,12 @@
 use anyhow::Result;
-use ssh2::{Channel, DisconnectCode};
-use std::io::{self, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
 use std::path::Path;
+use std::thread::sleep;
+use std::time::Duration;
+
+use crate::get_parsed_str_from_xt100_bytes;
 
 use super::DuplexChannelConsole;
 
@@ -11,9 +14,16 @@ use super::DuplexChannelConsole;
 /// around a russh client
 pub struct SSHClient {
     session: ssh2::Session,
+    shell: ssh2::Channel,
+    buffer: String,
+    history: String,
 }
 
-impl DuplexChannelConsole for SSHClient {}
+impl DuplexChannelConsole for SSHClient {
+    fn exec(&mut self, cmd: &str) -> String {
+        self.exec(cmd).unwrap()
+    }
+}
 
 impl SSHClient {
     pub fn connect<P: AsRef<Path>, A: ToSocketAddrs>(
@@ -31,46 +41,79 @@ impl SSHClient {
 
         // Try to authenticate with the first identity in the agent.
         sess.userauth_pubkey_file(&user.into(), None, key_path.as_ref(), None)?;
-
-        // Make sure we succeeded
-
         assert!(sess.authenticated());
-        Ok(Self { session: sess })
+
+        let mut channel = sess.channel_session()?;
+        channel
+            .request_pty("xterm", None, Some((80, 24, 0, 0)))
+            .unwrap();
+        channel.shell().unwrap();
+
+        sleep(Duration::from_secs(3));
+
+        Ok(Self {
+            session: sess,
+            shell: channel,
+            buffer: String::new(),
+            history: String::new(),
+        })
     }
 
     pub fn exec(&mut self, command: &str) -> Result<String> {
-        let mut ch = self.session.channel_session()?;
+        let mut exec_ch = self.session.channel_session().unwrap();
 
-        ch.exec(command)?;
-        let mut s = String::new();
-        ch.read_to_string(&mut s).unwrap();
-        Ok(s)
+        exec_ch.exec(command)?;
+        let mut buffer = String::new();
+        exec_ch.read_to_string(&mut buffer)?;
+        Ok(buffer)
     }
 
     pub fn wr(&mut self, command: &str) -> Result<String> {
-        let ch = self.session.channel_session()?;
-        dbg!();
+        // "echo {}\n", \n may lost if no sleep
+        sleep(Duration::from_millis(100));
 
-        let mut ch = ch.stream(1);
-        dbg!();
+        let ch = &mut self.shell;
+        // write user command
+        ch.write(command.as_bytes()).unwrap();
 
-        ch.flush()?;
-        dbg!();
+        // write nanoid for regex
+        let nanoid = nanoid::nanoid!();
+        ch.write_all(format!("; echo {}\n", nanoid).as_bytes())
+            .unwrap();
 
-        ch.write_all(command.as_bytes()).unwrap();
-        dbg!();
+        ch.flush().unwrap();
 
-        let mut s = String::new();
-        ch.read_to_string(&mut s).unwrap();
-        dbg!();
+        loop {
+            let mut output_buffer = [0u8; 1024];
+            match ch.read(&mut output_buffer) {
+                Ok(n) => {
+                    let received = &output_buffer[0..n];
 
-        Ok(s)
-    }
+                    let parsed_str = get_parsed_str_from_xt100_bytes(received);
+                    self.buffer.push_str(&parsed_str);
+                    self.history.push_str(&parsed_str);
 
-    pub fn disconnect(&mut self) -> Result<()> {
-        self.session
-            .disconnect(Some(DisconnectCode::ByApplication), "user close", None)?;
-        Ok(())
+                    let buffered_output = &mut self.buffer;
+
+                    let res = t_util::assert_capture_between(
+                        &buffered_output,
+                        &format!("{nanoid}\n"),
+                        &nanoid,
+                    )
+                    .unwrap();
+                    if res.is_none() {
+                        continue;
+                    }
+
+                    let first_place = buffered_output.find(nanoid.as_str()).unwrap();
+                    let update = buffered_output[first_place + nanoid.len() + 1..].to_owned();
+                    self.buffer = update;
+
+                    return Ok(res.unwrap());
+                }
+                Err(_) => unreachable!(),
+            }
+        }
     }
 }
 
@@ -110,9 +153,12 @@ mod test {
         let mut sshc = SSHClient::connect(key_path, username, addrs).unwrap();
 
         let cmds = vec![
-            ("export A=1\n", ""),
             // (r#"echo "A=$A"\n"#, "A=\n"),
-            // (r#"export A=1;echo "A=$A"\n"#, "A=1\n"),
+            ("touch ~/aaaaa", ""),
+            ("echo \"111\"", "111\n"),
+            ("export A=1", ""),
+            ("echo A=$A", "A=1\n"),
+            ("export A=2;echo A=$A", "A=2\n"),
         ];
         for cmd in cmds {
             let res = sshc.wr(cmd.0).unwrap();

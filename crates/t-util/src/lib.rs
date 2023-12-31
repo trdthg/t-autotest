@@ -1,18 +1,29 @@
 use regex::Regex;
 
-pub fn capture_between(src: &str, left: &str, right: &str) -> String {
+#[derive(Debug)]
+pub enum RegexError {
+    RegexBuildError(regex::Error),
+}
+
+pub fn assert_capture_between(
+    src: &str,
+    left: &str,
+    right: &str,
+) -> Result<Option<String>, RegexError> {
     let re = format!("(?s){}(.*){}", regex::escape(left), regex::escape(right));
     dbg!(&re);
     dbg!(&src);
     dbg!(&left);
     dbg!(&right);
-    let re = Regex::new(&re).expect("serial should support cmd");
+    let re = Regex::new(&re).map_err(|e| RegexError::RegexBuildError(e))?;
 
     let mut locs = re.capture_locations();
-    assert!(re.captures_read(&mut locs, &src).is_some());
+    if re.captures_read(&mut locs, &src).is_none() {
+        return Ok(None);
+    }
     let res_loc = locs.get(1).unwrap();
 
-    src[res_loc.0..res_loc.1].to_string()
+    Ok(Some(src[res_loc.0..res_loc.1].to_string()))
 }
 
 #[cfg(test)]
@@ -42,7 +53,7 @@ mod test {
         let prompt = "pi@raspberrypi:~$ ";
         let src = "whoami\npi\npi@raspberrypi:~$ ";
 
-        let res = capture_between(src, cmd, prompt);
+        let res = assert_capture_between(src, cmd, prompt).unwrap().unwrap();
         println!("res: [{:?}]", res);
         assert!(res == "pi\n");
     }
@@ -53,7 +64,7 @@ mod test {
         let prompt = "pi@raspberrypi:~$ ";
         let src = "whoami\npi@raspberrypi:~$ ";
 
-        let res = capture_between(src, cmd, prompt);
+        let res = assert_capture_between(src, cmd, prompt).unwrap().unwrap();
         println!("res: [{:?}]", res);
         assert!(res == "");
     }
@@ -64,7 +75,7 @@ mod test {
         let prompt = "pi@raspberrypi:~$ ";
         let src = "export A=1\npi@raspberrypi:~$ ";
 
-        let res = capture_between(src, cmd, prompt);
+        let res = assert_capture_between(src, cmd, prompt).unwrap().unwrap();
         println!("res: [{:?}]", res);
         assert!(res == "");
     }
@@ -76,11 +87,13 @@ mod test {
         parser.process(src);
         let src = parser.screen().contents();
 
-        let prompt = capture_between(
+        let prompt = assert_capture_between(
             &src,
             &format!("echo '{}'\n{}\n", MAGIC_STRING, MAGIC_STRING),
             "",
-        );
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(prompt, "pi@raspberrypi:~$ ");
     }
 }

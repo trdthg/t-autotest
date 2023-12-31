@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Ok, Result};
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use image::ImageBuffer;
-use log::{debug, error, info};
+use log::{error, info};
 use vnc::PixelFormat;
 
 use crate::console::ScreenControlConsole;

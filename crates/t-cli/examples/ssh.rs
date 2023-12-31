@@ -42,7 +42,6 @@ fn main() -> () {
 
     let code = ssh.exec(command_str).unwrap();
     println!("Exitcode: {:?}", code);
-    ssh.disconnect().unwrap();
 }
 
 fn default_host() -> String {

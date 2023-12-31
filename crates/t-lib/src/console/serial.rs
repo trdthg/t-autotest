@@ -1,20 +1,22 @@
-use std::fs;
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, Read, Write};
 use std::time::Duration;
 
-use log::{debug, info};
 use serialport::SerialPort;
+
+use crate::{get_parsed_str_from_xt100_bytes, MAGIC_STRING};
 
 use super::DuplexChannelConsole;
 
 pub struct SerialClient {
-    file: String,
-    bund_rate: u32,
     conn: Box<dyn SerialPort>,
     prompt: String,
 }
 
-impl DuplexChannelConsole for SerialClient {}
+impl DuplexChannelConsole for SerialClient {
+    fn exec(&mut self, cmd: &str) -> String {
+        self.exec(cmd).unwrap()
+    }
+}
 
 #[derive(Debug)]
 pub enum SerialError {
@@ -22,8 +24,6 @@ pub enum SerialError {
     Read(io::Error),
     Write(io::Error),
 }
-
-static MAGIC_STRING: &str = "n8acxy9o47xx7x7xw";
 
 impl SerialClient {
     pub fn connect(
@@ -38,8 +38,6 @@ impl SerialClient {
             .map_err(|e| SerialError::ConnectError(e.to_string()))?;
 
         let mut res = Self {
-            file,
-            bund_rate,
             conn: port,
             prompt: "".to_string(),
         };
@@ -49,8 +47,8 @@ impl SerialClient {
         Ok(res)
     }
 
-    fn enter_string(&mut self, cmd: &str) -> Result<(), SerialError> {
-        let mut serial = &mut self.conn;
+    fn write_str(&mut self, cmd: &str) -> Result<(), SerialError> {
+        let serial = &mut self.conn;
         serial
             .write(format!("{}", cmd).as_bytes())
             .map_err(|e| SerialError::Write(e))?;
@@ -58,40 +56,38 @@ impl SerialClient {
     }
 
     fn read_raw(&mut self) -> Result<Vec<u8>, SerialError> {
-        let mut serial = &mut self.conn;
+        let serial = &mut self.conn;
         let mut res = Vec::new();
         serial
             .read_to_end(&mut res)
-            .map_err(|e| SerialError::Read(e));
+            .map_err(|e| SerialError::Read(e))?;
         Ok(res)
     }
 
     fn run_cmd(&mut self, cmd: &str) -> Result<String, SerialError> {
-        self.enter_string(&format!("{}\n", cmd))?;
-
+        self.write_str(&format!("{}\n", cmd))?;
         let res = self.read_raw()?;
-
-        // clean control character
-        let mut parser = vt100::Parser::new(24, 80, 0);
-        parser.process(&res);
-
-        Ok(parser.screen().contents())
+        return Ok(get_parsed_str_from_xt100_bytes(&res));
     }
 
     pub fn exec(&mut self, cmd: &str) -> Result<String, SerialError> {
         let res = self.run_cmd(cmd)?;
-        let res = t_util::capture_between(&res, &format!("{}\n", cmd), &self.prompt);
+        let res = t_util::assert_capture_between(&res, &format!("{}\n", cmd), &self.prompt)
+            .unwrap()
+            .unwrap();
         Ok(res)
     }
 
     fn update_prompt(&mut self) {
         let res = self.run_cmd(&format!("echo '{}'", MAGIC_STRING)).unwrap();
 
-        let prompt = t_util::capture_between(
+        let prompt = t_util::assert_capture_between(
             &res,
             &format!("echo '{}'\n{}\n", MAGIC_STRING, MAGIC_STRING),
             "",
-        );
+        )
+        .unwrap()
+        .unwrap();
 
         self.prompt = prompt;
     }
@@ -99,7 +95,7 @@ impl SerialClient {
 
 #[cfg(test)]
 mod test {
-    use std::{env, io::BufReader};
+    use std::env;
 
     use super::*;
 
