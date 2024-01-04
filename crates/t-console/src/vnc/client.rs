@@ -16,7 +16,8 @@ use super::{data::RectContainer, pixel::RGBPixel};
 pub struct VNCClient {
     vnc: Option<vnc::Client>,
     pixel_format: PixelFormat,
-    screen: RectContainer<RGBPixel>,
+    unstable_screen: RectContainer<RGBPixel>,
+    stable_screen: RectContainer<RGBPixel>,
 }
 
 impl ScreenControlConsole for VNCClient {}
@@ -60,7 +61,8 @@ impl VNCClient {
         let res = Self {
             vnc: Some(vnc),
             pixel_format,
-            screen: RectContainer::new(0, 0, size.0, size.1),
+            unstable_screen: RectContainer::new(0, 0, size.0, size.1),
+            stable_screen: RectContainer::new(0, 0, size.0, size.1),
         };
         Ok(res)
     }
@@ -105,8 +107,10 @@ impl VNCClient {
                     }
                     Event::CopyPixels { src, dst } => {
                         info!("Event::CopyPixels");
-                        let data = self.screen.copy(src.left, src.top, src.width, src.height);
-                        self.screen.update(RectContainer {
+                        let data = self
+                            .unstable_screen
+                            .copy(src.left, src.top, src.width, src.height);
+                        self.unstable_screen.update(RectContainer {
                             left: dst.left,
                             top: dst.top,
                             width: dst.width,
@@ -116,6 +120,7 @@ impl VNCClient {
                     }
                     Event::EndOfFrame => {
                         info!("Event::EndOfFrame");
+                        self.stable_screen = self.unstable_screen.clone();
                         let image_path = format!(
                             "./.private/assets/output-{}.png",
                             time::SystemTime::now()
@@ -142,8 +147,8 @@ impl VNCClient {
                 vnc::Rect {
                     left: 0,
                     top: 0,
-                    width: self.screen.width,
-                    height: self.screen.height,
+                    width: self.unstable_screen.width,
+                    height: self.unstable_screen.height,
                 },
                 true,
             )
@@ -153,22 +158,24 @@ impl VNCClient {
 
     fn resize_screen(&mut self, width: u16, height: u16) {
         let screen_clone = RectContainer::new(0, 0, width, height);
-        self.screen.update(screen_clone);
+        self.unstable_screen.update(screen_clone);
     }
 
     // update some pixels
     fn copy_rect(&mut self, rect: RectContainer<RGBPixel>) {
-        self.screen.update(rect);
+        self.unstable_screen.update(rect);
     }
 
     fn dump_screen(&self) -> ImageBuffer<image::Rgb<u8>, Vec<u8>> {
-        let mut image_buffer: ImageBuffer<image::Rgb<u8>, Vec<u8>> =
-            ImageBuffer::new(self.screen.width as u32, self.screen.height as u32);
+        let mut image_buffer: ImageBuffer<image::Rgb<u8>, Vec<u8>> = ImageBuffer::new(
+            self.unstable_screen.width as u32,
+            self.unstable_screen.height as u32,
+        );
 
         for (i, pixel) in image_buffer.chunks_mut(3).enumerate() {
-            pixel[0] = self.screen.data[i][0];
-            pixel[1] = self.screen.data[i][1];
-            pixel[2] = self.screen.data[i][2];
+            pixel[0] = self.unstable_screen.data[i][0];
+            pixel[1] = self.unstable_screen.data[i][1];
+            pixel[2] = self.unstable_screen.data[i][2];
         }
 
         image_buffer

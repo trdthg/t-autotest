@@ -1,4 +1,5 @@
 // data rect
+#[derive(Clone)]
 pub struct RectContainer<P> {
     pub left: u16,
     pub top: u16,
