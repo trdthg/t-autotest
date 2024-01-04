@@ -37,10 +37,10 @@ fn main() -> () {
         .map(|x| x.as_ref()) // arguments are escaped manually since the SSH protocol doesn't support quoting
         .collect::<Vec<_>>()
         .join(";");
-    let code = ssh.exec(command_str).unwrap();
+    let code = ssh.exec_seperate(command_str).unwrap();
     println!("Exitcode: {:?}", code);
 
-    let code = ssh.exec(command_str).unwrap();
+    let code = ssh.exec_seperate(command_str).unwrap();
     println!("Exitcode: {:?}", code);
 }
 

@@ -10,9 +10,7 @@ pub trait FullPowerConsole: ScreenControlConsole + DuplexChannelConsole {}
 
 pub trait ScreenControlConsole {}
 
-pub trait DuplexChannelConsole {
-    fn exec(&mut self, cmd: &str) -> String;
-}
+pub trait DuplexChannelConsole {}
 
 #[cfg(test)]
 mod test {}

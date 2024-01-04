@@ -14,11 +14,7 @@ pub struct SerialClient {
     history: Vec<u8>,
 }
 
-impl DuplexChannelConsole for SerialClient {
-    fn exec(&mut self, cmd: &str) -> String {
-        self.exec(cmd).unwrap()
-    }
-}
+impl DuplexChannelConsole for SerialClient {}
 
 #[derive(Debug)]
 pub enum SerialError {
