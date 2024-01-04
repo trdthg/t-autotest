@@ -1,28 +1,100 @@
-use crate::{JSEngine, Runner};
-pub trait Callback<Args> {
-    fn call(&self, runner: &mut Runner, args: Args);
+use crate::{MsgReq, MsgRes, GLOBAL_BASE_SENDER};
+use quick_js::JsValue;
+use std::{sync::mpsc::channel, time::Duration};
+use tracing::trace;
+
+pub fn print(msg: String) -> JsValue {
+    print!("{msg}");
+    JsValue::Null
 }
 
-impl<F, P1> Callback<(P1,)> for F
-where
-    P1: Clone + 'static + Send + Sync,
-    F: Fn(&mut Runner, P1),
-{
-    fn call(&self, runner: &mut Runner, args: (P1,)) {
-        self(runner, args.0)
-    }
+pub fn assert_script_run(tags: String, timeout: i32) -> JsValue {
+    trace!("assert_script_run::req");
+    let msg_tx = unsafe { GLOBAL_BASE_SENDER.as_ref().unwrap().lock().unwrap().clone() };
+    let (tx, rx) = channel::<MsgRes>();
+
+    trace!("assert_script_run sending");
+    msg_tx
+        .send((
+            MsgReq::AssertScreen {
+                tag: tags,
+                threshold: 1,
+                timeout: Duration::from_millis(timeout as u64),
+            },
+            tx,
+        ))
+        .unwrap();
+    trace!("assert_script_run send done");
+
+    trace!("assert_script_run waiting");
+    let res = rx
+        .recv_timeout(Duration::from_millis(timeout as u64))
+        .unwrap();
+
+    let res = if let MsgRes::AssertScreen { similarity, ok } = res {
+        JsValue::Int(similarity)
+    } else {
+        JsValue::Null
+    };
+    trace!("assert_script_run done");
+    res
 }
 
-impl<F, P1, P2> Callback<(P1, P2)> for F
-where
-    P1: Clone + 'static + Send + Sync,
-    P2: Clone + 'static + Send + Sync,
-    F: Fn(&mut Runner, P1, P2),
-{
-    fn call(&self, runner: &mut Runner, args: (P1, P2)) {
-        self(runner, args.0, args.1)
-    }
+pub fn assert_screen(tags: String, timeout: i32) {
+    trace!("assert_script_run pre");
+    let msg_tx = unsafe { GLOBAL_BASE_SENDER.as_ref().unwrap().lock().unwrap().clone() };
+    let (tx, rx) = channel::<MsgRes>();
+
+    trace!("assert_script_run sending");
+    msg_tx
+        .send((
+            MsgReq::AssertScreen {
+                tag: tags,
+                threshold: 1,
+                timeout: Duration::from_millis(timeout as u64),
+            },
+            tx,
+        ))
+        .unwrap();
+    trace!("assert_script_run send done");
+
+    trace!("assert_script_run waiting");
+    let res = rx
+        .recv_timeout(Duration::from_millis(timeout as u64))
+        .unwrap();
+
+    let res = if let MsgRes::AssertScreen { similarity, ok } = res {
+        JsValue::Int(similarity)
+    } else {
+        JsValue::Null
+    };
+    trace!("assert_script_run done");
 }
+
+// pub trait Callback<Args> {
+//     fn call(&self, runner: &mut Runner, args: Args);
+// }
+
+// impl<F, P1> Callback<(P1,)> for F
+// where
+//     P1: Clone + 'static + Send + Sync,
+//     F: Fn(&mut Runner, P1),
+// {
+//     fn call(&self, runner: &mut Runner, args: (P1,)) {
+//         self(runner, args.0)
+//     }
+// }
+
+// impl<F, P1, P2> Callback<(P1, P2)> for F
+// where
+//     P1: Clone + 'static + Send + Sync,
+//     P2: Clone + 'static + Send + Sync,
+//     F: Fn(&mut Runner, P1, P2),
+// {
+//     fn call(&self, runner: &mut Runner, args: (P1, P2)) {
+//         self(runner, args.0, args.1)
+//     }
+// }
 
 // macro_rules! impl_handler {
 //     ($( $P:ident ),*) => {
@@ -48,15 +120,3 @@ where
 // impl_handler!(P1, P2, P3, P4, P5, P6, P7);
 // impl_handler!(P1, P2, P3, P4, P5, P6, P7, P8);
 // impl_handler!(P1, P2, P3, P4, P5, P6, P7, P8, P9);
-
-pub fn type_string(runner: &mut Runner, s: &str) {
-    todo!()
-}
-
-pub fn assert_screen(runner: &mut Runner, tags: Vec<String>) {
-    todo!()
-}
-
-pub fn assert_script_run(runner: &mut Runner, cmd: String, timeout: u32) {
-    todo!()
-}

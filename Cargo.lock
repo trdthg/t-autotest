@@ -1196,6 +1196,8 @@ dependencies = [
  "pyo3",
  "quick-js",
  "t-console",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1212,6 +1214,7 @@ dependencies = [
  "serde",
  "shell-escape",
  "ssh2",
+ "t-binding",
  "t-console",
  "t-vnc",
  "toml",

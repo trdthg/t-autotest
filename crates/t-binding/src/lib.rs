@@ -2,32 +2,21 @@ mod api;
 mod engine;
 mod msg;
 
-use api::Callback;
+use std::sync::{mpsc::Sender, Mutex};
+
 pub use engine::{JSEngine, LuaEngine};
+pub use msg::{MsgReq, MsgRes};
 
 pub enum EngineError {}
 
-pub trait ScriptEngine {}
-
-pub struct Runner {
-    engine: Box<dyn ScriptEngine>,
+pub trait ScriptEngine {
+    fn run(&mut self, content: &str);
 }
 
-impl Runner {
-    pub fn new(engine: Box<dyn ScriptEngine>) -> Self {
-        let res = Self { engine };
-        res
+static mut GLOBAL_BASE_SENDER: Option<Mutex<Sender<(MsgReq, Sender<MsgRes>)>>> = None;
+
+pub fn init(sender: Sender<(MsgReq, Sender<MsgRes>)>) {
+    unsafe {
+        GLOBAL_BASE_SENDER = Some(Mutex::new(sender));
     }
-
-    pub fn register_fn<Args>(&mut self, f: impl Callback<Args>) {}
-
-    pub fn run(&mut self) {}
-}
-
-#[cfg(test)]
-mod test {
-    use crate::{JSEngine, Runner};
-
-    #[test]
-    fn test_runner() {}
 }

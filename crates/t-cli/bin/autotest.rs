@@ -1,6 +1,6 @@
 use clap::Parser;
 use std::fs;
-use t_cli::{init, Config};
+use t_cli::{init, Config, Runner};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -28,6 +28,8 @@ fn main() {
     init(config);
 
     info!("init done");
+
+    Runner::new(cli.case).run();
 }
 
 #[cfg(test)]

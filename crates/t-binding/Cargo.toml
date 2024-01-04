@@ -8,6 +8,8 @@ edition = "2021"
 [dependencies]
 t-console = { workspace = true }
 
-quick-js = { workspace = true }
-mlua     = { workspace = true }
-pyo3     = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+quick-js           = { workspace = true }
+mlua               = { workspace = true }
+pyo3               = { workspace = true }

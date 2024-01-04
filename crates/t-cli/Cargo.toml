@@ -12,6 +12,7 @@ path = "bin/autotest.rs"
 [dependencies]
 t-console = { workspace = true }
 t-vnc     = { workspace = true }
+t-binding = { workspace = true }
 
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }

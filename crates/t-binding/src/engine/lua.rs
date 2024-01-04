@@ -2,9 +2,18 @@ use crate::ScriptEngine;
 
 pub struct LuaEngine {}
 
-impl ScriptEngine for LuaEngine {}
+impl ScriptEngine for LuaEngine {
+    fn run(&mut self, content: &str) {
+        // todo!()
+    }
+}
 
-impl LuaEngine {}
+impl LuaEngine {
+    pub fn new() -> Box<dyn ScriptEngine> {
+        let e = Self {};
+        Box::new(e)
+    }
+}
 
 #[cfg(test)]
 mod test {

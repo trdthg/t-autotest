@@ -2,7 +2,7 @@ use std::io::{self, Read, Write};
 use std::time::Duration;
 
 use image::EncodableLayout;
-use serialport::{SerialPort, TTYPort};
+use serialport::TTYPort;
 
 use crate::{get_parsed_str_from_xt100_bytes, MAGIC_STRING};
 

@@ -1,25 +1,15 @@
-use std::{
-    cell::{OnceCell, RefCell},
-    collections::HashMap,
-    rc::Rc,
-    sync::{
-        mpsc::{channel, Sender},
-        Arc, Mutex,
-    },
-    thread,
-    time::Duration,
-};
-
-use quick_js::{Context, JsValue};
-use t_console::{SSHAuthAuth, SSHClient};
-
-use crate::{msg::MsgReq, msg::MsgRes, ScriptEngine};
+use crate::{api, ScriptEngine};
+use quick_js::Context;
 
 pub struct JSEngine {
     cx: quick_js::Context,
 }
 
-impl ScriptEngine for JSEngine {}
+impl ScriptEngine for JSEngine {
+    fn run(&mut self, content: &str) {
+        self.run(content).unwrap();
+    }
+}
 
 impl JSEngine {
     fn _new() -> Self {
@@ -27,110 +17,9 @@ impl JSEngine {
             cx: Context::new().unwrap(),
         };
 
-        let mut ssh = SSHClient::connect(
-            SSHAuthAuth::PrivateKey("/home/trdthg/.ssh/id_rsa"),
-            "ecs-user",
-            "47.94.225.51:22",
-        )
-        .unwrap();
-
-        e.cx.add_callback("print", move |cmd: String| {
-            println!("{cmd}");
-            JsValue::Null
-        })
-        .unwrap();
-
-        let (msg_tx_base, msg_rx) = channel::<(MsgReq, Sender<MsgRes>)>();
-
-        let msg_tx = msg_tx_base.clone();
-        e.cx.add_callback("assert_script_run", move |cmd: String, timeout: i32| {
-            println!("assert_script_run pre");
-            let (tx, rx) = channel::<MsgRes>();
-
-            println!("assert_script_run sending");
-            msg_tx
-                .clone()
-                .send((
-                    MsgReq::AssertScriptRun {
-                        cmd,
-                        timeout: Duration::from_millis(timeout as u64),
-                    },
-                    tx,
-                ))
-                .unwrap();
-            println!("assert_script_run send done");
-
-            println!("assert_script_run waiting");
-            let res = rx
-                .recv_timeout(Duration::from_millis(timeout as u64))
-                .unwrap();
-
-            let res = if let MsgRes::AssertScriptRun { res } = res {
-                JsValue::String(res)
-            } else {
-                JsValue::Null
-            };
-            println!("assert_script_run done");
-            res
-        })
-        .unwrap();
-
-        let msg_tx = msg_tx_base.clone();
-        e.cx.add_callback("assert_screen", move |tags: String, timeout: i32| {
-            println!("assert_script_run pre");
-            let (tx, rx) = channel::<MsgRes>();
-
-            println!("assert_script_run sending");
-            msg_tx
-                .send((
-                    MsgReq::AssertScreen {
-                        tag: tags,
-                        threshold: 1,
-                        timeout: Duration::from_millis(timeout as u64),
-                    },
-                    tx,
-                ))
-                .unwrap();
-            println!("assert_script_run send done");
-
-            println!("assert_script_run waiting");
-            let res = rx
-                .recv_timeout(Duration::from_millis(timeout as u64))
-                .unwrap();
-
-            let res = if let MsgRes::AssertScreen { similarity, ok } = res {
-                JsValue::Int(similarity)
-            } else {
-                JsValue::Null
-            };
-            println!("assert_script_run done");
-            res
-        })
-        .unwrap();
-
-        thread::spawn(move || {
-            while let Ok((msg, tx)) = msg_rx.recv() {
-                println!("recv");
-                match msg {
-                    MsgReq::AssertScreen {
-                        tag,
-                        threshold,
-                        timeout,
-                    } => {
-                        tx.send(MsgRes::AssertScreen {
-                            similarity: 1,
-                            ok: true,
-                        })
-                        .unwrap();
-                    }
-                    MsgReq::AssertScriptRun { cmd, .. } => {
-                        let res = ssh.exec_seperate(&cmd).unwrap();
-                        println!("{res}");
-                        tx.send(MsgRes::AssertScriptRun { res }).unwrap();
-                    }
-                }
-            }
-        });
+        e.cx.add_callback("print", api::print).unwrap();
+        e.cx.add_callback("assert_script_run", api::assert_script_run)
+            .unwrap();
 
         e
     }

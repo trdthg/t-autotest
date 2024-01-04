@@ -1,12 +1,15 @@
 mod config;
-
+mod runner;
 use crate::config::{Console, ConsoleSSHAuthType};
 pub use config::Config;
+pub use runner::Runner;
 use std::{
     path::Path,
-    sync::{Mutex, OnceLock},
+    sync::{mpsc, Mutex, OnceLock},
+    thread,
     time::Duration,
 };
+use t_binding::{MsgReq, MsgRes};
 use t_console::{SSHAuthAuth, SSHClient, SerialClient, VNCClient};
 use tracing::info;
 
@@ -68,6 +71,34 @@ pub fn init(config: Config) -> () {
         }
         info!("init vnc done");
     }
+
+    let (tx, rx) = mpsc::channel();
+
+    t_binding::init(tx);
+
+    thread::spawn(move || {
+        while let Ok((msg, tx)) = rx.recv() {
+            println!("recv");
+            match msg {
+                MsgReq::AssertScreen {
+                    tag,
+                    threshold,
+                    timeout,
+                } => {
+                    tx.send(MsgRes::AssertScreen {
+                        similarity: 1,
+                        ok: true,
+                    })
+                    .unwrap();
+                }
+                MsgReq::AssertScriptRun { cmd, .. } => {
+                    let res = unsafe { GLOBAL_SSH.get_mut().unwrap().exec_seperate(&cmd).unwrap() };
+                    println!("{res}");
+                    tx.send(MsgRes::AssertScriptRun { res }).unwrap();
+                }
+            }
+        }
+    });
 }
 
 #[cfg(test)]
