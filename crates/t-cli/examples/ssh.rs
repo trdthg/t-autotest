@@ -1,7 +1,7 @@
 use clap::Parser;
 use log::info;
 use std::path::PathBuf;
-use t_lib::SSHClient;
+use t_console::SSHClient;
 
 fn main() -> () {
     env_logger::builder()

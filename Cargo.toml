@@ -1,45 +1,45 @@
 [workspace]
-members = [
-    "crates/t-cli",
-    "crates/t-lib",
-    "crates/t-vnc",
-    "crates/t-util",
-    "crates/t-binding",
-]
 resolver = "2"
+members  = ["crates/t-cli", "crates/t-console", "crates/t-vnc", "crates/t-util", "crates/t-binding"]
 
 [workspace.dependencies]
-t-cli = { path = "./crates/t-cli" }
-t-lib = { path = "./crates/t-lib" }
-t-vnc = { path = "./crates/t-vnc" }
-t-util = { path = "./crates/t-util" }
+# Crates
+t-cli     = { path = "./crates/t-cli" }
+t-console = { path = "./crates/t-console" }
+t-vnc     = { path = "./crates/t-vnc" }
+t-util    = { path = "./crates/t-util" }
 t-binding = { path = "./crates/t-binding" }
 
-# normal
-clap = { version = "4.4.11", features = ["derive", "cargo"] }
-dotenv = { version = "0.15.0" }
-home = { version = "0.5.9" }
-log = { version = "0.4.20" }
-env_logger = { version = "0.10.1" }
-anyhow = { version = "1.0.76" }
+# Dep
+clap         = { version = "4.4.11", features = ["derive", "cargo"] }
+dotenv       = { version = "0.15.0" }
+home         = { version = "0.5.9" }
+log          = { version = "0.4.20" }
+env_logger   = { version = "0.10.1" }
+anyhow       = { version = "1.0.76" }
 shell-escape = { version = "0.1.5" }
-regex = { version = "1.10.2" }
-nanoid = { version = "0.4.0" }
+regex        = { version = "1.10.2" }
+nanoid       = { version = "0.4.0" }
+tempfile     = { version = "3.9.0" }
+
+# syntex
+derive_more = { version = "0.99.17" }
+miette      = { version = "5.10.0", features = ["fancy"] }
 
 # script engine
 quick-js = { version = "0.4.1" }
-mlua = { version = "0.9.1", features = ["lua54", "vendored"] }
-pyo3 = { version = "0.20.0", features = ["auto-initialize"] }
+mlua     = { version = "0.9.1", features = ["lua54", "vendored"] }
+pyo3     = { version = "0.20.0", features = ["auto-initialize"] }
 
 # console
 # ssh2 = { version = "0.9.4", features = ["vendored-openssl"] }
-ssh2 = { version = "0.9.4", features = [] }
+ssh2       = { version = "0.9.4", features = [] }
 serialport = { version = "4.3.0" }
-vt100 = { version = "0.15.2" }
+vt100      = { version = "0.15.2" }
 
 # image
-image = "0.24.7"
-png = "0.17.10"
+image     = "0.24.7"
+png       = "0.17.10"
 byteorder = "1.5.0"
 
 [profile.dev]

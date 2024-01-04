@@ -1,0 +1,27 @@
+[package]
+name    = "t-console"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+t-vnc  = { workspace = true }
+t-util = { workspace = true }
+
+clap       = { workspace = true }
+dotenv     = { workspace = true }
+home       = { workspace = true }
+log        = { workspace = true }
+env_logger = { workspace = true }
+anyhow     = { workspace = true }
+tempfile   = { workspace = true }
+
+ssh2       = { workspace = true }
+serialport = { workspace = true }
+vt100      = { workspace = true }
+nanoid     = { workspace = true }
+
+image     = { workspace = true }
+png       = { workspace = true }
+byteorder = { workspace = true }

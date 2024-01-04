@@ -1,6 +1,7 @@
 use std::io::{self, Read, Write};
 use std::time::Duration;
 
+use image::EncodableLayout;
 use serialport::SerialPort;
 
 use crate::{get_parsed_str_from_xt100_bytes, MAGIC_STRING};
@@ -70,10 +71,14 @@ impl SerialClient {
         Ok(res)
     }
 
+    fn read_string(&mut self) -> Result<String, SerialError> {
+        self.read_raw()
+            .map(|x| get_parsed_str_from_xt100_bytes(x.as_bytes()))
+    }
+
     fn run_cmd(&mut self, cmd: &str) -> Result<String, SerialError> {
         self.write_str(&format!("{}\n", cmd))?;
-        let res = self.read_raw()?;
-        return Ok(get_parsed_str_from_xt100_bytes(&res));
+        return self.read_string();
     }
 
     pub fn exec(&mut self, cmd: &str) -> Result<String, SerialError> {

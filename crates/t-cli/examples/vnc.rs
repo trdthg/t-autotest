@@ -1,6 +1,6 @@
 use clap::Parser;
 use log::info;
-use t_lib::VNCClient;
+use t_console::VNCClient;
 
 fn default_host() -> String {
     "localhost".to_string()

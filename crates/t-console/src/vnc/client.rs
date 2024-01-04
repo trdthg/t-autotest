@@ -9,7 +9,7 @@ use image::ImageBuffer;
 use log::{error, info};
 use vnc::PixelFormat;
 
-use crate::console::ScreenControlConsole;
+use crate::ScreenControlConsole;
 
 use super::{data::RectContainer, pixel::RGBPixel};
 
@@ -70,6 +70,7 @@ impl VNCClient<RGBPixel> {
         self.pool(&mut vnc.unwrap());
     }
 
+    // vnc event loop
     fn pool(&mut self, vnc: &mut vnc::Client) {
         info!("start loop");
         'running: loop {
@@ -115,14 +116,6 @@ impl VNCClient<RGBPixel> {
                     }
                     Event::EndOfFrame => {
                         info!("Event::EndOfFrame");
-                        //     if qemu_hacks {
-                        //         let network_rtt = sdl_timer.ticks() - qemu_prev_update;
-                        //         // qemu_network_rtt = network_rtt;
-                        //         qemu_network_rtt = qemu_network_rtt * 80 / 100 + network_rtt * 20 / 100;
-                        //         qemu_prev_update = sdl_timer.ticks();
-                        //         qemu_next_update = sdl_timer.ticks() + qemu_network_rtt / 2;
-                        //         debug!("network RTT: {} ms", qemu_network_rtt);
-                        //     }
                         let image_path = format!(
                             "./.private/assets/output-{}.png",
                             time::SystemTime::now()
@@ -210,6 +203,7 @@ fn convert_to_rgb(pixel_format: &PixelFormat, raw_pixel_chunks: &[u8]) -> Vec<[u
     image_buffer
 }
 
+// convert vnc pixels to png
 fn convert_to_imagebuffer(
     width: u16,
     height: u16,
@@ -229,6 +223,7 @@ fn convert_to_imagebuffer(
     image_buffer
 }
 
+// convert vnc pixels to Vector
 fn convert_to_screenrect(
     left: u16,
     top: u16,
