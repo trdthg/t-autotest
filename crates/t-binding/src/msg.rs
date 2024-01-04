@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+#[derive(Debug)]
 pub enum MsgReq {
     AssertScriptRun {
         cmd: String,
@@ -12,6 +13,7 @@ pub enum MsgReq {
     },
 }
 
+#[derive(Debug)]
 pub enum MsgRes {
     AssertScriptRun { res: String },
     AssertScreen { similarity: i32, ok: bool },

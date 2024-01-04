@@ -11,7 +11,7 @@ use std::{
 };
 use t_binding::{MsgReq, MsgRes};
 use t_console::{SSHAuthAuth, SSHClient, SerialClient, VNCClient};
-use tracing::info;
+use tracing::{debug, info};
 
 static mut GLOBAL_SSH: OnceLock<SSHClient> = OnceLock::new();
 static mut GLOBAL_SERIAL: OnceLock<SerialClient> = OnceLock::new();
@@ -28,6 +28,7 @@ pub fn init(config: Config) -> () {
     } = config;
     info!("init...");
     if _ssh.enable {
+        info!("init ssh...");
         let auth = match _ssh.auth.r#type {
             ConsoleSSHAuthType::PrivateKey => SSHAuthAuth::PrivateKey(
                 _ssh.auth.private_key.unwrap_or(
@@ -51,6 +52,7 @@ pub fn init(config: Config) -> () {
     }
 
     if _serial.enable {
+        info!("init serial...");
         let serial_console = SerialClient::connect(
             _serial.serial_file,
             _serial.bund_rate,
@@ -64,6 +66,7 @@ pub fn init(config: Config) -> () {
     }
 
     if _vnc.enable {
+        info!("init vnc...");
         let vnc_client =
             VNCClient::connect(format!("{}:{}", _vnc.host, _vnc.port), _vnc.password).unwrap();
         if let Err(_) = unsafe { GLOBAL_VNC.set(Mutex::new(vnc_client)) } {
@@ -76,29 +79,29 @@ pub fn init(config: Config) -> () {
 
     t_binding::init(tx);
 
+    info!("start msg handler thread");
     thread::spawn(move || {
         while let Ok((msg, tx)) = rx.recv() {
-            println!("recv");
-            match msg {
+            info!("recv msg: {:#?}", msg);
+            let res = match msg {
                 MsgReq::AssertScreen {
                     tag,
                     threshold,
                     timeout,
-                } => {
-                    tx.send(MsgRes::AssertScreen {
-                        similarity: 1,
-                        ok: true,
-                    })
-                    .unwrap();
-                }
+                } => MsgRes::AssertScreen {
+                    similarity: 1,
+                    ok: true,
+                },
                 MsgReq::AssertScriptRun { cmd, .. } => {
                     let res = unsafe { GLOBAL_SSH.get_mut().unwrap().exec_seperate(&cmd).unwrap() };
-                    println!("{res}");
-                    tx.send(MsgRes::AssertScriptRun { res }).unwrap();
+                    MsgRes::AssertScriptRun { res }
                 }
-            }
+            };
+            info!("send res: {:#?}", res);
+            tx.send(res).unwrap();
         }
     });
+    info!("init done");
 }
 
 #[cfg(test)]

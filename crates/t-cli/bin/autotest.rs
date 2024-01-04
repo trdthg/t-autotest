@@ -27,8 +27,6 @@ fn main() {
 
     init(config);
 
-    info!("init done");
-
     Runner::new(cli.case).run();
 }
 

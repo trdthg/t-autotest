@@ -1,10 +1,10 @@
 use crate::{MsgReq, MsgRes, GLOBAL_BASE_SENDER};
 use quick_js::JsValue;
 use std::{sync::mpsc::channel, time::Duration};
-use tracing::trace;
+use tracing::{info, trace};
 
 pub fn print(msg: String) -> JsValue {
-    print!("{msg}");
+    info!("api-print: [{msg}]");
     JsValue::Null
 }
 
