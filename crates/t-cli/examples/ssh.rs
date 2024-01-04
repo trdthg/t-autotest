@@ -1,12 +1,14 @@
 use clap::Parser;
-use log::info;
 use std::path::PathBuf;
-use t_console::SSHClient;
+use t_console::{SSHAuthAuth, SSHClient};
+use tracing::{info, Level};
+use tracing_subscriber::FmtSubscriber;
 
 fn main() -> () {
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(Level::INFO)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     // CLI options are defined later in this file
     let cli = Cli::parse();
@@ -24,7 +26,7 @@ fn main() -> () {
 
     // Session is a wrapper around a russh client, defined down below
     let mut ssh = SSHClient::connect(
-        cli.private_key.unwrap_or(default_private_key()),
+        SSHAuthAuth::PrivateKey(cli.private_key.unwrap_or(default_private_key())),
         cli.username.unwrap_or(default_username()),
         (cli.host, cli.port),
     )

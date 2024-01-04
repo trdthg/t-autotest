@@ -2,14 +2,14 @@ use std::io::{self, Read, Write};
 use std::time::Duration;
 
 use image::EncodableLayout;
-use serialport::SerialPort;
+use serialport::{SerialPort, TTYPort};
 
 use crate::{get_parsed_str_from_xt100_bytes, MAGIC_STRING};
 
 use super::DuplexChannelConsole;
 
 pub struct SerialClient {
-    conn: Box<dyn SerialPort>,
+    conn: TTYPort,
     prompt: String,
     history: Vec<u8>,
 }
@@ -32,7 +32,7 @@ impl SerialClient {
         let file = file.into();
         let port = serialport::new(&file, bund_rate)
             .timeout(timeout)
-            .open()
+            .open_native()
             .map_err(|e| SerialError::ConnectError(e.to_string()))?;
 
         let mut res = Self {

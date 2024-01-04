@@ -11,7 +11,7 @@ use std::{
 };
 
 use quick_js::{Context, JsValue};
-use t_console::SSHClient;
+use t_console::{SSHAuthAuth, SSHClient};
 
 use crate::{msg::MsgReq, msg::MsgRes, ScriptEngine};
 
@@ -27,8 +27,12 @@ impl JSEngine {
             cx: Context::new().unwrap(),
         };
 
-        let mut ssh =
-            SSHClient::connect("/home/trdthg/.ssh/id_rsa", "ecs-user", "47.94.225.51:22").unwrap();
+        let mut ssh = SSHClient::connect(
+            SSHAuthAuth::PrivateKey("/home/trdthg/.ssh/id_rsa"),
+            "ecs-user",
+            "47.94.225.51:22",
+        )
+        .unwrap();
 
         e.cx.add_callback("print", move |cmd: String| {
             println!("{cmd}");
@@ -120,7 +124,7 @@ impl JSEngine {
                         .unwrap();
                     }
                     MsgReq::AssertScriptRun { cmd, .. } => {
-                        let res = ssh.exec(&cmd).unwrap();
+                        let res = ssh.exec_seperate(&cmd).unwrap();
                         println!("{res}");
                         tx.send(MsgRes::AssertScriptRun { res }).unwrap();
                     }

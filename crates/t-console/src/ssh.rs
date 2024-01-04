@@ -5,6 +5,7 @@ use std::net::ToSocketAddrs;
 use std::path::Path;
 use std::thread::sleep;
 use std::time::Duration;
+use tracing::info;
 
 use crate::get_parsed_str_from_xt100_bytes;
 
@@ -22,9 +23,15 @@ pub struct SSHClient {
 
 impl DuplexChannelConsole for SSHClient {}
 
+#[derive(Debug)]
+pub enum SSHAuthAuth<P: AsRef<Path>> {
+    PrivateKey(P),
+    Password(String),
+}
+
 impl SSHClient {
     pub fn connect<P: AsRef<Path>, A: ToSocketAddrs>(
-        key_path: P,
+        auth: SSHAuthAuth<P>,
         user: impl Into<String>,
         addrs: A,
     ) -> Result<Self> {
@@ -36,8 +43,14 @@ impl SSHClient {
         // never disconnect auto
         sess.set_timeout(0);
 
-        // Try to authenticate with the first identity in the agent.
-        sess.userauth_pubkey_file(&user.into(), None, key_path.as_ref(), None)?;
+        match auth {
+            SSHAuthAuth::PrivateKey(private_key) => {
+                sess.userauth_pubkey_file(&user.into(), None, private_key.as_ref(), None)?;
+            }
+            SSHAuthAuth::Password(password) => {
+                sess.userauth_password(&user.into(), password.as_str())?;
+            }
+        }
         assert!(sess.authenticated());
 
         let mut channel = sess.channel_session()?;
@@ -58,7 +71,7 @@ impl SSHClient {
 
         let tty = res.wr_global("tty").unwrap();
         res.tty = tty;
-        println!("tty: [{}]", res.tty.trim());
+        info!("ssh client tty: [{}]", res.tty.trim());
 
         Ok(res)
     }
@@ -176,7 +189,8 @@ mod test {
         let addrs = env::var("ADDRS").unwrap_or("127.0.0.1:22".to_string());
 
         dbg!(&key_path, &username, &addrs);
-        let mut serial = SSHClient::connect(key_path, username, addrs).unwrap();
+        let mut serial =
+            SSHClient::connect(SSHAuthAuth::PrivateKey(key_path), username, addrs).unwrap();
 
         let cmds = vec![
             ("export A=1", ""),
@@ -196,8 +210,10 @@ mod test {
         let addrs = env::var("ADDRS").unwrap_or("127.0.0.1:22".to_string());
 
         dbg!(&key_path, &username, &addrs);
-        let mut ssh = SSHClient::connect(&key_path, &username, &addrs).unwrap();
-        let mut ssh2 = SSHClient::connect(&key_path, &username, &addrs).unwrap();
+        let mut ssh =
+            SSHClient::connect(SSHAuthAuth::PrivateKey(&key_path), &username, &addrs).unwrap();
+        let mut ssh2 =
+            SSHClient::connect(SSHAuthAuth::PrivateKey(key_path), &username, &addrs).unwrap();
 
         let tty = ssh.tty();
 
@@ -215,7 +231,8 @@ mod test {
         let addrs = env::var("ADDRS").unwrap_or("127.0.0.1:22".to_string());
 
         dbg!(&key_path, &username, &addrs);
-        let mut sshc = SSHClient::connect(key_path, username, addrs).unwrap();
+        let mut sshc =
+            SSHClient::connect(SSHAuthAuth::PrivateKey(key_path), username, addrs).unwrap();
 
         let cmds = vec![
             // (r#"echo "A=$A"\n"#, "A=\n"),

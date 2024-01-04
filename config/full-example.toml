@@ -1,0 +1,21 @@
+[console]
+
+[console.ssh]
+enable           = true
+host             = "127.0.0.1"
+port             = 22
+username         = ""
+auth.type        = "PrivateKey"
+auth.password    = ""
+auth.private_key = ""
+
+[console.serial]
+enable      = true
+serial_file = "/dev/ttyUSB0"
+bund_rate   = 115200
+
+[console.vnc]
+enable   = false
+host     = "127.0.0.1"
+port     = 5900
+password = ""

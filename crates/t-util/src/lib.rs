@@ -1,4 +1,5 @@
 use regex::Regex;
+use tracing::trace;
 
 #[derive(Debug)]
 pub enum RegexError {
@@ -11,10 +12,7 @@ pub fn assert_capture_between(
     right: &str,
 ) -> Result<Option<String>, RegexError> {
     let re = format!("(?s){}(.*){}", regex::escape(left), regex::escape(right));
-    dbg!(&re);
-    dbg!(&src);
-    dbg!(&left);
-    dbg!(&right);
+    trace!(re = re, src = src, left = left, right = right,);
     let re = Regex::new(&re).map_err(|e| RegexError::RegexBuildError(e))?;
 
     let mut locs = re.capture_locations();

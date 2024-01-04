@@ -1,6 +1,7 @@
 use clap::Parser;
-use log::info;
 use t_console::VNCClient;
+use tracing::{info, Level};
+use tracing_subscriber::FmtSubscriber;
 
 fn default_host() -> String {
     "localhost".to_string()
@@ -23,9 +24,10 @@ pub struct Cli {
 }
 
 fn main() -> () {
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(Level::INFO)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     // CLI options are defined later in this file
     let cli = Cli::parse();

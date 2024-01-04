@@ -11,41 +11,27 @@ t-util    = { path = "./crates/t-util" }
 t-binding = { path = "./crates/t-binding" }
 
 # Dep
-clap         = { version = "4.4.11", features = ["derive", "cargo"] }
-dotenv       = { version = "0.15.0" }
-home         = { version = "0.5.9" }
-log          = { version = "0.4.20" }
-env_logger   = { version = "0.10.1" }
-anyhow       = { version = "1.0.76" }
-shell-escape = { version = "0.1.5" }
-regex        = { version = "1.10.2" }
-nanoid       = { version = "0.4.0" }
-tempfile     = { version = "3.9.0" }
-serde        = { version = "1.0.194", features = ["derive"] }
-toml         = { version = "0.8.8" }
-# serde_ini          = { version = "0.2.0" }
-# serde_json         = { version = "1.0.107", features = ["preserve_order"] }
-# serde_yaml         = { version = "0.9.1" }
-
-# syntex
-derive_more = { version = "0.99.17" }
-miette      = { version = "5.10.0", features = ["fancy"] }
-
-# script engine
-quick-js = { version = "0.4.1" }
-mlua     = { version = "0.9.1", features = ["lua54", "vendored"] }
-pyo3     = { version = "0.20.0", features = ["auto-initialize"] }
-
-# console
-# ssh2 = { version = "0.9.4", features = ["vendored-openssl"] }
-ssh2       = { version = "0.9.4", features = [] }
-serialport = { version = "4.3.0" }
-vt100      = { version = "0.15.2" }
-
-# image
-image     = "0.24.7"
-png       = "0.17.10"
-byteorder = "1.5.0"
+clap               = { version = "4.4.11", features = ["derive", "cargo"] }
+dotenv             = { version = "0.15.0" }
+home               = { version = "0.5.9" }
+tracing            = { version = "0.1.40" }
+tracing-subscriber = { version = "0.3.18" }
+anyhow             = { version = "1.0.76" }
+shell-escape       = { version = "0.1.5" }
+regex              = { version = "1.10.2" }
+nanoid             = { version = "0.4.0" }
+tempfile           = { version = "3.9.0" }
+serde              = { version = "1.0.194", features = ["derive"] }
+toml               = { version = "0.8.8" }
+quick-js           = { version = "0.4.1" }
+mlua               = { version = "0.9.1", features = ["lua54", "vendored"] }
+pyo3               = { version = "0.20.0", features = ["auto-initialize"] }
+ssh2               = { version = "0.9.4", features = [] }
+serialport         = { version = "4.3.0" }
+vt100              = { version = "0.15.2" }
+image              = { version = "0.24.7" }
+png                = { version = "0.17.10" }
+byteorder          = { version = "1.5.0" }
 
 [profile.dev]
 incremental = true

@@ -6,22 +6,22 @@ use std::{
 use anyhow::{Ok, Result};
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use image::ImageBuffer;
-use log::{error, info};
+use tracing::{error, info};
 use vnc::PixelFormat;
 
 use crate::ScreenControlConsole;
 
 use super::{data::RectContainer, pixel::RGBPixel};
 
-pub struct VNCClient<P> {
+pub struct VNCClient {
     vnc: Option<vnc::Client>,
     pixel_format: PixelFormat,
-    screen: RectContainer<P>,
+    screen: RectContainer<RGBPixel>,
 }
 
-impl ScreenControlConsole for VNCClient<RGBPixel> {}
+impl ScreenControlConsole for VNCClient {}
 
-impl VNCClient<RGBPixel> {
+impl VNCClient {
     pub fn connect<A: Into<String>>(addrs: A, password: Option<String>) -> Result<Self> {
         let stream =
             TcpStream::connect_timeout(&addrs.into().parse().unwrap(), Duration::from_secs(3))?;

@@ -6,5 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vt100 = { workspace = true }
-regex = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+vt100              = { workspace = true }
+regex              = { workspace = true }
