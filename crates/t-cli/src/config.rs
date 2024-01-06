@@ -2,6 +2,7 @@ use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
+    pub log_dir: Option<String>,
     pub console: Console,
 }
 

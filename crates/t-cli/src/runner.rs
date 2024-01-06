@@ -1,4 +1,7 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use t_binding::{JSEngine, LuaEngine, ScriptEngine};
 
@@ -22,6 +25,14 @@ impl Runner {
 
     pub fn run(&mut self) {
         self.engine.run(self.content.as_str());
+    }
+
+    pub fn dump_log(&mut self, dir: impl AsRef<Path>) {
+        let ssh = crate::get_mut_global_ssh();
+        let mut log_path = PathBuf::new();
+        log_path.push(dir);
+        log_path.push("ssh_full_log.txt");
+        fs::write(log_path, ssh.history()).unwrap();
     }
 }
 

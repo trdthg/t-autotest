@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::fs;
+use std::{env, fs, path::Path};
 use t_cli::{init, Config, Runner};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -15,7 +15,16 @@ pub struct Cli {
 
 fn main() {
     let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
+        .with_max_level(match env::var("RUST_LOG") {
+            Ok(l) => match l.as_str() {
+                "trace" => Level::TRACE,
+                "debug" => Level::DEBUG,
+                "warn" => Level::WARN,
+                "error" => Level::ERROR,
+                "info" | _ => Level::INFO,
+            },
+            _ => Level::INFO,
+        })
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
@@ -24,10 +33,17 @@ fn main() {
 
     let config: Config = toml::from_str(fs::read_to_string(&cli.file).unwrap().as_str()).unwrap();
     info!("{:#?}", config);
+    let log_dir = config
+        .log_dir
+        .clone()
+        .unwrap_or_else(|| env::current_dir().unwrap().to_str().unwrap().to_string());
 
     init(config);
 
-    Runner::new(cli.case).run();
+    let mut runner = Runner::new(cli.case);
+    runner.run();
+
+    runner.dump_log(&Path::new(&log_dir));
 }
 
 #[cfg(test)]
