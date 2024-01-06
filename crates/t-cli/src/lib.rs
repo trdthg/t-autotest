@@ -17,6 +17,11 @@ static mut GLOBAL_SSH: OnceLock<SSHClient> = OnceLock::new();
 static mut GLOBAL_SERIAL: OnceLock<SerialClient> = OnceLock::new();
 static mut GLOBAL_VNC: OnceLock<Mutex<VNCClient>> = OnceLock::new();
 
+pub fn get_mut_global_ssh() -> &'static mut SSHClient {
+    let ssh = unsafe { GLOBAL_SSH.get_mut().unwrap() };
+    ssh
+}
+
 pub fn init(config: Config) -> () {
     let Config {
         console:
@@ -25,6 +30,7 @@ pub fn init(config: Config) -> () {
                 serial: _serial,
                 vnc: _vnc,
             },
+        log_dir: _,
     } = config;
     info!("init...");
     if _ssh.enable {
@@ -92,9 +98,21 @@ pub fn init(config: Config) -> () {
                     similarity: 1,
                     ok: true,
                 },
-                MsgReq::AssertScriptRun { cmd, .. } => {
-                    let res = unsafe { GLOBAL_SSH.get_mut().unwrap().exec_seperate(&cmd).unwrap() };
-                    MsgRes::AssertScriptRun { res }
+                MsgReq::AssertScriptRunSshSeperate { cmd, timeout } => {
+                    let ssh = unsafe { GLOBAL_SSH.get_mut().unwrap() };
+                    let res =
+                        t_util::run_with_timeout(move || ssh.exec_seperate(&cmd).unwrap(), timeout)
+                            .unwrap();
+                    MsgRes::AssertScriptRunSshSeperate { res }
+                }
+                MsgReq::AssertScriptRunSshGlobal { cmd, timeout } => {
+                    let ssh = unsafe { GLOBAL_SSH.get_mut().unwrap() };
+                    let res = t_util::run_with_timeout(
+                        move || ssh.exec_global(&cmd).expect("ssh connection brokrn"),
+                        timeout,
+                    )
+                    .unwrap();
+                    MsgRes::AssertScriptRunSshGlobal { res }
                 }
             };
             info!("send res: {:#?}", res);

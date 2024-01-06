@@ -1,6 +1,9 @@
 use crate::{MsgReq, MsgRes, GLOBAL_BASE_SENDER};
 use quick_js::JsValue;
-use std::{sync::mpsc::channel, time::Duration};
+use std::{
+    sync::mpsc::{self, channel},
+    time::Duration,
+};
 use tracing::{info, trace};
 
 pub fn print(msg: String) -> JsValue {
@@ -8,7 +11,7 @@ pub fn print(msg: String) -> JsValue {
     JsValue::Null
 }
 
-pub fn assert_script_run(tags: String, timeout: i32) -> JsValue {
+pub fn assert_script_run_ssh_seperate(cmd: String, timeout: i32) -> JsValue {
     trace!("assert_script_run::req");
     let msg_tx = unsafe { GLOBAL_BASE_SENDER.as_ref().unwrap().lock().unwrap().clone() };
     let (tx, rx) = channel::<MsgRes>();
@@ -16,9 +19,8 @@ pub fn assert_script_run(tags: String, timeout: i32) -> JsValue {
     trace!("assert_script_run sending");
     msg_tx
         .send((
-            MsgReq::AssertScreen {
-                tag: tags,
-                threshold: 1,
+            MsgReq::AssertScriptRunSshSeperate {
+                cmd,
                 timeout: Duration::from_millis(timeout as u64),
             },
             tx,
@@ -31,8 +33,37 @@ pub fn assert_script_run(tags: String, timeout: i32) -> JsValue {
         .recv_timeout(Duration::from_millis(timeout as u64))
         .unwrap();
 
-    let res = if let MsgRes::AssertScreen { similarity, ok } = res {
-        JsValue::Int(similarity)
+    let res = if let MsgRes::AssertScriptRunSshSeperate { res } = res {
+        JsValue::String(res)
+    } else {
+        JsValue::Null
+    };
+    trace!("assert_script_run done");
+    res
+}
+
+pub fn assert_script_run_ssh_global(cmd: String, timeout: i32) -> JsValue {
+    trace!("assert_script_run::req");
+    let msg_tx = unsafe { GLOBAL_BASE_SENDER.as_ref().unwrap().lock().unwrap().clone() };
+    let (tx, rx) = mpsc::channel::<MsgRes>();
+
+    trace!("assert_script_run sending");
+    msg_tx
+        .send((
+            MsgReq::AssertScriptRunSshGlobal {
+                cmd,
+                timeout: Duration::from_millis(timeout as u64),
+            },
+            tx,
+        ))
+        .unwrap();
+    trace!("assert_script_run send done");
+
+    trace!("assert_script_run waiting");
+
+    let res = rx.recv().unwrap();
+    let res = if let MsgRes::AssertScriptRunSshGlobal { res } = res {
+        JsValue::String(res)
     } else {
         JsValue::Null
     };

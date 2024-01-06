@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{api, ScriptEngine};
 use quick_js::Context;
 
@@ -18,8 +20,17 @@ impl JSEngine {
         };
 
         e.cx.add_callback("print", api::print).unwrap();
-        e.cx.add_callback("assert_script_run", api::assert_script_run)
-            .unwrap();
+        e.cx.add_callback(
+            "assert_script_run_ssh_seperate",
+            api::assert_script_run_ssh_seperate,
+        )
+        .unwrap();
+
+        e.cx.add_callback(
+            "assert_script_run_ssh_global",
+            api::assert_script_run_ssh_global,
+        )
+        .unwrap();
 
         e
     }

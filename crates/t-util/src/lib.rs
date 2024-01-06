@@ -1,3 +1,5 @@
+use std::{sync::mpsc, thread, time::Duration};
+
 use regex::Regex;
 use tracing::trace;
 
@@ -22,6 +24,27 @@ pub fn assert_capture_between(
     let res_loc = locs.get(1).unwrap();
 
     Ok(Some(src[res_loc.0..res_loc.1].to_string()))
+}
+
+pub fn run_with_timeout<F, T>(f: F, timeout: Duration) -> Result<T, ()>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    if timeout.is_zero() {
+        return Ok(f());
+    }
+
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let result = f();
+        sender.send(result).unwrap();
+    });
+
+    match receiver.recv_timeout(timeout) {
+        Ok(result) => Ok(result),
+        Err(_) => Err(()),
+    }
 }
 
 #[cfg(test)]

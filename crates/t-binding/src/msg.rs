@@ -2,7 +2,11 @@ use std::time::Duration;
 
 #[derive(Debug)]
 pub enum MsgReq {
-    AssertScriptRun {
+    AssertScriptRunSshSeperate {
+        cmd: String,
+        timeout: Duration,
+    },
+    AssertScriptRunSshGlobal {
         cmd: String,
         timeout: Duration,
     },
@@ -15,6 +19,7 @@ pub enum MsgReq {
 
 #[derive(Debug)]
 pub enum MsgRes {
-    AssertScriptRun { res: String },
+    AssertScriptRunSshSeperate { res: String },
+    AssertScriptRunSshGlobal { res: String },
     AssertScreen { similarity: i32, ok: bool },
 }
