@@ -14,6 +14,13 @@ pub struct Cli {
 }
 
 fn main() {
+    let format = tracing_subscriber::fmt::format()
+        .without_time()
+        .with_target(false)
+        .with_level(true)
+        .with_source_location(true)
+        .compact();
+
     let subscriber = FmtSubscriber::builder()
         .with_max_level(match env::var("RUST_LOG") {
             Ok(l) => match l.as_str() {
@@ -25,6 +32,7 @@ fn main() {
             },
             _ => Level::INFO,
         })
+        .event_format(format)
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
