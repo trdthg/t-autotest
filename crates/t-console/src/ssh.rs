@@ -104,7 +104,7 @@ impl SSHClient {
         Ok(())
     }
 
-    pub fn read_golbal_until(&mut self, pattern: &str) -> Result<()> {
+    fn read_golbal_and<T>(&mut self, f: impl Fn(&[u8]) -> Option<T>) -> Result<T> {
         let ch = &mut self.shell;
 
         let current_buffer_start = self.buffer.len();
@@ -120,18 +120,29 @@ impl SSHClient {
                     self.history.extend(received);
 
                     // find target pattern
-                    let buffer_str = get_parsed_str_from_xt100_bytes(&self.buffer);
-                    if buffer_str.find(pattern).is_none() {
+                    // let buffer_str = get_parsed_str_from_xt100_bytes(&self.buffer);
+                    // let res = buffer_str.find(pattern);
+                    let res = f(&self.buffer);
+                    // if buffer_str.find(pattern).is_none() {
+                    if res.is_none() {
                         continue;
                     }
 
                     // cut from last find
                     self.buffer = self.buffer[current_buffer_start..].to_owned();
-                    return Ok(());
+                    return Ok(res.unwrap());
                 }
                 Err(_) => unreachable!(),
             }
         }
+    }
+
+    pub fn read_golbal_until(&mut self, pattern: &str) -> Result<()> {
+        self.read_golbal_and(|buffer| {
+            let buffer_str = get_parsed_str_from_xt100_bytes(buffer);
+            buffer_str.find(pattern)
+        })
+        .map(|_| ())
     }
 
     pub fn exec_global(&mut self, command: &str) -> Result<String> {
@@ -149,39 +160,17 @@ impl SSHClient {
 
         ch.flush().unwrap();
 
-        let current_buffer_start = self.buffer.len();
-
-        loop {
-            let mut output_buffer = [0u8; 1024];
-            match ch.read(&mut output_buffer) {
-                Ok(n) => {
-                    let received = &output_buffer[0..n];
-
-                    // save to buffer
-                    self.buffer.extend(received);
-                    self.history.extend(received);
-
-                    // find target pattern from buffer
-                    let parsed_str = get_parsed_str_from_xt100_bytes(&self.buffer);
-                    trace!("current buffer: [{:?}]", get_parsed_str_from_xt100_bytes(&self.buffer));
-
-                    let res = t_util::assert_capture_between(
-                        &parsed_str,
-                        &format!("{nanoid}\n"),
-                        &nanoid,
-                    )
-                    .unwrap();
-                    if res.is_none() {
-                        continue;
-                    }
-
-                    self.buffer = self.buffer[current_buffer_start..].to_owned();
-
-                    return Ok(res.unwrap());
-                }
-                Err(_) => unreachable!(),
-            }
-        }
+        self.read_golbal_and(|buffer| {
+            // find target pattern from buffer
+            let parsed_str = get_parsed_str_from_xt100_bytes(buffer);
+            trace!(
+                "current buffer: [{:?}]",
+                get_parsed_str_from_xt100_bytes(buffer)
+            );
+            let res = t_util::assert_capture_between(&parsed_str, &format!("{nanoid}\n"), &nanoid)
+                .unwrap();
+            res
+        })
     }
 
     pub fn upload_file(&mut self, remote_path: impl AsRef<Path>) {
