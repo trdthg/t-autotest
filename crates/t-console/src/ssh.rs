@@ -1,11 +1,12 @@
 use anyhow::Result;
+use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
 use std::path::Path;
 use std::thread::sleep;
 use std::time::Duration;
-use tracing::info;
+use tracing::{debug, info, trace};
 
 use crate::get_parsed_str_from_xt100_bytes;
 
@@ -17,8 +18,8 @@ pub struct SSHClient {
     session: ssh2::Session,
     shell: ssh2::Channel,
     tty: String,
-    buffer: String,
-    history: String,
+    buffer: Vec<u8>,
+    history: Vec<u8>,
 }
 
 impl DuplexChannelConsole for SSHClient {}
@@ -52,6 +53,7 @@ impl SSHClient {
             }
         }
         assert!(sess.authenticated());
+        debug!("ssh auth success");
 
         let mut channel = sess.channel_session()?;
         channel
@@ -65,11 +67,12 @@ impl SSHClient {
             session: sess,
             shell: channel,
             tty: "".to_string(),
-            buffer: String::new(),
-            history: String::new(),
+            buffer: Vec::new(),
+            history: Vec::new(),
         };
 
-        let tty = res.wr_global("tty").unwrap();
+        debug!("ssh getting tty...");
+        let tty = res.exec_global("tty").unwrap();
         res.tty = tty;
         info!("ssh client tty: [{}]", res.tty.trim());
 
@@ -78,6 +81,10 @@ impl SSHClient {
 
     pub fn tty(&self) -> String {
         return self.tty.clone();
+    }
+
+    pub fn history(&self) -> String {
+        return get_parsed_str_from_xt100_bytes(&self.history.clone());
     }
 
     pub fn exec_seperate(&mut self, command: &str) -> Result<String> {
@@ -100,26 +107,26 @@ impl SSHClient {
     pub fn read_golbal_until(&mut self, pattern: &str) -> Result<()> {
         let ch = &mut self.shell;
 
+        let current_buffer_start = self.buffer.len();
+
         loop {
             let mut output_buffer = [0u8; 1024];
             match ch.read(&mut output_buffer) {
                 Ok(n) => {
                     let received = &output_buffer[0..n];
 
-                    let parsed_str = get_parsed_str_from_xt100_bytes(received);
-                    self.buffer.push_str(&parsed_str);
-                    self.history.push_str(&parsed_str);
+                    // save to buffer
+                    self.buffer.extend(received);
+                    self.history.extend(received);
 
-                    let buffered_output = &mut self.buffer;
-
-                    let loc = buffered_output.find(pattern);
-                    if loc.is_none() {
+                    // find target pattern
+                    let buffer_str = get_parsed_str_from_xt100_bytes(&self.buffer);
+                    if buffer_str.find(pattern).is_none() {
                         continue;
                     }
-                    let loc = loc.unwrap();
 
-                    let update = buffered_output[loc + pattern.len()..].to_owned();
-                    self.buffer = update;
+                    // cut from last find
+                    self.buffer = self.buffer[current_buffer_start..].to_owned();
                     return Ok(());
                 }
                 Err(_) => unreachable!(),
@@ -127,7 +134,7 @@ impl SSHClient {
         }
     }
 
-    pub fn wr_global(&mut self, command: &str) -> Result<String> {
+    pub fn exec_global(&mut self, command: &str) -> Result<String> {
         // "echo {}\n", \n may lost if no sleep
         sleep(Duration::from_millis(100));
 
@@ -142,20 +149,24 @@ impl SSHClient {
 
         ch.flush().unwrap();
 
+        let current_buffer_start = self.buffer.len();
+
         loop {
             let mut output_buffer = [0u8; 1024];
             match ch.read(&mut output_buffer) {
                 Ok(n) => {
                     let received = &output_buffer[0..n];
 
-                    let parsed_str = get_parsed_str_from_xt100_bytes(received);
-                    self.buffer.push_str(&parsed_str);
-                    self.history.push_str(&parsed_str);
+                    // save to buffer
+                    self.buffer.extend(received);
+                    self.history.extend(received);
 
-                    let buffered_output = &mut self.buffer;
+                    // find target pattern from buffer
+                    let parsed_str = get_parsed_str_from_xt100_bytes(&self.buffer);
+                    trace!("current buffer: [{:?}]", get_parsed_str_from_xt100_bytes(&self.buffer));
 
                     let res = t_util::assert_capture_between(
-                        &buffered_output,
+                        &parsed_str,
                         &format!("{nanoid}\n"),
                         &nanoid,
                     )
@@ -164,15 +175,20 @@ impl SSHClient {
                         continue;
                     }
 
-                    let first_place = buffered_output.find(nanoid.as_str()).unwrap();
-                    let update = buffered_output[first_place + nanoid.len() + 1..].to_owned();
-                    self.buffer = update;
+                    self.buffer = self.buffer[current_buffer_start..].to_owned();
 
                     return Ok(res.unwrap());
                 }
                 Err(_) => unreachable!(),
             }
         }
+    }
+
+    pub fn upload_file(&mut self, remote_path: impl AsRef<Path>) {
+        let p: &Path = remote_path.as_ref();
+        assert!(p.exists());
+        let stat = fs::metadata(p).unwrap();
+        self.session.scp_send(p, 0644, stat.len(), None).unwrap();
     }
 }
 
@@ -243,7 +259,7 @@ mod test {
             ("export A=2;echo A=$A", "A=2\n"),
         ];
         for cmd in cmds {
-            let res = sshc.wr_global(cmd.0).unwrap();
+            let res = sshc.exec_global(cmd.0).unwrap();
             assert_eq!(res, cmd.1);
         }
     }
