@@ -71,6 +71,35 @@ pub fn assert_script_run_ssh_global(cmd: String, timeout: i32) -> JsValue {
     res
 }
 
+pub fn assert_script_run_serial_global(cmd: String, timeout: i32) -> JsValue {
+    trace!("assert_script_run::req");
+    let msg_tx = unsafe { GLOBAL_BASE_SENDER.as_ref().unwrap().lock().unwrap().clone() };
+    let (tx, rx) = mpsc::channel::<MsgRes>();
+
+    trace!("assert_script_run sending");
+    msg_tx
+        .send((
+            MsgReq::AssertScriptRunSerialGlobal {
+                cmd,
+                timeout: Duration::from_millis(timeout as u64),
+            },
+            tx,
+        ))
+        .unwrap();
+    trace!("assert_script_run send done");
+
+    trace!("assert_script_run waiting");
+
+    let res = rx.recv().unwrap();
+    let res = if let MsgRes::AssertScriptRunSerialGlobal { res } = res {
+        JsValue::String(res)
+    } else {
+        JsValue::Null
+    };
+    trace!("assert_script_run done");
+    res
+}
+
 pub fn assert_screen(tags: String, timeout: i32) {
     trace!("assert_script_run pre");
     let msg_tx = unsafe { GLOBAL_BASE_SENDER.as_ref().unwrap().lock().unwrap().clone() };

@@ -10,6 +10,10 @@ pub enum MsgReq {
         cmd: String,
         timeout: Duration,
     },
+    AssertScriptRunSerialGlobal {
+        cmd: String,
+        timeout: Duration,
+    },
     AssertScreen {
         tag: String,
         threshold: i32,
@@ -21,5 +25,6 @@ pub enum MsgReq {
 pub enum MsgRes {
     AssertScriptRunSshSeperate { res: String },
     AssertScriptRunSshGlobal { res: String },
+    AssertScriptRunSerialGlobal { res: String },
     AssertScreen { similarity: i32, ok: bool },
 }

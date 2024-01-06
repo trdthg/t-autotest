@@ -32,6 +32,12 @@ impl JSEngine {
         )
         .unwrap();
 
+        e.cx.add_callback(
+            "assert_script_run_serial_global",
+            api::assert_script_run_serial_global,
+        )
+        .unwrap();
+
         e
     }
 
