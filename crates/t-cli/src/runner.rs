@@ -30,15 +30,20 @@ impl Runner {
     pub fn dump_log(&mut self, dir: impl AsRef<Path>) {
         let ssh = crate::get_mut_global_ssh();
         let mut log_path = PathBuf::new();
-        log_path.push(dir);
+        log_path.push(dir.as_ref());
         log_path.push("ssh_full_log.txt");
-        fs::write(log_path, ssh.history()).unwrap();
+        fs::write(log_path, ssh.dump_history()).unwrap();
+
+        let serial = crate::get_mut_global_serial();
+        let mut log_path = PathBuf::new();
+        log_path.push(dir.as_ref());
+        log_path.push("serial_full_log.txt");
+        fs::write(log_path, serial.dump_history()).unwrap();
     }
 }
 
 #[cfg(test)]
 mod test {
-    use t_binding::JSEngine;
 
     #[test]
     fn test_runner() {}

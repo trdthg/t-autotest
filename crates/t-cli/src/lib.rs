@@ -1,7 +1,4 @@
-mod config;
 mod runner;
-use crate::config::{Console, ConsoleSSHAuthType};
-pub use config::Config;
 pub use runner::Runner;
 use std::{
     path::Path,
@@ -10,6 +7,7 @@ use std::{
     time::Duration,
 };
 use t_binding::{MsgReq, MsgRes};
+use t_config::{Config, Console, ConsoleSSHAuthType};
 use t_console::{SSHAuthAuth, SSHClient, SerialClient, VNCClient};
 use tracing::{debug, info};
 
@@ -18,8 +16,11 @@ static mut GLOBAL_SERIAL: OnceLock<SerialClient> = OnceLock::new();
 static mut GLOBAL_VNC: OnceLock<Mutex<VNCClient>> = OnceLock::new();
 
 pub fn get_mut_global_ssh() -> &'static mut SSHClient {
-    let ssh = unsafe { GLOBAL_SSH.get_mut().unwrap() };
-    ssh
+    unsafe { GLOBAL_SSH.get_mut().unwrap() }
+}
+
+pub fn get_mut_global_serial() -> &'static mut SerialClient {
+    unsafe { GLOBAL_SERIAL.get_mut().unwrap() }
 }
 
 pub fn init(config: Config) -> () {
@@ -139,7 +140,11 @@ mod test {
 
     #[test]
     fn test_example_toml() {
-        toml::from_str::<Config>(fs::read_to_string("./config.full.toml").unwrap().as_str())
-            .unwrap();
+        toml::from_str::<Config>(
+            fs::read_to_string("../../config/full-example.toml")
+                .unwrap()
+                .as_str(),
+        )
+        .unwrap();
     }
 }

@@ -51,18 +51,4 @@ pub struct ConsoleVNC {
 }
 
 #[cfg(test)]
-mod test {
-    use std::fs;
-
-    use super::Config;
-
-    #[test]
-    fn test_example_toml() {
-        toml::from_str::<Config>(
-            fs::read_to_string("./config/full-example.toml")
-                .unwrap()
-                .as_str(),
-        )
-        .unwrap();
-    }
-}
+mod test {}

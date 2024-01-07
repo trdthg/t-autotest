@@ -6,8 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-t-vnc  = { workspace = true }
-t-util = { workspace = true }
+t-vnc    = { workspace = true }
+t-util   = { workspace = true }
+t-config = { workspace = true }
 
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }

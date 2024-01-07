@@ -1243,12 +1243,21 @@ dependencies = [
  "shell-escape",
  "ssh2",
  "t-binding",
+ "t-config",
  "t-console",
  "t-util",
  "t-vnc",
  "toml",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "t-config"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml",
 ]
 
 [[package]]
@@ -1265,6 +1274,7 @@ dependencies = [
  "png",
  "serialport",
  "ssh2",
+ "t-config",
  "t-util",
  "t-vnc",
  "tempfile",

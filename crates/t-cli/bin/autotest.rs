@@ -1,6 +1,7 @@
 use clap::Parser;
 use std::{env, fs, path::Path};
-use t_cli::{init, Config, Runner};
+use t_cli::{init, Runner};
+use t_config::Config;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 

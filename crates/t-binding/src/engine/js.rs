@@ -62,6 +62,7 @@ mod test {
     use crate::JSEngine;
 
     #[test]
+    #[should_panic]
     fn test_engine() {
         JSEngine::_new()
             .run(

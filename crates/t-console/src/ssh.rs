@@ -81,7 +81,7 @@ impl SSHClient {
         return self.tty.clone();
     }
 
-    pub fn history(&self) -> String {
+    pub fn dump_history(&self) -> String {
         return parse_str_from_xt100_bytes(&self.history.clone());
     }
 
@@ -182,38 +182,58 @@ mod test {
 
     use super::*;
 
-    #[test]
-    fn test_exec() {
-        let key_path = env::var("KEY_PATH").unwrap_or("~/.ssh/id_rsa".to_string());
-        let username = env::var("USERNAME").unwrap_or("root".to_string());
-        let addrs = env::var("ADDRS").unwrap_or("127.0.0.1:22".to_string());
+    fn get_config_from_file() -> t_config::Config {
+        let f = env::var("AUTOTEST_CONFIG_FILE").unwrap();
+        t_config::load_config_from_file(f).unwrap()
+    }
+
+    fn get_ssh_client() -> SSHClient {
+        let c = get_config_from_file();
+        assert!(c.console.ssh.enable);
+
+        let key_path = c.console.ssh.auth.private_key;
+        let username = c.console.ssh.username;
+        let addrs = format!("{}:{}", c.console.ssh.host, c.console.ssh.port);
+
+        let auth = match c.console.ssh.auth.r#type {
+            t_config::ConsoleSSHAuthType::PrivateKey => SSHAuthAuth::PrivateKey(
+                key_path.clone().unwrap_or(
+                    home::home_dir()
+                        .map(|mut p| {
+                            p.push(".ssh/id_rsa");
+                            p.to_str().unwrap().to_string()
+                        })
+                        .unwrap(),
+                ),
+            ),
+            t_config::ConsoleSSHAuthType::Password => {
+                SSHAuthAuth::Password(c.console.ssh.auth.password.unwrap())
+            }
+        };
 
         dbg!(&key_path, &username, &addrs);
-        let mut serial =
-            SSHClient::connect(SSHAuthAuth::PrivateKey(key_path), username, addrs).unwrap();
+        let serial = SSHClient::connect(auth, username, addrs).unwrap();
+        serial
+    }
 
+    #[test]
+    fn test_exec() {
         let cmds = vec![
             ("export A=1", ""),
             (r#"echo "A=$A""#, "A=\n"),
             (r#"export A=1;echo "A=$A""#, "A=1\n"),
         ];
+        let mut ssh = get_ssh_client();
         for cmd in cmds {
-            let res = serial.exec_seperate(cmd.0).unwrap();
+            let res = ssh.exec_seperate(cmd.0).unwrap();
             assert_eq!(res, cmd.1);
         }
     }
 
     #[test]
     fn test_tty_and_read_until() {
-        let key_path = env::var("KEY_PATH").unwrap_or("~/.ssh/id_rsa".to_string());
-        let username = env::var("USERNAME").unwrap_or("root".to_string());
-        let addrs = env::var("ADDRS").unwrap_or("127.0.0.1:22".to_string());
-
-        dbg!(&key_path, &username, &addrs);
-        let mut ssh =
-            SSHClient::connect(SSHAuthAuth::PrivateKey(&key_path), &username, &addrs).unwrap();
-        let mut ssh2 =
-            SSHClient::connect(SSHAuthAuth::PrivateKey(key_path), &username, &addrs).unwrap();
+        let mut ssh = get_ssh_client();
+        let mut ssh2 = get_ssh_client();
 
         let tty = ssh.tty();
 
@@ -226,13 +246,7 @@ mod test {
 
     #[test]
     fn test_wr() {
-        let key_path = env::var("KEY_PATH").unwrap_or("~/.ssh/id_rsa".to_string());
-        let username = env::var("USERNAME").unwrap_or("root".to_string());
-        let addrs = env::var("ADDRS").unwrap_or("127.0.0.1:22".to_string());
-
-        dbg!(&key_path, &username, &addrs);
-        let mut sshc =
-            SSHClient::connect(SSHAuthAuth::PrivateKey(key_path), username, addrs).unwrap();
+        let mut ssh = get_ssh_client();
 
         let cmds = vec![
             // (r#"echo "A=$A"\n"#, "A=\n"),
@@ -243,7 +257,7 @@ mod test {
             ("export A=2;echo A=$A", "A=2\n"),
         ];
         for cmd in cmds {
-            let res = sshc.exec_global(cmd.0).unwrap();
+            let res = ssh.exec_global(cmd.0).unwrap();
             assert_eq!(res, cmd.1);
         }
     }

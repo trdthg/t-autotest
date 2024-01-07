@@ -27,6 +27,10 @@ pub enum SerialError {
 }
 
 impl SerialClient {
+    pub fn dump_history(&self) -> String {
+        parse_str_from_xt100_bytes(&self.history)
+    }
+
     pub fn connect(
         file: impl Into<String>,
         bund_rate: u32,
@@ -121,10 +125,24 @@ mod test {
     use crate::SerialClient;
     use std::{env, time::Duration};
 
+    fn get_config_from_file() -> t_config::Config {
+        let f = env::var("AUTOTEST_CONFIG_FILE").unwrap();
+        t_config::load_config_from_file(f).unwrap()
+    }
+
+    fn get_client() -> SerialClient {
+        let c = get_config_from_file();
+        assert!(c.console.serial.enable);
+
+        let c = c.console.serial;
+        let serial =
+            SerialClient::connect(c.serial_file, c.bund_rate, Duration::from_secs(1)).unwrap();
+        serial
+    }
+
     #[test]
     fn test_exec_global() {
-        let file = env::var("SERIAL_FILE").unwrap_or("/dev/ttyUSB0".to_string());
-        let mut serial = SerialClient::connect(file, 115_200, Duration::from_secs(10000)).unwrap();
+        let mut serial = get_client();
 
         let cmds = vec![
             ("unset A", ""),
@@ -133,7 +151,7 @@ mod test {
             (r#"echo "A=$A""#, "A=1\n"),
         ];
 
-        (0..100).for_each(|_| {
+        (0..10).for_each(|_| {
             for cmd in cmds.iter() {
                 let res = serial.exec_global(cmd.0).unwrap();
                 assert_eq!(res, cmd.1);

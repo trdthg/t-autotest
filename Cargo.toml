@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members  = ["crates/t-cli", "crates/t-console", "crates/t-vnc", "crates/t-util", "crates/t-binding"]
+members  = ["crates/t-cli", "crates/t-console", "crates/t-vnc", "crates/t-util", "crates/t-binding", "crates/t-config"]
 
 [workspace.dependencies]
 # Crates
@@ -9,6 +9,7 @@ t-console = { path = "./crates/t-console" }
 t-vnc     = { path = "./crates/t-vnc" }
 t-util    = { path = "./crates/t-util" }
 t-binding = { path = "./crates/t-binding" }
+t-config  = { path = "./crates/t-config" }
 
 # Dep
 clap               = { version = "4.4.11", features = ["derive", "cargo"] }
