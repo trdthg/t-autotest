@@ -34,7 +34,10 @@ impl JSEngine {
 
         e.cx.add_callback(
             "assert_script_run_serial_global",
-            api::assert_script_run_serial_global,
+            move |cmd: String, timeout: i32| -> String {
+                let res = api::assert_script_run_serial_global(cmd, timeout);
+                res.1
+            },
         )
         .unwrap();
 
@@ -148,6 +151,7 @@ mod test {
     }
 
     #[test]
+    #[should_panic]
     fn test_quickjs_module() {
         let ctx = Context::new().unwrap();
 

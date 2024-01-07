@@ -24,6 +24,7 @@ tempfile           = { version = "3.9.0" }
 serde              = { version = "1.0.194", features = ["derive"] }
 toml               = { version = "0.8.8" }
 quick-js           = { version = "0.4.1" }
+rquickjs           = { version = "0.4.0" }
 mlua               = { version = "0.9.1", features = ["lua54", "vendored"] }
 pyo3               = { version = "0.20.0", features = ["auto-initialize"] }
 ssh2               = { version = "0.9.4", features = [] }

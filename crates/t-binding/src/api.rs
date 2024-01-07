@@ -71,7 +71,7 @@ pub fn assert_script_run_ssh_global(cmd: String, timeout: i32) -> JsValue {
     res
 }
 
-pub fn assert_script_run_serial_global(cmd: String, timeout: i32) -> JsValue {
+pub fn assert_script_run_serial_global(cmd: String, timeout: i32) -> (bool, String) {
     trace!("assert_script_run::req");
     let msg_tx = unsafe { GLOBAL_BASE_SENDER.as_ref().unwrap().lock().unwrap().clone() };
     let (tx, rx) = mpsc::channel::<MsgRes>();
@@ -92,9 +92,9 @@ pub fn assert_script_run_serial_global(cmd: String, timeout: i32) -> JsValue {
 
     let res = rx.recv().unwrap();
     let res = if let MsgRes::AssertScriptRunSerialGlobal { res } = res {
-        JsValue::String(res)
+        (true, res)
     } else {
-        JsValue::Null
+        (false, "".to_string())
     };
     trace!("assert_script_run done");
     res
