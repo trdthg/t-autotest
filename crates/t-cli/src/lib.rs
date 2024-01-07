@@ -114,6 +114,15 @@ pub fn init(config: Config) -> () {
                     .unwrap();
                     MsgRes::AssertScriptRunSshGlobal { res }
                 }
+                MsgReq::AssertScriptRunSerialGlobal { cmd, timeout } => {
+                    let ssh = get_mut_global_ssh();
+                    let res = t_util::run_with_timeout(
+                        move || ssh.exec_global(&cmd).expect("ssh connection brokrn"),
+                        timeout,
+                    )
+                    .unwrap();
+                    MsgRes::AssertScriptRunSerialGlobal { res }
+                }
             };
             info!("send res: {:#?}", res);
             tx.send(res).unwrap();

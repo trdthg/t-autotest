@@ -1,16 +1,18 @@
-use std::io::{self, Read, Write};
-use std::time::Duration;
-
+use super::DuplexChannelConsole;
+use crate::{parse_str_from_xt100_bytes, MAGIC_STRING};
+use anyhow::Result;
 use image::EncodableLayout;
 use serialport::TTYPort;
-
-use crate::{get_parsed_str_from_xt100_bytes, MAGIC_STRING};
-
-use super::DuplexChannelConsole;
+use std::io::{self, Read, Write};
+use std::path::Path;
+use std::thread::sleep;
+use std::time::Duration;
+use t_util::ExecutorError;
+use tracing::{debug, trace};
 
 pub struct SerialClient {
     conn: TTYPort,
-    prompt: String,
+    buffer: Vec<u8>,
     history: Vec<u8>,
 }
 
@@ -21,6 +23,7 @@ pub enum SerialError {
     ConnectError(String),
     Read(io::Error),
     Write(io::Error),
+    STTY(ExecutorError),
 }
 
 impl SerialClient {
@@ -29,7 +32,18 @@ impl SerialClient {
         bund_rate: u32,
         timeout: Duration,
     ) -> Result<Self, SerialError> {
-        let file = file.into();
+        let file: String = file.into();
+        let path = Path::new(&file);
+        if !path.exists() {
+            panic!("serial path not exists");
+        }
+
+        // init tty
+        t_util::execute_shell(
+            format!("stty -F {} {} -echo -icrnl -onlcr -icanon", file, bund_rate).as_str(),
+        )
+        .map_err(|e| SerialError::STTY(e))?;
+
         let port = serialport::new(&file, bund_rate)
             .timeout(timeout)
             .open_native()
@@ -37,84 +51,93 @@ impl SerialClient {
 
         let mut res = Self {
             conn: port,
-            prompt: "".to_string(),
+            buffer: Vec::new(),
             history: Vec::new(),
         };
 
-        res.update_prompt();
+        res.conn.write_all("^C\n".as_bytes()).unwrap();
+        sleep(Duration::from_millis(100));
+        res.conn.flush().unwrap();
 
         Ok(res)
     }
 
-    fn write_str(&mut self, cmd: &str) -> Result<(), SerialError> {
-        let serial = &mut self.conn;
-        serial
-            .write(format!("{}", cmd).as_bytes())
-            .map_err(|e| SerialError::Write(e))?;
-        Ok(())
-    }
+    pub fn exec_global(&mut self, cmd: &str) -> Result<String> {
+        // wait for prompt show, cmd may write too fast before prompt show, which will broken regex
+        sleep(Duration::from_millis(70));
+        let nanoid = nanoid::nanoid!();
 
-    fn read_raw(&mut self) -> Result<Vec<u8>, SerialError> {
-        let serial = &mut self.conn;
-        let mut res = Vec::new();
-        serial
-            .read_to_end(&mut res)
-            .map_err(|e| SerialError::Read(e))?;
-
-        // record all history
-        self.history.extend(res.clone());
-
-        Ok(res)
-    }
-
-    fn read_string(&mut self) -> Result<String, SerialError> {
-        self.read_raw()
-            .map(|x| get_parsed_str_from_xt100_bytes(x.as_bytes()))
-    }
-
-    fn run_cmd(&mut self, cmd: &str) -> Result<String, SerialError> {
-        self.write_str(&format!("{}\n", cmd))?;
-        return self.read_string();
-    }
-
-    pub fn exec(&mut self, cmd: &str) -> Result<String, SerialError> {
-        let res = self.run_cmd(cmd)?;
-        let res = t_util::assert_capture_between(&res, &format!("{}\n", cmd), &self.prompt)
-            .unwrap()
+        self.conn
+            .write_all(format!("{}; echo {}\n", cmd, nanoid).as_bytes())
             .unwrap();
-        Ok(res)
+
+        self.conn.flush().unwrap();
+
+        self.comsume_buffer_and_map(|buffer| {
+            // find target pattern from buffer
+            let parsed_str = parse_str_from_xt100_bytes(buffer);
+            let res = t_util::assert_capture_between(&parsed_str, &format!("{nanoid}\n"), &nanoid)
+                .unwrap();
+            trace!(nanoid = nanoid, parsed_str = parsed_str);
+            res
+        })
     }
 
-    fn update_prompt(&mut self) {
-        let res = self.run_cmd(&format!("echo '{}'", MAGIC_STRING)).unwrap();
+    fn comsume_buffer_and_map<T>(&mut self, f: impl Fn(&[u8]) -> Option<T>) -> Result<T> {
+        let conn = &mut self.conn;
 
-        let prompt = t_util::assert_capture_between(
-            &res,
-            &format!("echo '{}'\n{}\n", MAGIC_STRING, MAGIC_STRING),
-            "",
-        )
-        .unwrap()
-        .unwrap();
+        let current_buffer_start = self.buffer.len();
 
-        self.prompt = prompt;
+        loop {
+            let mut output_buffer = [0u8; 1024];
+            match conn.read(&mut output_buffer) {
+                Ok(n) => {
+                    let received = &output_buffer[0..n];
+
+                    // save to buffer
+                    self.buffer.extend(received);
+                    self.history.extend(received);
+
+                    // find target pattern
+                    let res = f(&self.buffer);
+
+                    // if buffer_str.find(pattern).is_none() {
+                    if res.is_none() {
+                        continue;
+                    }
+
+                    // cut from last find
+                    self.buffer = self.buffer[current_buffer_start..].to_owned();
+                    return Ok(res.unwrap());
+                }
+                Err(_) => unreachable!(),
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::env;
-
-    use super::*;
+    use crate::SerialClient;
+    use std::{env, time::Duration};
 
     #[test]
-    fn test_wr() {
+    fn test_exec_global() {
         let file = env::var("SERIAL_FILE").unwrap_or("/dev/ttyUSB0".to_string());
-        let mut serial = SerialClient::connect(file, 115_200, Duration::from_secs(1)).unwrap();
+        let mut serial = SerialClient::connect(file, 115_200, Duration::from_secs(10000)).unwrap();
 
-        let cmds = vec![("export A=1", ""), (r#"echo "A=$A""#, "A=1\n")];
-        for cmd in cmds {
-            let res = serial.exec(cmd.0).unwrap();
-            assert_eq!(res, cmd.1);
-        }
+        let cmds = vec![
+            ("unset A", ""),
+            (r#"echo "A=$A""#, "A=\n"),
+            ("export A=1", ""),
+            (r#"echo "A=$A""#, "A=1\n"),
+        ];
+
+        (0..100).for_each(|_| {
+            for cmd in cmds.iter() {
+                let res = serial.exec_global(cmd.0).unwrap();
+                assert_eq!(res, cmd.1);
+            }
+        })
     }
 }

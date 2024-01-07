@@ -1,5 +1,7 @@
+use super::DuplexChannelConsole;
+use crate::parse_str_from_xt100_bytes;
 use anyhow::Result;
-use std::fs::{self, File};
+use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
@@ -7,10 +9,6 @@ use std::path::Path;
 use std::thread::sleep;
 use std::time::Duration;
 use tracing::{debug, info, trace};
-
-use crate::get_parsed_str_from_xt100_bytes;
-
-use super::DuplexChannelConsole;
 
 /// This struct is a convenience wrapper
 /// around a russh client
@@ -84,7 +82,7 @@ impl SSHClient {
     }
 
     pub fn history(&self) -> String {
-        return get_parsed_str_from_xt100_bytes(&self.history.clone());
+        return parse_str_from_xt100_bytes(&self.history.clone());
     }
 
     pub fn exec_seperate(&mut self, command: &str) -> Result<String> {
@@ -139,7 +137,7 @@ impl SSHClient {
 
     pub fn read_golbal_until(&mut self, pattern: &str) -> Result<()> {
         self.read_golbal_and(|buffer| {
-            let buffer_str = get_parsed_str_from_xt100_bytes(buffer);
+            let buffer_str = parse_str_from_xt100_bytes(buffer);
             buffer_str.find(pattern)
         })
         .map(|_| ())
@@ -162,11 +160,8 @@ impl SSHClient {
 
         self.read_golbal_and(|buffer| {
             // find target pattern from buffer
-            let parsed_str = get_parsed_str_from_xt100_bytes(buffer);
-            trace!(
-                "current buffer: [{:?}]",
-                get_parsed_str_from_xt100_bytes(buffer)
-            );
+            let parsed_str = parse_str_from_xt100_bytes(buffer);
+            trace!("current buffer: [{:?}]", parse_str_from_xt100_bytes(buffer));
             let res = t_util::assert_capture_between(&parsed_str, &format!("{nanoid}\n"), &nanoid)
                 .unwrap();
             res

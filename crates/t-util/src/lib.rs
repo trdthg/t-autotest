@@ -1,4 +1,11 @@
-use std::{sync::mpsc, thread, time::Duration};
+use std::{
+    error::Error,
+    fmt::{write, Display},
+    process::Command,
+    sync::mpsc,
+    thread,
+    time::Duration,
+};
 
 use regex::Regex;
 use tracing::trace;
@@ -45,6 +52,33 @@ where
         Ok(result) => Ok(result),
         Err(_) => Err(()),
     }
+}
+
+#[derive(Debug)]
+pub enum ExecutorError {
+    SpawnCommand(std::io::Error),
+    WaitProcess(std::io::Error),
+}
+impl Error for ExecutorError {}
+impl Display for ExecutorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExecutorError::SpawnCommand(e) => write!(f, "{}", e.to_string()),
+            ExecutorError::WaitProcess(e) => write!(f, "{}", e.to_string()),
+        }
+    }
+}
+
+pub fn execute_shell(command: &str) -> Result<(), ExecutorError> {
+    let mut cmd = Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .spawn()
+        .map_err(ExecutorError::SpawnCommand)?;
+
+    cmd.wait().map_err(ExecutorError::WaitProcess)?;
+
+    Ok(())
 }
 
 #[cfg(test)]
