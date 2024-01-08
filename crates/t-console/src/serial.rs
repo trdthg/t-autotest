@@ -75,7 +75,7 @@ impl SerialClient {
         Ok(res)
     }
 
-    pub fn login(&mut self, username: &str, password: &str) {
+    fn login(&mut self, username: &str, password: &str) {
         // logout
         self.conn.write_u8(0x04).unwrap();
         self.conn.write_all("\n".as_bytes()).unwrap();
@@ -116,6 +116,14 @@ impl SerialClient {
             trace!(nanoid = nanoid, parsed_str = parsed_str);
             res
         })
+    }
+
+    pub fn read_golbal_until(&mut self, pattern: &str) -> Result<()> {
+        self.comsume_buffer_and_map(|buffer| {
+            let buffer_str = parse_str_from_xt100_bytes(buffer);
+            buffer_str.find(pattern)
+        })
+        .map(|_| ())
     }
 
     fn comsume_buffer_and_map<T>(&mut self, f: impl Fn(&[u8]) -> Option<T>) -> Result<T> {
