@@ -20,3 +20,7 @@ pub fn init(sender: Sender<(MsgReq, Sender<MsgRes>)>) {
         GLOBAL_BASE_SENDER = Some(Mutex::new(sender));
     }
 }
+
+pub fn get_global_sender() -> Sender<(MsgReq, Sender<MsgRes>)> {
+    unsafe { GLOBAL_BASE_SENDER.as_ref().unwrap().lock().unwrap().clone() }
+}

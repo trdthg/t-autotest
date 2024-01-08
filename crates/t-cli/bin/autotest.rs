@@ -52,7 +52,9 @@ fn main() {
     let mut runner = Runner::new(cli.case);
     runner.run();
 
+    info!("uploading logs.....");
     runner.dump_log(&Path::new(&log_dir));
+    info!("done!");
 }
 
 #[cfg(test)]

@@ -60,10 +60,18 @@ pub fn init(config: Config) -> () {
 
     if _serial.enable {
         info!("init serial...");
+
+        let auth = if _serial.auto_login {
+            Some((_serial.username.unwrap(), _serial.password.unwrap()))
+        } else {
+            None
+        };
+
         let serial_console = SerialClient::connect(
             _serial.serial_file,
             _serial.bund_rate,
             Duration::from_secs(0),
+            auth,
         )
         .unwrap();
         if let Err(_) = unsafe { GLOBAL_SERIAL.set(serial_console) } {
@@ -100,25 +108,27 @@ pub fn init(config: Config) -> () {
                     ok: true,
                 },
                 MsgReq::AssertScriptRunSshSeperate { cmd, timeout } => {
-                    let ssh = unsafe { GLOBAL_SSH.get_mut().unwrap() };
-                    let res =
-                        t_util::run_with_timeout(move || ssh.exec_seperate(&cmd).unwrap(), timeout)
-                            .unwrap();
+                    let client = unsafe { GLOBAL_SSH.get_mut().unwrap() };
+                    let res = t_util::run_with_timeout(
+                        move || client.exec_seperate(&cmd).unwrap(),
+                        timeout,
+                    )
+                    .unwrap();
                     MsgRes::AssertScriptRunSshSeperate { res }
                 }
                 MsgReq::AssertScriptRunSshGlobal { cmd, timeout } => {
-                    let ssh = unsafe { GLOBAL_SSH.get_mut().unwrap() };
+                    let client = unsafe { GLOBAL_SSH.get_mut().unwrap() };
                     let res = t_util::run_with_timeout(
-                        move || ssh.exec_global(&cmd).expect("ssh connection brokrn"),
+                        move || client.exec_global(&cmd).expect("ssh connection broken"),
                         timeout,
                     )
                     .unwrap();
                     MsgRes::AssertScriptRunSshGlobal { res }
                 }
                 MsgReq::AssertScriptRunSerialGlobal { cmd, timeout } => {
-                    let ssh = get_mut_global_ssh();
+                    let client = get_mut_global_serial();
                     let res = t_util::run_with_timeout(
-                        move || ssh.exec_global(&cmd).expect("ssh connection brokrn"),
+                        move || client.exec_global(&cmd).expect("serial connection broken"),
                         timeout,
                     )
                     .unwrap();

@@ -1,14 +1,14 @@
 use super::DuplexChannelConsole;
-use crate::{parse_str_from_xt100_bytes, MAGIC_STRING};
+use crate::parse_str_from_xt100_bytes;
 use anyhow::Result;
-use image::EncodableLayout;
+use byteorder::WriteBytesExt;
 use serialport::TTYPort;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::thread::sleep;
 use std::time::Duration;
 use t_util::ExecutorError;
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 pub struct SerialClient {
     conn: TTYPort,
@@ -26,6 +26,14 @@ pub enum SerialError {
     STTY(ExecutorError),
 }
 
+impl Drop for SerialClient {
+    fn drop(&mut self) {
+        println!("dropped");
+        self.conn.write_u8(0x04).unwrap();
+        self.conn.flush().unwrap();
+    }
+}
+
 impl SerialClient {
     pub fn dump_history(&self) -> String {
         parse_str_from_xt100_bytes(&self.history)
@@ -35,6 +43,7 @@ impl SerialClient {
         file: impl Into<String>,
         bund_rate: u32,
         timeout: Duration,
+        auth: Option<(impl Into<String>, impl Into<String>)>,
     ) -> Result<Self, SerialError> {
         let file: String = file.into();
         let path = Path::new(&file);
@@ -59,22 +68,44 @@ impl SerialClient {
             history: Vec::new(),
         };
 
-        res.conn.write_all("^C\n".as_bytes()).unwrap();
-        sleep(Duration::from_millis(100));
-        res.conn.flush().unwrap();
+        if let Some((username, password)) = auth {
+            res.login(&username.into(), &password.into());
+        }
 
         Ok(res)
+    }
+
+    pub fn login(&mut self, username: &str, password: &str) {
+        // logout
+        self.conn.write_u8(0x04).unwrap();
+        self.conn.write_all("\n".as_bytes()).unwrap();
+        self.conn.flush().unwrap();
+        sleep(Duration::from_millis(5000));
+
+        // username
+        self.conn
+            .write_all(format!("{username}\n").as_bytes())
+            .unwrap();
+        self.conn.flush().unwrap();
+        sleep(Duration::from_millis(5000));
+
+        // password
+        self.conn
+            .write_all(format!("{password}\n").as_bytes())
+            .unwrap();
+        self.conn.flush().unwrap();
+        sleep(Duration::from_millis(3000));
+
+        info!("{}", "try login done");
     }
 
     pub fn exec_global(&mut self, cmd: &str) -> Result<String> {
         // wait for prompt show, cmd may write too fast before prompt show, which will broken regex
         sleep(Duration::from_millis(70));
+
         let nanoid = nanoid::nanoid!();
-
-        self.conn
-            .write_all(format!("{}; echo {}\n", cmd, nanoid).as_bytes())
-            .unwrap();
-
+        let cmd = format!("{cmd}; echo {}\n", nanoid);
+        self.conn.write_all(cmd.as_bytes()).unwrap();
         self.conn.flush().unwrap();
 
         self.comsume_buffer_and_map(|buffer| {
@@ -114,7 +145,12 @@ impl SerialClient {
                     self.buffer = self.buffer[current_buffer_start..].to_owned();
                     return Ok(res.unwrap());
                 }
-                Err(_) => unreachable!(),
+                Err(e) if e.kind() == io::ErrorKind::TimedOut => {
+                    continue;
+                }
+                Err(e) => {
+                    panic!("{}", format!("{}", e));
+                }
             }
         }
     }
@@ -122,27 +158,43 @@ impl SerialClient {
 
 #[cfg(test)]
 mod test {
+    use t_config::Config;
+    use tracing::{info, trace};
+
     use crate::SerialClient;
     use std::{env, time::Duration};
 
-    fn get_config_from_file() -> t_config::Config {
+    fn get_config_from_file() -> Config {
         let f = env::var("AUTOTEST_CONFIG_FILE").unwrap();
         t_config::load_config_from_file(f).unwrap()
     }
 
-    fn get_client() -> SerialClient {
-        let c = get_config_from_file();
+    fn get_client(c: &Config) -> SerialClient {
         assert!(c.console.serial.enable);
 
-        let c = c.console.serial;
-        let serial =
-            SerialClient::connect(c.serial_file, c.bund_rate, Duration::from_secs(1)).unwrap();
+        let c = c.console.serial.clone();
+
+        let auth = if c.auto_login {
+            Some((c.username.unwrap(), c.password.unwrap()))
+        } else {
+            None
+        };
+
+        let serial = SerialClient::connect(
+            &c.serial_file,
+            c.bund_rate,
+            Duration::from_secs(10000),
+            auth,
+        )
+        .unwrap();
         serial
     }
 
     #[test]
+    #[tracing_test::traced_test]
     fn test_exec_global() {
-        let mut serial = get_client();
+        let c = get_config_from_file();
+        let mut serial = get_client(&c);
 
         let cmds = vec![
             ("unset A", ""),
@@ -153,6 +205,7 @@ mod test {
 
         (0..10).for_each(|_| {
             for cmd in cmds.iter() {
+                trace!(cmd = cmd.0);
                 let res = serial.exec_global(cmd.0).unwrap();
                 assert_eq!(res, cmd.1);
             }

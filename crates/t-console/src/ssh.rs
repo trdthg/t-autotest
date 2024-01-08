@@ -102,7 +102,7 @@ impl SSHClient {
         Ok(())
     }
 
-    fn read_golbal_and<T>(&mut self, f: impl Fn(&[u8]) -> Option<T>) -> Result<T> {
+    fn comsume_buffer_and_map<T>(&mut self, f: impl Fn(&[u8]) -> Option<T>) -> Result<T> {
         let ch = &mut self.shell;
 
         let current_buffer_start = self.buffer.len();
@@ -118,9 +118,8 @@ impl SSHClient {
                     self.history.extend(received);
 
                     // find target pattern
-                    // let buffer_str = get_parsed_str_from_xt100_bytes(&self.buffer);
-                    // let res = buffer_str.find(pattern);
                     let res = f(&self.buffer);
+
                     // if buffer_str.find(pattern).is_none() {
                     if res.is_none() {
                         continue;
@@ -136,7 +135,7 @@ impl SSHClient {
     }
 
     pub fn read_golbal_until(&mut self, pattern: &str) -> Result<()> {
-        self.read_golbal_and(|buffer| {
+        self.comsume_buffer_and_map(|buffer| {
             let buffer_str = parse_str_from_xt100_bytes(buffer);
             buffer_str.find(pattern)
         })
@@ -148,17 +147,14 @@ impl SSHClient {
         sleep(Duration::from_millis(100));
 
         let ch = &mut self.shell;
-        // write user command
-        ch.write_all(command.as_bytes()).unwrap();
 
         // write nanoid for regex
         let nanoid = nanoid::nanoid!();
-        ch.write_all(format!("; echo {}\n", nanoid).as_bytes())
-            .unwrap();
-
+        let cmd = format!("{command}; echo {}\n", nanoid);
+        ch.write_all(cmd.as_bytes()).unwrap();
         ch.flush().unwrap();
 
-        self.read_golbal_and(|buffer| {
+        self.comsume_buffer_and_map(|buffer| {
             // find target pattern from buffer
             let parsed_str = parse_str_from_xt100_bytes(buffer);
             trace!("current buffer: [{:?}]", parse_str_from_xt100_bytes(buffer));

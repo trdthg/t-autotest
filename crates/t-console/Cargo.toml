@@ -11,6 +11,7 @@ t-util   = { workspace = true }
 t-config = { workspace = true }
 
 tracing            = { workspace = true }
+tracing-test       = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap               = { workspace = true }
 dotenv             = { workspace = true }

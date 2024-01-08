@@ -1,4 +1,4 @@
-use crate::{MsgReq, MsgRes, GLOBAL_BASE_SENDER};
+use crate::{get_global_sender, MsgReq, MsgRes, GLOBAL_BASE_SENDER};
 use quick_js::JsValue;
 use std::{
     sync::mpsc::{self, channel},
@@ -44,7 +44,7 @@ pub fn assert_script_run_ssh_seperate(cmd: String, timeout: i32) -> JsValue {
 
 pub fn assert_script_run_ssh_global(cmd: String, timeout: i32) -> JsValue {
     trace!("assert_script_run::req");
-    let msg_tx = unsafe { GLOBAL_BASE_SENDER.as_ref().unwrap().lock().unwrap().clone() };
+    let msg_tx = get_global_sender();
     let (tx, rx) = mpsc::channel::<MsgRes>();
 
     trace!("assert_script_run sending");
@@ -73,7 +73,7 @@ pub fn assert_script_run_ssh_global(cmd: String, timeout: i32) -> JsValue {
 
 pub fn assert_script_run_serial_global(cmd: String, timeout: i32) -> (bool, String) {
     trace!("assert_script_run::req");
-    let msg_tx = unsafe { GLOBAL_BASE_SENDER.as_ref().unwrap().lock().unwrap().clone() };
+    let msg_tx = get_global_sender();
     let (tx, rx) = mpsc::channel::<MsgRes>();
 
     trace!("assert_script_run sending");
@@ -86,11 +86,10 @@ pub fn assert_script_run_serial_global(cmd: String, timeout: i32) -> (bool, Stri
             tx,
         ))
         .unwrap();
-    trace!("assert_script_run send done");
 
-    trace!("assert_script_run waiting");
-
+    trace!("assert_script_run send done, waiting...");
     let res = rx.recv().unwrap();
+
     let res = if let MsgRes::AssertScriptRunSerialGlobal { res } = res {
         (true, res)
     } else {

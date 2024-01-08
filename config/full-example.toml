@@ -10,7 +10,10 @@ auth.password    = ""
 auth.private_key = ""
 
 [console.serial]
-enable      = true
+enable     = true
+auto_login = false
+# username    = "username"
+# password    = "password"
 serial_file = "/dev/ttyUSB0"
 bund_rate   = 115200
 
