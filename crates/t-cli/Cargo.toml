@@ -22,6 +22,7 @@ clap               = { workspace = true }
 dotenv             = { workspace = true }
 home               = { workspace = true }
 anyhow             = { workspace = true }
+pipe-trait         = { workspace = true }
 shell-escape       = { workspace = true }
 serde              = { workspace = true }
 toml               = { workspace = true }

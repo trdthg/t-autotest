@@ -42,18 +42,14 @@ fn main() {
 
     let config: Config = toml::from_str(fs::read_to_string(&cli.file).unwrap().as_str()).unwrap();
     info!("{:#?}", config);
-    let log_dir = config
-        .log_dir
-        .clone()
-        .unwrap_or_else(|| env::current_dir().unwrap().to_str().unwrap().to_string());
 
-    init(config);
+    init(&config);
 
-    let mut runner = Runner::new(cli.case);
+    let mut runner = Runner::new(cli.case, config);
     runner.run();
 
     info!("uploading logs.....");
-    runner.dump_log(&Path::new(&log_dir));
+    runner.dump_log();
     info!("done!");
 }
 

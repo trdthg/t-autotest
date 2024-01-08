@@ -23,7 +23,7 @@ pub fn get_mut_global_serial() -> &'static mut SerialClient {
     unsafe { GLOBAL_SERIAL.get_mut().unwrap() }
 }
 
-pub fn init(config: Config) -> () {
+pub fn init(config: &Config) -> () {
     let Config {
         console:
             Console {
@@ -38,7 +38,7 @@ pub fn init(config: Config) -> () {
         info!("init ssh...");
         let auth = match _ssh.auth.r#type {
             ConsoleSSHAuthType::PrivateKey => SSHAuthAuth::PrivateKey(
-                _ssh.auth.private_key.unwrap_or(
+                _ssh.auth.private_key.clone().unwrap_or(
                     home::home_dir()
                         .map(|mut x| {
                             x.push(Path::new(".ssh/id_rsa"));
@@ -47,11 +47,16 @@ pub fn init(config: Config) -> () {
                         .unwrap(),
                 ),
             ),
-            ConsoleSSHAuthType::Password => SSHAuthAuth::PrivateKey(_ssh.auth.password.unwrap()),
+            ConsoleSSHAuthType::Password => {
+                SSHAuthAuth::PrivateKey(_ssh.auth.password.clone().unwrap())
+            }
         };
-        let ssh_client =
-            SSHClient::connect(auth, _ssh.username, format!("{}:{}", _ssh.host, _ssh.port))
-                .unwrap();
+        let ssh_client = SSHClient::connect(
+            auth,
+            _ssh.username.clone(),
+            format!("{}:{}", _ssh.host, _ssh.port),
+        )
+        .unwrap();
         if let Err(_) = unsafe { GLOBAL_SSH.set(ssh_client) } {
             panic!("ssh console init failed!");
         }
@@ -62,13 +67,16 @@ pub fn init(config: Config) -> () {
         info!("init serial...");
 
         let auth = if _serial.auto_login {
-            Some((_serial.username.unwrap(), _serial.password.unwrap()))
+            Some((
+                _serial.username.clone().unwrap(),
+                _serial.password.clone().unwrap(),
+            ))
         } else {
             None
         };
 
         let serial_console = SerialClient::connect(
-            _serial.serial_file,
+            _serial.serial_file.clone(),
             _serial.bund_rate,
             Duration::from_secs(0),
             auth,
@@ -82,8 +90,11 @@ pub fn init(config: Config) -> () {
 
     if _vnc.enable {
         info!("init vnc...");
-        let vnc_client =
-            VNCClient::connect(format!("{}:{}", _vnc.host, _vnc.port), _vnc.password).unwrap();
+        let vnc_client = VNCClient::connect(
+            format!("{}:{}", _vnc.host, _vnc.port),
+            _vnc.password.clone(),
+        )
+        .unwrap();
         if let Err(_) = unsafe { GLOBAL_VNC.set(Mutex::new(vnc_client)) } {
             panic!("ssh console init failed!");
         }
