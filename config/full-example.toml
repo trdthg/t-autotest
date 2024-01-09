@@ -1,3 +1,6 @@
+log_dir    = "testresults"
+needle_dir = "needles"
+
 [console]
 
 [console.ssh]
@@ -10,7 +13,7 @@ auth.password    = ""
 auth.private_key = ""
 
 [console.serial]
-enable     = true
+enable     = false
 auto_login = false
 # username    = "username"
 # password    = "password"

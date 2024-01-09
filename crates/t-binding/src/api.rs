@@ -13,7 +13,7 @@ pub fn print(msg: String) -> JsValue {
 
 pub fn assert_script_run_ssh_seperate(cmd: String, timeout: i32) -> JsValue {
     trace!("assert_script_run::req");
-    let msg_tx = unsafe { GLOBAL_BASE_SENDER.as_ref().unwrap().lock().unwrap().clone() };
+    let msg_tx = get_global_sender();
     let (tx, rx) = channel::<MsgRes>();
 
     trace!("assert_script_run sending");
@@ -99,16 +99,16 @@ pub fn assert_script_run_serial_global(cmd: String, timeout: i32) -> (bool, Stri
     res
 }
 
-pub fn assert_screen(tags: String, timeout: i32) {
+pub fn assert_screen(tag: String, timeout: i32) -> Result<bool, ()> {
     trace!("assert_script_run pre");
-    let msg_tx = unsafe { GLOBAL_BASE_SENDER.as_ref().unwrap().lock().unwrap().clone() };
+    let msg_tx = get_global_sender();
     let (tx, rx) = channel::<MsgRes>();
 
     trace!("assert_script_run sending");
     msg_tx
         .send((
             MsgReq::AssertScreen {
-                tag: tags,
+                tag,
                 threshold: 1,
                 timeout: Duration::from_millis(timeout as u64),
             },
@@ -122,12 +122,13 @@ pub fn assert_screen(tags: String, timeout: i32) {
         .recv_timeout(Duration::from_millis(timeout as u64))
         .unwrap();
 
-    let res = if let MsgRes::AssertScreen { similarity, ok } = res {
-        JsValue::Int(similarity)
+    let res = if let MsgRes::AssertScreen { similarity: 0, ok } = res {
+        Ok(ok)
     } else {
-        JsValue::Null
+        Err(())
     };
     trace!("assert_script_run done");
+    res
 }
 
 // pub trait Callback<Args> {

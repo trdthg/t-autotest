@@ -1,8 +1,9 @@
 use serde::Deserialize;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct Config {
-    pub log_dir: Option<String>,
+    pub log_dir: String,
+    pub needle_dir: String,
     pub console: Console,
 }
 

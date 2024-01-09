@@ -4,7 +4,7 @@ mod vnc;
 
 pub use serial::SerialClient;
 pub use ssh::{SSHAuthAuth, SSHClient};
-pub use vnc::VNCClient;
+pub use vnc::{Rect, VNCClient, VNCError, VNCEventReq, VNCEventRes, PNG};
 
 pub trait FullPowerConsole: ScreenControlConsole + DuplexChannelConsole {}
 

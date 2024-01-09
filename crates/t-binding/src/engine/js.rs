@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::{api, ScriptEngine};
 use quick_js::Context;
+use tracing::{info, warn};
 
 pub struct JSEngine {
     cx: quick_js::Context,
@@ -39,6 +40,20 @@ impl JSEngine {
                 res.1
             },
         )
+        .unwrap();
+
+        e.cx.add_callback("assert_screen", move |tag: String, timeout: i32| -> bool {
+            match api::assert_screen(tag.clone(), timeout) {
+                Ok(res) => {
+                    info!(api = "assert_screen", tag = tag, res = res);
+                    res
+                }
+                Err(_) => {
+                    warn!(api = "assert_screen");
+                    false
+                }
+            }
+        })
         .unwrap();
 
         e

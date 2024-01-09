@@ -8,7 +8,7 @@ use std::path::Path;
 use std::thread::sleep;
 use std::time::Duration;
 use t_util::ExecutorError;
-use tracing::{debug, info, trace};
+use tracing::{info, trace};
 
 pub struct SerialClient {
     conn: TTYPort,
@@ -167,7 +167,7 @@ impl SerialClient {
 #[cfg(test)]
 mod test {
     use t_config::Config;
-    use tracing::{info, trace};
+    use tracing::trace;
 
     use crate::SerialClient;
     use std::{env, time::Duration};
@@ -202,6 +202,10 @@ mod test {
     #[tracing_test::traced_test]
     fn test_exec_global() {
         let c = get_config_from_file();
+        if !c.console.serial.enable {
+            return;
+        }
+
         let mut serial = get_client(&c);
 
         let cmds = vec![

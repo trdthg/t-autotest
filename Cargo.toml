@@ -25,6 +25,7 @@ regex              = { version = "1.10.2" }
 nanoid             = { version = "0.4.0" }
 tempfile           = { version = "3.9.0" }
 serde              = { version = "1.0.194", features = ["derive"] }
+serde_json         = { version = "1.0.111" }
 toml               = { version = "0.8.8" }
 quick-js           = { version = "0.4.1" }
 rquickjs           = { version = "0.4.0" }

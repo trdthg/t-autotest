@@ -25,8 +25,11 @@ anyhow             = { workspace = true }
 pipe-trait         = { workspace = true }
 shell-escape       = { workspace = true }
 serde              = { workspace = true }
+serde_json         = { workspace = true }
 toml               = { workspace = true }
 quick-js           = { workspace = true }
 mlua               = { workspace = true }
 pyo3               = { workspace = true }
 ssh2               = { workspace = true }
+image              = { workspace = true }
+png                = { workspace = true }

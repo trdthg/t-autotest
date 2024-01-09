@@ -1,11 +1,4 @@
-use std::{
-    error::Error,
-    fmt::{write, Display},
-    process::Command,
-    sync::mpsc,
-    thread,
-    time::Duration,
-};
+use std::{error::Error, fmt::Display, process::Command, sync::mpsc, thread, time::Duration};
 
 use regex::Regex;
 use tracing::trace;

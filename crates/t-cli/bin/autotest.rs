@@ -1,6 +1,6 @@
 use clap::Parser;
-use std::{env, fs, path::Path};
-use t_cli::{init, Runner};
+use std::{env, fs};
+use t_cli::Runner;
 use t_config::Config;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -42,8 +42,6 @@ fn main() {
 
     let config: Config = toml::from_str(fs::read_to_string(&cli.file).unwrap().as_str()).unwrap();
     info!("{:#?}", config);
-
-    init(&config);
 
     let mut runner = Runner::new(cli.case, config);
     runner.run();
