@@ -165,10 +165,12 @@ impl Runner {
                                 } else {
                                     false
                                 };
-                                if res {
-                                    break res;
+                                if !res {
+                                    warn!(msg = "match failed", tag = tag);
+                                    continue;
                                 }
-                                warn!(msg = "match failed", tag = tag);
+                                warn!(msg = "match success", tag = tag);
+                                break res;
                             },
                             timeout,
                         )

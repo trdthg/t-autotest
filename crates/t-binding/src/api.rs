@@ -11,7 +11,7 @@ pub fn print(msg: String) -> JsValue {
     JsValue::Null
 }
 
-pub fn assert_script_run_ssh_seperate(cmd: String, timeout: i32) -> JsValue {
+pub fn assert_script_run_ssh_seperate(cmd: String, timeout: i32) -> Option<String> {
     trace!("assert_script_run::req");
     let msg_tx = get_global_sender();
     let (tx, rx) = channel::<MsgRes>();
@@ -34,15 +34,15 @@ pub fn assert_script_run_ssh_seperate(cmd: String, timeout: i32) -> JsValue {
         .unwrap();
 
     let res = if let MsgRes::AssertScriptRunSshSeperate { res } = res {
-        JsValue::String(res)
+        Some(res)
     } else {
-        JsValue::Null
+        None
     };
     trace!("assert_script_run done");
     res
 }
 
-pub fn assert_script_run_ssh_global(cmd: String, timeout: i32) -> JsValue {
+pub fn assert_script_run_ssh_global(cmd: String, timeout: i32) -> Option<String> {
     trace!("assert_script_run::req");
     let msg_tx = get_global_sender();
     let (tx, rx) = mpsc::channel::<MsgRes>();
@@ -63,9 +63,9 @@ pub fn assert_script_run_ssh_global(cmd: String, timeout: i32) -> JsValue {
 
     let res = rx.recv().unwrap();
     let res = if let MsgRes::AssertScriptRunSshGlobal { res } = res {
-        JsValue::String(res)
+        Some(res)
     } else {
-        JsValue::Null
+        None
     };
     trace!("assert_script_run done");
     res

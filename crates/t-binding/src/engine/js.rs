@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{api, ScriptEngine};
-use quick_js::Context;
+use quick_js::{Context, JsValue};
 use tracing::{info, warn};
 
 pub struct JSEngine {
@@ -42,18 +42,22 @@ impl JSEngine {
         )
         .unwrap();
 
-        e.cx.add_callback("assert_screen", move |tag: String, timeout: i32| -> bool {
-            match api::assert_screen(tag.clone(), timeout) {
-                Ok(res) => {
-                    info!(api = "assert_screen", tag = tag, res = res);
-                    res
-                }
-                Err(_) => {
-                    warn!(api = "assert_screen");
-                    false
-                }
-            }
-        })
+        e.cx.add_callback(
+            "assert_screen",
+            move |tag: String, timeout: i32| -> JsValue {
+                let res = match api::assert_screen(tag.clone(), timeout) {
+                    Ok(res) => {
+                        info!(api = "assert_screen", tag = tag, res = res);
+                        res
+                    }
+                    Err(_) => {
+                        warn!(api = "assert_screen");
+                        false
+                    }
+                };
+                JsValue::Bool(res)
+            },
+        )
         .unwrap();
 
         e
@@ -74,7 +78,7 @@ impl JSEngine {
 mod test {
     use quick_js::{Context, JsValue};
 
-    use crate::JSEngine;
+    use super::JSEngine;
 
     #[test]
     #[should_panic]

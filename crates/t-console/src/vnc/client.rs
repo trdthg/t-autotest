@@ -296,27 +296,4 @@ mod test {
         }
         // image_buffer.save("output-a.png");
     }
-
-    fn test() {
-        // let image_path = format!(
-        //     "./.private/assets/output-{}-{}-{}-{}-{}.png",
-        //     time::SystemTime::now()
-        //         .duration_since(UNIX_EPOCH)
-        //         .unwrap()
-        //         .as_secs(),
-        //     rect.left,
-        //     rect.top,
-        //     rect.width,
-        //     rect.height
-        // );
-
-        // // 创建 PNG 文件并保存图像缓冲区
-        // debug!("{}", {
-        //     image_buffer.save(image_path).unwrap();
-        //     image_buffer
-        //         .save("./.private/assets/output-latest.png")
-        //         .unwrap();
-        //     ""
-        // });
-    }
 }

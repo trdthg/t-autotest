@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use rquickjs::Function;
 use rquickjs::{Context, Runtime};
+use tracing::{info, warn};
 
 use crate::{api, ScriptEngine};
 
@@ -13,7 +14,7 @@ pub struct JSEngine {
 
 impl ScriptEngine for JSEngine {
     fn run(&mut self, content: &str) {
-        // todo!()
+        self.run(content).unwrap();
     }
 }
 
@@ -35,17 +36,63 @@ impl JSEngine {
                     .set("__rust_log__", func_log)
                     .map_err(|_| ())?;
 
-                let func_assert_script_run_serial_global =
-                    Function::new(ctx.clone(), move |cmd: String, timeout: i32| -> String {
-                        api::assert_script_run_serial_global(cmd, timeout).1
-                    })
-                    .unwrap();
                 ctx.globals()
                     .set(
                         "assert_script_run_serial_global",
-                        func_assert_script_run_serial_global,
+                        Function::new(ctx.clone(), move |cmd: String, timeout: i32| -> String {
+                            let res = api::assert_script_run_serial_global(cmd, timeout);
+                            res.1
+                        }),
                     )
-                    .map_err(|_| ())?;
+                    .unwrap();
+
+                ctx.globals()
+                    .set(
+                        "print",
+                        Function::new(ctx.clone(), move |msg: String| {
+                            api::print(msg);
+                        }),
+                    )
+                    .unwrap();
+                ctx.globals()
+                    .set(
+                        "assert_script_run_ssh_seperate",
+                        Function::new(ctx.clone(), api::assert_script_run_ssh_seperate),
+                    )
+                    .unwrap();
+
+                ctx.globals()
+                    .set(
+                        "assert_script_run_ssh_global",
+                        Function::new(ctx.clone(), api::assert_script_run_ssh_global),
+                    )
+                    .unwrap();
+
+                ctx.globals()
+                    .set(
+                        "assert_screen",
+                        Function::new(
+                            ctx.clone(),
+                            move |tag: String, timeout: i32| -> rquickjs::Result<()> {
+                                let res = match api::assert_screen(tag.clone(), timeout) {
+                                    Ok(res) => {
+                                        info!(api = "assert_screen", result = res, tag = tag,);
+                                        res
+                                    }
+                                    Err(_) => {
+                                        warn!(api = "assert_screen", result = "err",);
+                                        false
+                                    }
+                                };
+                                if !res {
+                                    Err(rquickjs::Error::Exception)
+                                } else {
+                                    Ok(())
+                                }
+                            },
+                        ),
+                    )
+                    .unwrap();
 
                 ctx.eval(
                     r#"var console = Object.freeze({
@@ -72,47 +119,51 @@ impl JSEngine {
 
     pub fn run(&mut self, script: &str) -> Result<(), String> {
         let code = format!(
-            r#"try{{
+            r#"
+            try{{
                 // load user script
-                {script};
+                {script}
 
-                if (typeof myFunction === 'function') {{
+                if (typeof prehook === 'function') {{
                     prehook();
                 }}
 
-                let res = main() || ''
+                // run user defined run
+                let res = run() || ''
 
-                if (typeof myFunction === 'function') {{
+                if (typeof afterhook === 'function') {{
                     afterhook();
                 }}
 
                 // return
-                {{
+                JSON.stringify({{
                     code: 0,
                     msg: "success",
                     data: JSON.stringify(res),
-                }}
+                }})
             }} catch(err) {{
                 // return
-                {{
+                JSON.stringify({{
                     code: 1,
                     msg: err.toString(),
                     data: "",
-                }}
-            }}"#
+                }})
+            }}
+            "#
         );
 
-        self.context.with(|ctx| {
-            let result: String = ctx.eval(code.as_str()).map_err(|e| ()).unwrap();
-            if result.starts_with("__error_flag__") {
-                // anyhow::bail!(result[15..].to_owned());
-            }
-            if result == "\"\"" {
-                // anyhow::bail!("main function should return object");
-            }
-        });
+        self.context
+            .with(|ctx| match ctx.eval::<String, &str>(code.as_str()) {
+                Ok(result) => {
+                    println!("result: [{}]", result);
+                }
+                Err(e) => {
+                    println!("e: [{}]", e.to_string());
+                    println!("code: [{}]", code);
+                }
+            });
 
-        let mut out = self.outputs.lock().unwrap().to_vec();
+        let out = self.outputs.lock().unwrap().to_vec();
 
         Ok(())
     }
@@ -120,10 +171,9 @@ impl JSEngine {
 
 #[cfg(test)]
 mod test {
-    use std::{fs, path::Path};
 
     use super::JSEngine;
-    use rquickjs::{context::EvalOptions, function::Args, Context, Runtime};
+    use rquickjs::{function::Args, Context, Runtime};
 
     fn get_context() -> rquickjs::Context {
         let runtime = Runtime::new().unwrap();
