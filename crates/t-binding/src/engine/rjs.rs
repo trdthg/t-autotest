@@ -104,6 +104,18 @@ impl JSEngine {
                 )
                 .map_err(|_| ())?;
 
+                ctx.globals()
+                    .set("mouse_click", Function::new(ctx.clone(), api::mouse_click))
+                    .unwrap();
+
+                ctx.globals()
+                    .set("mouse_move", Function::new(ctx.clone(), api::mouse_move))
+                    .unwrap();
+
+                ctx.globals()
+                    .set("mouse_hide", Function::new(ctx.clone(), api::mouse_hide))
+                    .unwrap();
+
                 Ok(())
             })
             .unwrap();
@@ -119,37 +131,36 @@ impl JSEngine {
 
     pub fn run(&mut self, script: &str) -> Result<(), String> {
         let code = format!(
-            r#"
-            try{{
-                // load user script
-                {script}
+            r#"try{{
+    // load user script
+    {script}
 
-                if (typeof prehook === 'function') {{
-                    prehook();
-                }}
+    if (typeof prehook === 'function') {{
+        prehook();
+    }}
 
-                // run user defined run
-                let res = run() || ''
+    // run user defined run
+    let res = run() || ''
 
-                if (typeof afterhook === 'function') {{
-                    afterhook();
-                }}
+    if (typeof afterhook === 'function') {{
+        afterhook();
+    }}
 
-                // return
-                JSON.stringify({{
-                    code: 0,
-                    msg: "success",
-                    data: JSON.stringify(res),
-                }})
-            }} catch(err) {{
-                // return
-                JSON.stringify({{
-                    code: 1,
-                    msg: err.toString(),
-                    data: "",
-                }})
-            }}
-            "#
+    // return
+    JSON.stringify({{
+        code: 0,
+        msg: "success",
+        data: JSON.stringify(res),
+    }})
+}} catch(err) {{
+    // return
+    JSON.stringify({{
+        code: 1,
+        msg: err.toString(),
+        data: "",
+    }})
+}}
+"#
         );
 
         self.context

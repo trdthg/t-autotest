@@ -19,10 +19,17 @@ pub enum MsgReq {
         threshold: i32,
         timeout: Duration,
     },
+    MouseMove {
+        x: u16,
+        y: u16,
+    },
+    MouseClick,
+    MouseHide,
 }
 
 #[derive(Debug)]
 pub enum MsgRes {
+    Done,
     AssertScriptRunSshSeperate { res: String },
     AssertScriptRunSshGlobal { res: String },
     AssertScriptRunSerialGlobal { res: String },

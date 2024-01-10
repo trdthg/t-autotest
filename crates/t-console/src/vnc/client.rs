@@ -11,7 +11,7 @@ use std::{
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use image::ImageBuffer;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use vnc::PixelFormat;
 
 use crate::ScreenControlConsole;
@@ -21,7 +21,10 @@ use super::{data::RectContainer, pixel::RGBPixel};
 pub enum VNCEventReq {
     TypeString(String),
     SendKey(String),
-    MoveMouse(u16, u16),
+    MouseMove(u16, u16),
+    MoveDown,
+    MoveUp,
+    MouseHide,
     Dump,
 }
 
@@ -37,6 +40,10 @@ pub struct VNCClient {
 }
 
 struct VncClientInner {
+    width: u16,
+    height: u16,
+    mouse_x: u16,
+    mouse_y: u16,
     pixel_format: PixelFormat,
     unstable_screen: RectContainer<RGBPixel>,
     stable_screen: RectContainer<RGBPixel>,
@@ -67,7 +74,6 @@ impl VNCClient {
                 .map_err(|e| VNCError::Io(e))?;
 
         let mut vnc = vnc::Client::from_tcp_stream(stream, false, |methods| {
-            info!("available authentication methods: {:?}", methods);
             for method in methods {
                 match method {
                     vnc::client::AuthMethod::None => return Some(vnc::client::AuthChoice::None),
@@ -100,6 +106,10 @@ impl VNCClient {
 
         let (tx, rx) = mpsc::channel();
         let mut inner = VncClientInner {
+            width: size.0,
+            height: size.1,
+            mouse_x: size.0,
+            mouse_y: size.1,
             pixel_format,
             unstable_screen: RectContainer::new((0, 0, size.0, size.1).into()),
             stable_screen: RectContainer::new((0, 0, size.0, size.1).into()),
@@ -118,29 +128,25 @@ impl VNCClient {
 impl VncClientInner {
     // vnc event loop
     fn pool(&mut self, vnc: &mut vnc::Client) {
-        info!("start loop");
+        info!(msg = "start event pool loop");
         'running: loop {
             const FRAME_MS: u64 = 1000 / 60;
             let start = std::time::Instant::now();
 
-            info!("poll event blocking...");
+            info!(msg = "waiting new events");
             for event in vnc.poll_iter() {
+                info!(msg = "receive new event");
                 use vnc::client::Event;
                 match event {
                     Event::Disconnected(None) => {
-                        info!("Event::Disconnected");
                         break 'running;
                     }
                     Event::Disconnected(Some(error)) => {
                         error!("server disconnected: {:?}", error);
                         break 'running;
                     }
-                    Event::Resize(width, height) => {
-                        info!("Event::Resize");
-                        self.resize_screen(width, height)
-                    }
+                    Event::Resize(width, height) => self.resize_screen(width, height),
                     Event::PutPixels(rect, ref pixels) => {
-                        info!("Event::PutPixels");
                         // 获取 PixelFormat 对象和像素数据
                         let new_rect = RectContainer::new_with_data(
                             (rect.left, rect.top, rect.width, rect.height).into(),
@@ -149,7 +155,6 @@ impl VncClientInner {
                         self.copy_rect(new_rect);
                     }
                     Event::CopyPixels { src, dst } => {
-                        info!("Event::CopyPixels");
                         let data = self
                             .unstable_screen
                             .get_rect(src.left, src.top, src.width, src.height);
@@ -159,7 +164,6 @@ impl VncClientInner {
                         });
                     }
                     Event::EndOfFrame => {
-                        info!("Event::EndOfFrame");
                         self.stable_screen = self.unstable_screen.clone();
                         let image_path = format!(
                             "./.private/assets/output-{}.png",
@@ -173,12 +177,8 @@ impl VncClientInner {
                             .save("./.private/assets/output-latest.png")
                             .unwrap();
                     }
-                    Event::Clipboard(ref _text) => {
-                        info!("Event::Clipboard");
-                    }
-                    Event::SetCursor { .. } => {
-                        info!("Event::SetCursor");
-                    }
+                    Event::Clipboard(ref _text) => {}
+                    Event::SetCursor { .. } => {}
                     _ => unimplemented!(), /* ignore unsupported events */
                 }
             }
@@ -190,16 +190,44 @@ impl VncClientInner {
             };
 
             //
+            let mouse_buttons_mask = 0u8;
+            let mouse_button_left = 0x01;
             while let Ok((msg, tx)) = self.event_rx.recv_timeout(timeout()) {
-                match msg {
+                let res = match msg {
                     VNCEventReq::TypeString(s) => unimplemented!(),
                     VNCEventReq::SendKey(k) => unimplemented!(),
-                    VNCEventReq::MoveMouse(x, y) => unimplemented!(),
+                    VNCEventReq::MouseMove(x, y) => {
+                        debug!(msg = "mouse move", x = x, y = y);
+                        vnc.send_pointer_event(mouse_buttons_mask, x, y).unwrap();
+                        self.mouse_x = x;
+                        self.mouse_y = y;
+                        VNCEventRes::Done
+                    }
+                    VNCEventReq::MoveDown => {
+                        let mouse_button = mouse_buttons_mask | mouse_button_left;
+                        vnc.send_pointer_event(mouse_button, self.mouse_x, self.mouse_y)
+                            .unwrap();
+                        VNCEventRes::Done
+                    }
+                    VNCEventReq::MoveUp => {
+                        let mouse_button = mouse_buttons_mask & !mouse_button_left;
+                        vnc.send_pointer_event(mouse_button, self.mouse_x, self.mouse_y)
+                            .unwrap();
+                        VNCEventRes::Done
+                    }
                     VNCEventReq::Dump => {
                         let screen = self.dump_screen();
-                        tx.send(VNCEventRes::Screen(screen)).unwrap();
+                        VNCEventRes::Screen(screen)
                     }
-                }
+                    VNCEventReq::MouseHide => {
+                        vnc.send_pointer_event(mouse_button_left, self.width, self.height)
+                            .unwrap();
+                        self.mouse_x = self.width;
+                        self.mouse_y = self.height;
+                        VNCEventRes::Done
+                    }
+                };
+                tx.send(res).unwrap();
             }
 
             vnc.request_update((&self.unstable_screen.rect).into(), true)

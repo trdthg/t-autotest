@@ -51,7 +51,7 @@ impl SSHClient {
             }
         }
         assert!(sess.authenticated());
-        debug!("ssh auth success");
+        debug!(msg = "ssh auth success");
 
         let mut channel = sess.channel_session()?;
         channel
@@ -69,10 +69,10 @@ impl SSHClient {
             history: Vec::new(),
         };
 
-        debug!("ssh getting tty...");
+        debug!(msg = "ssh getting tty...");
         let tty = res.exec_global("tty").unwrap();
         res.tty = tty;
-        info!("ssh client tty: [{}]", res.tty.trim());
+        info!(msg = "ssh client tty", tty = res.tty.trim());
 
         Ok(res)
     }

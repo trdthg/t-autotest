@@ -38,17 +38,17 @@ fn main() {
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     let cli = Cli::parse();
-    info!("{:#?}", cli);
+    info!(msg = "current cli", cli = ?cli);
 
     let config: Config = toml::from_str(fs::read_to_string(&cli.file).unwrap().as_str()).unwrap();
-    info!("{:#?}", config);
+    info!(msg = "current config", config = ?config);
 
     let mut runner = Runner::new(cli.case, config);
     runner.run();
 
-    info!("uploading logs.....");
+    info!(msg = "uploading logs.....");
     runner.dump_log();
-    info!("done!");
+    info!(msg = "done!");
 }
 
 #[cfg(test)]
