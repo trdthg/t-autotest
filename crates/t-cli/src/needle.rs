@@ -69,9 +69,9 @@ pub fn cmp_image_rect(img1: &PNG, img2: &PNG, rect: &Rect) -> bool {
     }
 
     // 比较每个像素的RGB值
-    for row in rect.top..rect.top + rect.height {
-        for col in rect.left..rect.left + rect.width {
-            if img1.get_pixel(row as u32, col as u32) != img2.get_pixel(row as u32, col as u32) {
+    for x in rect.left..rect.left + rect.width {
+        for y in rect.top..rect.top + rect.height {
+            if img1.get_pixel(x as u32, y as u32) != img2.get_pixel(x as u32, y as u32) {
                 return false;
             }
         }

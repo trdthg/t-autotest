@@ -164,6 +164,7 @@ impl VncClientInner {
                         });
                     }
                     Event::EndOfFrame => {
+                        info!(msg = "Event::EndOfFrame");
                         self.stable_screen = self.unstable_screen.clone();
                         let image_path = format!(
                             "./.private/assets/output-{}.png",
@@ -247,14 +248,14 @@ impl VncClientInner {
 
     fn dump_screen(&self) -> PNG {
         let mut image_buffer: PNG = ImageBuffer::new(
-            self.unstable_screen.rect.width as u32,
-            self.unstable_screen.rect.height as u32,
+            self.stable_screen.rect.width as u32,
+            self.stable_screen.rect.height as u32,
         );
 
         for (i, pixel) in image_buffer.chunks_mut(3).enumerate() {
-            pixel[0] = self.unstable_screen.data[i][0];
-            pixel[1] = self.unstable_screen.data[i][1];
-            pixel[2] = self.unstable_screen.data[i][2];
+            pixel[0] = self.stable_screen.data[i][0];
+            pixel[1] = self.stable_screen.data[i][1];
+            pixel[2] = self.stable_screen.data[i][2];
         }
 
         image_buffer

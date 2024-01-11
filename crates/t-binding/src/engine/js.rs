@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use rquickjs::Function;
 use rquickjs::{Context, Runtime};
+use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use crate::{api, ScriptEngine};
@@ -174,11 +175,17 @@ impl JSEngine {
         self.context
             .with(|ctx| match ctx.eval::<String, &str>(code.as_str()) {
                 Ok(result) => {
-                    info!(msg = "script run success", result = result);
+                    let result: Response =
+                        serde_json::from_str(&result).expect("js script wrong return type");
+                    if result.code != 0 {
+                        error!(msg = "js script run failed", reason = result.msg);
+                        panic!()
+                    }
+                    info!(msg = "script run success", result = ?result);
                 }
                 Err(e) => {
                     error!(
-                        msg = "script run failed, maybe assert_xxx throw exception",
+                        msg = "script run failed, assert_xxx throw exception",
                         reason = e.to_string(),
                     );
                 }
@@ -188,6 +195,13 @@ impl JSEngine {
 
         Ok(())
     }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Response {
+    code: i32,
+    msg: String,
+    data: String,
 }
 
 #[cfg(test)]
