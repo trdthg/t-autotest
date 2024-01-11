@@ -6,6 +6,10 @@ pub fn print(msg: String) {
     info!("api-print: [{msg}]");
 }
 
+pub fn sleep(millis: u64) {
+    std::thread::sleep(Duration::from_millis(millis));
+}
+
 pub fn req(req: MsgReq) -> MsgRes {
     let msg_tx = get_global_sender();
 

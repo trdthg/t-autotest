@@ -54,6 +54,11 @@ impl JSEngine {
                         }),
                     )
                     .unwrap();
+
+                ctx.globals()
+                    .set("sleep", Function::new(ctx.clone(), api::sleep))
+                    .unwrap();
+
                 ctx.globals()
                     .set(
                         "assert_script_run_ssh_seperate",
