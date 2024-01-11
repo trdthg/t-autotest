@@ -2,7 +2,8 @@ mod api;
 mod engine;
 mod msg;
 
-use std::sync::{mpsc::Sender, Mutex};
+use std::sync::{mpsc::Sender, RwLock};
+use tracing::error;
 
 pub use engine::{JSEngine, LuaEngine};
 pub use msg::{MsgReq, MsgRes};
@@ -13,14 +14,18 @@ pub trait ScriptEngine {
     fn run(&mut self, content: &str);
 }
 
-static mut GLOBAL_BASE_SENDER: Option<Mutex<Sender<(MsgReq, Sender<MsgRes>)>>> = None;
+static mut GLOBAL_BASE_SENDER: Option<RwLock<Sender<(MsgReq, Sender<MsgRes>)>>> = None;
 
 pub fn init(sender: Sender<(MsgReq, Sender<MsgRes>)>) {
     unsafe {
-        GLOBAL_BASE_SENDER = Some(Mutex::new(sender));
+        GLOBAL_BASE_SENDER = Some(RwLock::new(sender));
     }
 }
 
 pub fn get_global_sender() -> Sender<(MsgReq, Sender<MsgRes>)> {
-    unsafe { GLOBAL_BASE_SENDER.as_ref().unwrap().lock().unwrap().clone() }
+    if unsafe { GLOBAL_BASE_SENDER.is_none() } {
+        error!(msg = "GLOBAL_BASE_SENDER is none, maybe init failed");
+        panic!();
+    }
+    unsafe { GLOBAL_BASE_SENDER.as_ref().unwrap().read().unwrap().clone() }
 }

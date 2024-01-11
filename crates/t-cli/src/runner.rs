@@ -265,7 +265,7 @@ impl Runner {
                 };
                 info!(msg = format!("sending res: {:?}", res));
                 if let Err(e) = tx.send(res) {
-                    info!(msg = "script engine closed", reason = ?e);
+                    info!(msg = "script engine receiver closed", reason = ?e);
                     break;
                 }
             }
