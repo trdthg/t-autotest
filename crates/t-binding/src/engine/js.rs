@@ -1,16 +1,12 @@
-use std::sync::{Arc, Mutex};
-
+use crate::{api, ScriptEngine};
 use rquickjs::Function;
 use rquickjs::{Context, Runtime};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
-use crate::{api, ScriptEngine};
-
 pub struct JSEngine {
     _runtime: rquickjs::Runtime,
     context: rquickjs::Context,
-    outputs: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 impl ScriptEngine for JSEngine {
@@ -23,20 +19,9 @@ impl JSEngine {
     pub fn new() -> Box<dyn ScriptEngine> {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();
-        let outputs = Arc::new(Mutex::new(vec![]));
 
-        let outputs_clone = outputs.clone();
         context
             .with(|ctx| -> Result<(), ()> {
-                let func_log = Function::new(ctx.clone(), move |level: String, msg: String| {
-                    let mut out = outputs_clone.lock().unwrap();
-                    out.push((level, msg));
-                })
-                .unwrap();
-                ctx.globals()
-                    .set("__rust_log__", func_log)
-                    .map_err(|_| ())?;
-
                 ctx.globals()
                     .set(
                         "assert_script_run_serial_global",
@@ -137,7 +122,6 @@ impl JSEngine {
         let e = Self {
             _runtime: runtime,
             context,
-            outputs,
         };
 
         Box::new(e)
@@ -195,8 +179,6 @@ impl JSEngine {
                     );
                 }
             });
-
-        let out = self.outputs.lock().unwrap().to_vec();
 
         Ok(())
     }

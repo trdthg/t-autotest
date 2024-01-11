@@ -11,7 +11,7 @@ use std::{
 use t_binding::{JSEngine, LuaEngine, MsgReq, MsgRes, ScriptEngine};
 use t_config::{Config, Console, ConsoleSSHAuthType};
 use t_console::{SSHAuthAuth, SSHClient, SerialClient, VNCClient, VNCEventReq, VNCEventRes};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::needle::NeedleManager;
 
@@ -185,7 +185,7 @@ impl Runner {
                     }
                     MsgReq::AssertScreen {
                         tag,
-                        threshold,
+                        threshold: _,
                         timeout,
                     } => {
                         let client = vnc_client.clone().unwrap();

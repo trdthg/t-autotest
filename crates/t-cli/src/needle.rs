@@ -1,6 +1,5 @@
 use std::{fs::File, io::BufReader, path::PathBuf};
 
-use image::GenericImageView;
 use serde::{Deserialize, Serialize};
 use t_console::{Rect, PNG};
 
@@ -25,6 +24,7 @@ impl NeedleManager {
         return (json, needle_png);
     }
 
+    #[cfg(test)]
     pub fn load_file_by_tag(&self, tag: &str) -> PNG {
         let needle_path = PathBuf::from_iter(vec![&self.dir, &format!("{tag}.png")]);
         let needle_file = File::open(needle_path).unwrap();

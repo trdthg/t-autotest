@@ -39,5 +39,5 @@ fn main() -> () {
         cli.password
     );
 
-    let vnc = VNCClient::connect(&format!("{}:{}", cli.host, cli.port), cli.password).unwrap();
+    VNCClient::connect(&format!("{}:{}", cli.host, cli.port), cli.password).unwrap();
 }

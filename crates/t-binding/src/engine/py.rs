@@ -4,11 +4,6 @@ mod test {
 
     #[test]
     fn test_pyo3() {
-        let hello_str = "hello";
-        let hello = move || {
-            println!("{}", hello_str);
-        };
-
         #[pyo3::pyfunction]
         fn add(a: i64, b: i64) -> i64 {
             // hello();

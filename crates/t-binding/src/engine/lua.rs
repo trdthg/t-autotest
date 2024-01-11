@@ -3,8 +3,8 @@ use crate::ScriptEngine;
 pub struct LuaEngine {}
 
 impl ScriptEngine for LuaEngine {
-    fn run(&mut self, content: &str) {
-        // todo!()
+    fn run(&mut self, _content: &str) {
+        unimplemented!()
     }
 }
 
