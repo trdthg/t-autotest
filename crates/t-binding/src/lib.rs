@@ -6,7 +6,7 @@ use std::sync::{mpsc::Sender, RwLock};
 use tracing::error;
 
 pub use engine::{JSEngine, LuaEngine};
-pub use msg::{MsgReq, MsgRes};
+pub use msg::{MsgReq, MsgRes, MsgResError};
 
 pub enum EngineError {}
 

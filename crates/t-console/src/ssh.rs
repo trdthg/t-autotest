@@ -1,13 +1,13 @@
 use super::DuplexChannelConsole;
-use crate::parse_str_from_xt100_bytes;
+use crate::parse_str_from_vt100_bytes;
 use anyhow::Result;
-use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
 use std::path::Path;
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
+use std::{fs, time};
 use tracing::{debug, info, trace};
 
 /// This struct is a convenience wrapper
@@ -70,7 +70,7 @@ impl SSHClient {
         };
 
         debug!(msg = "ssh getting tty...");
-        let tty = res.exec_global("tty").unwrap();
+        let tty = res.exec_global(Duration::from_secs(10), "tty").unwrap();
         res.tty = tty;
         info!(msg = "ssh client tty", tty = res.tty.trim());
 
@@ -82,7 +82,7 @@ impl SSHClient {
     }
 
     pub fn dump_history(&self) -> String {
-        return parse_str_from_xt100_bytes(&self.history.clone());
+        return parse_str_from_vt100_bytes(&self.history.clone());
     }
 
     pub fn exec_seperate(&mut self, command: &str) -> Result<String> {
@@ -102,13 +102,22 @@ impl SSHClient {
         Ok(())
     }
 
-    fn comsume_buffer_and_map<T>(&mut self, f: impl Fn(&[u8]) -> Option<T>) -> Result<T> {
+    fn comsume_buffer_and_map<T>(
+        &mut self,
+        timeout: Duration,
+        f: impl Fn(&[u8]) -> Option<T>,
+    ) -> Result<T> {
         let ch = &mut self.shell;
 
         let current_buffer_start = self.buffer.len();
 
+        let start = time::SystemTime::now();
+
         loop {
             let mut output_buffer = [0u8; 1024];
+            if time::SystemTime::now().duration_since(start).unwrap() > timeout {
+                break;
+            }
             match ch.read(&mut output_buffer) {
                 Ok(n) => {
                     let received = &output_buffer[0..n];
@@ -132,17 +141,18 @@ impl SSHClient {
                 Err(_) => unreachable!(),
             }
         }
+        return Err(anyhow::anyhow!("timeout"));
     }
 
-    pub fn read_golbal_until(&mut self, pattern: &str) -> Result<()> {
-        self.comsume_buffer_and_map(|buffer| {
-            let buffer_str = parse_str_from_xt100_bytes(buffer);
+    pub fn read_golbal_until(&mut self, timeout: Duration, pattern: &str) -> Result<()> {
+        self.comsume_buffer_and_map(timeout, |buffer| {
+            let buffer_str = parse_str_from_vt100_bytes(buffer);
             buffer_str.find(pattern)
         })
         .map(|_| ())
     }
 
-    pub fn exec_global(&mut self, command: &str) -> Result<String> {
+    pub fn exec_global(&mut self, timeout: Duration, command: &str) -> Result<String> {
         // "echo {}\n", \n may lost if no sleep
         sleep(Duration::from_millis(100));
 
@@ -154,10 +164,10 @@ impl SSHClient {
         ch.write_all(cmd.as_bytes()).unwrap();
         ch.flush().unwrap();
 
-        self.comsume_buffer_and_map(|buffer| {
+        self.comsume_buffer_and_map(timeout, |buffer| {
             // find target pattern from buffer
-            let parsed_str = parse_str_from_xt100_bytes(buffer);
-            trace!("current buffer: [{:?}]", parse_str_from_xt100_bytes(buffer));
+            let parsed_str = parse_str_from_vt100_bytes(buffer);
+            debug!("current buffer: [{:?}]", parsed_str);
             let res = t_util::assert_capture_between(&parsed_str, &format!("{nanoid}\n"), &nanoid)
                 .unwrap();
             res
@@ -237,7 +247,8 @@ mod test {
             ssh2.exec_seperate(format!(r#"sleep 5 && echo "asdfg" > {}"#, tty).as_str())
         });
 
-        ssh.read_golbal_until("asdfg").unwrap();
+        ssh.read_golbal_until(Duration::from_secs(1), "asdfg")
+            .unwrap();
     }
 
     #[test]
@@ -253,7 +264,7 @@ mod test {
             ("export A=2;echo A=$A", "A=2\n"),
         ];
         for cmd in cmds {
-            let res = ssh.exec_global(cmd.0).unwrap();
+            let res = ssh.exec_global(Duration::from_secs(1), cmd.0).unwrap();
             assert_eq!(res, cmd.1);
         }
     }

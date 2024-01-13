@@ -11,7 +11,7 @@ use std::{
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use image::ImageBuffer;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 use vnc::PixelFormat;
 
 use crate::ScreenControlConsole;
@@ -133,7 +133,7 @@ impl VncClientInner {
             const FRAME_MS: u64 = 1000 / 60;
             let start = std::time::Instant::now();
 
-            info!(msg = "waiting new events");
+            trace!(msg = "waiting new events");
             for event in vnc.poll_iter() {
                 info!(msg = "receive new event");
                 use vnc::client::Event;
@@ -195,8 +195,8 @@ impl VncClientInner {
             let mouse_button_left = 0x01;
             while let Ok((msg, tx)) = self.event_rx.recv_timeout(timeout()) {
                 let res = match msg {
-                    VNCEventReq::TypeString(s) => unimplemented!(),
-                    VNCEventReq::SendKey(k) => unimplemented!(),
+                    VNCEventReq::TypeString(_) => unimplemented!(),
+                    VNCEventReq::SendKey(_) => unimplemented!(),
                     VNCEventReq::MouseMove(x, y) => {
                         debug!(msg = "mouse move", x = x, y = y);
                         vnc.send_pointer_event(mouse_buttons_mask, x, y).unwrap();

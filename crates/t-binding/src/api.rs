@@ -1,4 +1,4 @@
-use crate::{get_global_sender, MsgReq, MsgRes};
+use crate::{get_global_sender, msg::MsgResError, MsgReq, MsgRes};
 use std::{sync::mpsc, time::Duration};
 use tracing::{error, info, trace};
 
@@ -33,31 +33,41 @@ pub fn req(req: MsgReq) -> MsgRes {
 }
 
 pub fn ssh_assert_script_run_seperate(cmd: String, timeout: i32) -> Option<String> {
-    match req(MsgReq::AssertScriptRunSshSeperate {
+    match req(MsgReq::SSHAssertScriptRunSeperate {
         cmd,
         timeout: Duration::from_millis(timeout as u64),
     }) {
-        MsgRes::AssertScriptRunSshSeperate { res } => Some(res),
+        MsgRes::SSHAssertScriptRunSeperate(Ok(res)) => Some(res),
+        MsgRes::SSHAssertScriptRunSeperate(Err(MsgResError::Timeout)) => panic!("wrong msg type"),
         _ => panic!("wrong msg type"),
     }
 }
 
 pub fn ssh_assert_script_run_global(cmd: String, timeout: i32) -> Option<String> {
-    match req(MsgReq::AssertScriptRunSshGlobal {
+    match req(MsgReq::SSHAssertScriptRunGlobal {
         cmd,
         timeout: Duration::from_millis(timeout as u64),
     }) {
-        MsgRes::AssertScriptRunSshGlobal { res } => Some(res),
+        MsgRes::SSHAssertScriptRunGlobal(Ok(res)) => Some(res),
+        MsgRes::SSHAssertScriptRunGlobal(Err(MsgResError::Timeout)) => panic!("wrong msg type"),
         _ => panic!("wrong msg type"),
     }
 }
 
 pub fn serial_assert_script_run_global(cmd: String, timeout: i32) -> String {
-    match req(MsgReq::AssertScriptRunSerialGlobal {
+    match req(MsgReq::SerialAssertScriptRunGlobal {
         cmd,
         timeout: Duration::from_millis(timeout as u64),
     }) {
-        MsgRes::AssertScriptRunSerialGlobal { res } => res,
+        MsgRes::SerialAssertScriptRunGlobal(Ok(res)) => res,
+        MsgRes::SerialAssertScriptRunGlobal(Err(MsgResError::Timeout)) => "".to_owned(),
+        _ => panic!("wrong msg type"),
+    }
+}
+
+pub fn serial_write_string(s: String) {
+    match req(MsgReq::SerialWriteStringGlobal { s }) {
+        MsgRes::Done => {}
         _ => panic!("wrong msg type"),
     }
 }

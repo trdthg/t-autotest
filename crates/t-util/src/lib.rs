@@ -1,7 +1,7 @@
 use std::{error::Error, fmt::Display, process::Command, sync::mpsc, thread, time::Duration};
 
 use regex::Regex;
-use tracing::trace;
+use tracing::{error, info, trace};
 
 #[derive(Debug)]
 pub enum RegexError {
@@ -37,8 +37,12 @@ where
 
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
+        trace!(msg = "run_with_timeout start");
         let result = f();
-        sender.send(result).unwrap();
+        if let Err(e) = sender.send(result) {
+            error!(msg = "run_with_timeout send failed", reason = ?e);
+        }
+        info!(msg = "run_with_timeout done");
     });
 
     match receiver.recv_timeout(timeout) {

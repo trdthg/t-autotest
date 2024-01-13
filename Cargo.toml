@@ -33,10 +33,11 @@ vt100              = { version = "0.15.2" }
 image              = { version = "0.24.7" }
 png                = { version = "0.17.10" }
 byteorder          = { version = "1.5.0" }
+parking_lot        = { version = "0.12.1" }
 
-rquickjs           = { version = "0.4.0" }
-mlua               = { version = "0.9.1", features = ["lua54", "vendored"] }
-pyo3               = { version = "0.20.0", features = ["auto-initialize"] }
+rquickjs = { version = "0.4.0" }
+mlua     = { version = "0.9.1", features = ["lua54", "vendored"] }
+pyo3     = { version = "0.20.0", features = ["auto-initialize"] }
 
 [profile.dev]
 incremental = true

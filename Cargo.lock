@@ -1259,6 +1259,7 @@ dependencies = [
  "home",
  "image",
  "mlua",
+ "parking_lot 0.12.1",
  "pipe-trait",
  "png",
  "pyo3",

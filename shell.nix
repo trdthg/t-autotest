@@ -3,20 +3,23 @@ let
 in
 pkgs.mkShell {
   nativeBuildInputs = with pkgs; [
-    ### build SDL2-sys
+    ### build(bin/examples) SDL2-sys
     SDL2.dev
 
-    ### serialport-rs
-    # virt serial dev
+    ### dev
     socat
-    # serial client
     minicom
-    # build libudev-sys: find libudev
+    quickjs
+    tigervnc
+
+    ### build(lib)
+    # libudev-sys: find libudev
     pkg-config
-    # build libudev-sys: contains libudev
+    # libudev-sys: contains libudev
     systemd.dev
-    # build openssl-sys
+    # openssl-sys: ssh2
     openssl.dev
+
   ];
   buildInputs = with pkgs;[
   ];

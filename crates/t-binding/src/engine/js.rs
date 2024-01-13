@@ -30,6 +30,12 @@ impl JSEngine {
                         }),
                     )
                     .unwrap();
+                ctx.globals()
+                    .set(
+                        "serial_write_string",
+                        Function::new(ctx.clone(), move |s: String| api::serial_write_string(s)),
+                    )
+                    .unwrap();
 
                 ctx.globals()
                     .set(
