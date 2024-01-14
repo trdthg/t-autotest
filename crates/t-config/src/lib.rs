@@ -34,6 +34,7 @@ mod test {
 
     #[test]
     fn test_example_toml() {
-        load_config_from_file("../../config/full-example.toml").unwrap();
+        let cfg = load_config_from_file("../../config/full-example.toml").unwrap();
+        println!("{:#?}", cfg);
     }
 }

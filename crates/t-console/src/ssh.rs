@@ -85,6 +85,7 @@ impl SSHClient {
         return parse_str_from_vt100_bytes(&self.history.clone());
     }
 
+    // TODO: may blocking
     pub fn exec_seperate(&mut self, command: &str) -> Result<String> {
         let mut exec_ch = self.session.channel_session().unwrap();
 

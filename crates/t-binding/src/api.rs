@@ -1,9 +1,22 @@
 use crate::{get_global_sender, msg::MsgResError, MsgReq, MsgRes};
 use std::{sync::mpsc, time::Duration};
-use tracing::{error, info, trace};
+use tracing::{debug, error, info, trace, warn, Level};
 
-pub fn print(msg: String) {
-    info!("api-print: [{msg}]");
+pub fn print(level: tracing::Level, msg: String) {
+    match level {
+        Level::ERROR => info!(msg = "api print", level = ?level, msg = msg),
+        Level::WARN => info!(msg = "api print", level = ?level, msg = msg),
+        Level::INFO => info!(msg = "api print", level = ?level, msg = msg),
+        Level::DEBUG => info!(msg = "api print", level = ?level, msg = msg),
+        Level::TRACE => info!(msg = "api print", level = ?level, msg = msg),
+    }
+}
+
+pub fn get_env(key: String) -> String {
+    match req(MsgReq::GetConfig { key }) {
+        MsgRes::Value(res) => res.to_string(),
+        _ => panic!("wrong msg type"),
+    }
 }
 
 pub fn sleep(millis: u64) {

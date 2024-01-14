@@ -1,6 +1,9 @@
 log_dir    = "testresults"
 needle_dir = "needles"
 
+[env]
+AAA = 1
+
 [console]
 
 [console.ssh]

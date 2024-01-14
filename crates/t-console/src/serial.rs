@@ -246,7 +246,8 @@ impl SerialClientInner {
                 }
                 Err(e) if e.kind() == io::ErrorKind::TimedOut => {}
                 Err(e) => {
-                    panic!("{}", format!("{}", e));
+                    error!(msg = "connection may be broken", reason = ?e);
+                    break;
                 }
             }
 

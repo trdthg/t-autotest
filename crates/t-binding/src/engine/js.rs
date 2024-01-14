@@ -2,7 +2,7 @@ use crate::{api, ScriptEngine};
 use rquickjs::Function;
 use rquickjs::{Context, Runtime};
 use serde::{Deserialize, Serialize};
-use tracing::{error, info};
+use tracing::{error, info, Level};
 
 pub struct JSEngine {
     _runtime: rquickjs::Runtime,
@@ -24,6 +24,30 @@ impl JSEngine {
             .with(|ctx| -> Result<(), ()> {
                 ctx.globals()
                     .set(
+                        "print",
+                        Function::new(ctx.clone(), move |msg: String| {
+                            api::print(Level::INFO, msg);
+                        }),
+                    )
+                    .unwrap();
+
+                ctx.globals()
+                    .set("sleep", Function::new(ctx.clone(), api::sleep))
+                    .unwrap();
+
+                ctx.globals()
+                    .set("get_env", Function::new(ctx.clone(), api::get_env))
+                    .unwrap();
+
+                ctx.globals()
+                    .set(
+                        "assert_script_run_ssh_seperate",
+                        Function::new(ctx.clone(), api::ssh_assert_script_run_seperate),
+                    )
+                    .unwrap();
+
+                ctx.globals()
+                    .set(
                         "assert_script_run_serial_global",
                         Function::new(ctx.clone(), move |cmd: String, timeout: i32| -> String {
                             api::serial_assert_script_run_global(cmd, timeout)
@@ -34,26 +58,6 @@ impl JSEngine {
                     .set(
                         "serial_write_string",
                         Function::new(ctx.clone(), move |s: String| api::serial_write_string(s)),
-                    )
-                    .unwrap();
-
-                ctx.globals()
-                    .set(
-                        "print",
-                        Function::new(ctx.clone(), move |msg: String| {
-                            api::print(msg);
-                        }),
-                    )
-                    .unwrap();
-
-                ctx.globals()
-                    .set("sleep", Function::new(ctx.clone(), api::sleep))
-                    .unwrap();
-
-                ctx.globals()
-                    .set(
-                        "assert_script_run_ssh_seperate",
-                        Function::new(ctx.clone(), api::ssh_assert_script_run_seperate),
                     )
                     .unwrap();
 
@@ -90,8 +94,22 @@ impl JSEngine {
                     )
                     .unwrap();
 
+                ctx.globals()
+                    .set(
+                        "__rust_log__",
+                        Function::new(ctx.clone(), move |level: String, msg: String| {
+                            match level.as_str() {
+                                "log" | "info" => api::print(Level::INFO, msg),
+                                "error" => api::print(Level::ERROR, msg),
+                                "debug" => api::print(Level::DEBUG, msg),
+                                _ => {}
+                            }
+                        }),
+                    )
+                    .unwrap();
                 ctx.eval(
-                    r#"var console = Object.freeze({
+                    r#"
+                        var console = Object.freeze({
                             log(data){__rust_log__("log",JSON.stringify(data))},
                             info(data){__rust_log__("info",JSON.stringify(data))},
                             error(data){__rust_log__("error",JSON.stringify(data))},
@@ -174,7 +192,6 @@ impl JSEngine {
                         serde_json::from_str(&result).expect("js script wrong return type");
                     if result.code != 0 {
                         error!(msg = "js script run failed", reason = result.msg);
-                        panic!()
                     }
                     info!(msg = "script run success", result = ?result);
                 }

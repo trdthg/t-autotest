@@ -46,6 +46,7 @@ impl Runner {
                 },
             log_dir: _,
             needle_dir: _,
+            env: _,
         } = config.clone();
 
         info!(msg = "init...");
@@ -158,6 +159,13 @@ impl Runner {
             let (req, tx) = res.unwrap();
             info!(msg = "recv script engine request", req = ?req);
             let res = match req {
+                MsgReq::GetConfig { key } => MsgRes::Value(
+                    config
+                        .env
+                        .get(&key)
+                        .map(|v| v.to_owned())
+                        .unwrap_or(toml::Value::String("".to_string())),
+                ),
                 MsgReq::SSHAssertScriptRunSeperate { cmd, timeout } => {
                     let client = ssh_client.clone();
                     let res = client
@@ -181,7 +189,8 @@ impl Runner {
                 MsgReq::SerialAssertScriptRunGlobal { cmd, timeout } => {
                     let client = serial_client.clone();
                     let res = client
-                        .lock()
+                        .try_lock()
+                        .unwrap()
                         .as_mut()
                         .expect("no serial")
                         .exec_global(timeout, &cmd)
@@ -191,7 +200,8 @@ impl Runner {
                 MsgReq::SerialWriteStringGlobal { s } => {
                     let client = serial_client.clone();
                     client
-                        .lock()
+                        .try_lock()
+                        .unwrap()
                         .as_ref()
                         .expect("no serial")
                         .write_string(&s)

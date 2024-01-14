@@ -2,6 +2,11 @@ use std::time::Duration;
 
 #[derive(Debug)]
 pub enum MsgReq {
+    // runner
+    GetConfig {
+        key: String,
+    },
+    // ssh
     SSHAssertScriptRunSeperate {
         cmd: String,
         timeout: Duration,
@@ -10,6 +15,7 @@ pub enum MsgReq {
         cmd: String,
         timeout: Duration,
     },
+    // serial
     SerialAssertScriptRunGlobal {
         cmd: String,
         timeout: Duration,
@@ -17,6 +23,7 @@ pub enum MsgReq {
     SerialWriteStringGlobal {
         s: String,
     },
+    // vnc
     AssertScreen {
         tag: String,
         threshold: i32,
@@ -38,6 +45,7 @@ pub enum MsgResError {
 #[derive(Debug)]
 pub enum MsgRes {
     Done,
+    Value(toml::Value),
     SSHAssertScriptRunSeperate(Result<String, MsgResError>),
     SSHAssertScriptRunGlobal(Result<String, MsgResError>),
     SerialAssertScriptRunGlobal(Result<String, MsgResError>),

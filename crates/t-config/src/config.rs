@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]
@@ -5,6 +7,7 @@ pub struct Config {
     pub log_dir: String,
     pub needle_dir: String,
     pub console: Console,
+    pub env: HashMap<String, toml::Value>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
