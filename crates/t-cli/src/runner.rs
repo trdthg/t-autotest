@@ -87,7 +87,7 @@ impl Runner {
                     ),
                 ),
                 ConsoleSSHAuthType::Password => {
-                    SSHAuthAuth::PrivateKey(_ssh.auth.password.clone().unwrap())
+                    SSHAuthAuth::Password(_ssh.auth.password.clone().unwrap())
                 }
             };
             let ssh_client = SSHClient::connect(
