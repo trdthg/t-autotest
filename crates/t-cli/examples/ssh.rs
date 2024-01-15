@@ -26,6 +26,7 @@ fn main() -> () {
 
     // Session is a wrapper around a russh client, defined down below
     let mut ssh = SSHClient::connect(
+        None,
         SSHAuthAuth::PrivateKey(cli.private_key.unwrap_or(default_private_key())),
         cli.username.unwrap_or(default_username()),
         (cli.host, cli.port),

@@ -1,14 +1,14 @@
 use super::DuplexChannelConsole;
 use crate::parse_str_from_vt100_bytes;
 use anyhow::Result;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
 use std::path::Path;
 use std::thread::sleep;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::Duration;
 use std::{fs, time};
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace};
 
 /// This struct is a convenience wrapper
 /// around a russh client
@@ -30,6 +30,7 @@ pub enum SSHAuthAuth<P: AsRef<Path>> {
 
 impl SSHClient {
     pub fn connect<P: AsRef<Path>, A: ToSocketAddrs>(
+        timeout: Option<Duration>,
         auth: SSHAuthAuth<P>,
         user: impl Into<String>,
         addrs: A,
@@ -40,7 +41,7 @@ impl SSHClient {
         sess.handshake()?;
 
         // never disconnect auto
-        sess.set_timeout(0);
+        sess.set_timeout(timeout.map(|x| x.as_millis() as u32).unwrap_or(5000));
 
         match auth {
             SSHAuthAuth::PrivateKey(private_key) => {
@@ -116,7 +117,9 @@ impl SSHClient {
 
         loop {
             let mut output_buffer = [0u8; 1024];
-            if time::SystemTime::now().duration_since(start).unwrap() > timeout {
+            let since = time::SystemTime::now().duration_since(start).unwrap();
+            debug!(msg = "elasped",elasped = ?since);
+            if since > timeout {
                 break;
             }
             match ch.read(&mut output_buffer) {
@@ -139,7 +142,13 @@ impl SSHClient {
                     self.buffer = self.buffer[current_buffer_start..].to_owned();
                     return Ok(res.unwrap());
                 }
-                Err(_) => unreachable!(),
+                Err(e) if e.kind() == io::ErrorKind::TimedOut => {
+                    continue;
+                }
+                Err(e) => {
+                    error!(msg = "ssh read global failed", reason = ?e);
+                    break;
+                }
             }
         }
         return Err(anyhow::anyhow!("timeout"));
@@ -219,7 +228,7 @@ mod test {
         };
 
         dbg!(&key_path, &username, &addrs);
-        let serial = SSHClient::connect(auth, username, addrs).unwrap();
+        let serial = SSHClient::connect(None, auth, username, addrs).unwrap();
         serial
     }
 

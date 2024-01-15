@@ -91,6 +91,7 @@ impl Runner {
                 }
             };
             let ssh_client = SSHClient::connect(
+                _ssh.timeout,
                 auth,
                 _ssh.username.clone(),
                 format!("{}:{}", _ssh.host, _ssh.port),

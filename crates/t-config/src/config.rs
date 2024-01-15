@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use serde::Deserialize;
 
@@ -24,6 +24,7 @@ pub struct ConsoleSSH {
     pub port: u16,
     pub username: String,
     pub auth: ConsoleSSHAuth,
+    pub timeout: Option<Duration>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
