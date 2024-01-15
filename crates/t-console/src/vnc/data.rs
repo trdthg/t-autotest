@@ -17,8 +17,8 @@ pub struct Rect {
     pub height: u16,
 }
 
-impl From<vnc::Rect> for Rect {
-    fn from(value: vnc::Rect) -> Self {
+impl From<t_vnc::Rect> for Rect {
+    fn from(value: t_vnc::Rect) -> Self {
         Self {
             left: value.left,
             top: value.top,
@@ -28,9 +28,9 @@ impl From<vnc::Rect> for Rect {
     }
 }
 
-impl Into<vnc::Rect> for &Rect {
-    fn into(self) -> vnc::Rect {
-        vnc::Rect {
+impl Into<t_vnc::Rect> for &Rect {
+    fn into(self) -> t_vnc::Rect {
+        t_vnc::Rect {
             left: self.left,
             top: self.top,
             width: self.width,

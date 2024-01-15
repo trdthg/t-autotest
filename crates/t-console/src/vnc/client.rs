@@ -11,8 +11,8 @@ use std::{
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use image::ImageBuffer;
+use t_vnc::PixelFormat;
 use tracing::{debug, error, info, trace};
-use vnc::PixelFormat;
 
 use crate::ScreenControlConsole;
 
@@ -54,7 +54,7 @@ impl ScreenControlConsole for VNCClient {}
 
 #[derive(Debug)]
 pub enum VNCError {
-    VNCError(vnc::Error),
+    VNCError(t_vnc::Error),
     Io(io::Error),
 }
 impl Error for VNCError {}
@@ -73,11 +73,13 @@ impl VNCClient {
             TcpStream::connect_timeout(&addrs.into().parse().unwrap(), Duration::from_secs(3))
                 .map_err(|e| VNCError::Io(e))?;
 
-        let mut vnc = vnc::Client::from_tcp_stream(stream, false, |methods| {
+        let mut vnc = t_vnc::Client::from_tcp_stream(stream, false, |methods| {
             for method in methods {
                 match method {
-                    vnc::client::AuthMethod::None => return Some(vnc::client::AuthChoice::None),
-                    vnc::client::AuthMethod::Password => {
+                    t_vnc::client::AuthMethod::None => {
+                        return Some(t_vnc::client::AuthChoice::None)
+                    }
+                    t_vnc::client::AuthMethod::Password => {
                         return match password {
                             None => None,
                             Some(password) => {
@@ -88,7 +90,7 @@ impl VNCClient {
                                     }
                                     key[i] = byte
                                 }
-                                Some(vnc::client::AuthChoice::Password(key))
+                                Some(t_vnc::client::AuthChoice::Password(key))
                             }
                         }
                     }
@@ -127,7 +129,7 @@ impl VNCClient {
 
 impl VncClientInner {
     // vnc event loop
-    fn pool(&mut self, vnc: &mut vnc::Client) {
+    fn pool(&mut self, vnc: &mut t_vnc::Client) {
         info!(msg = "start event pool loop");
         'running: loop {
             const FRAME_MS: u64 = 1000 / 60;
@@ -136,7 +138,7 @@ impl VncClientInner {
             trace!(msg = "waiting new events");
             for event in vnc.poll_iter() {
                 info!(msg = "receive new event");
-                use vnc::client::Event;
+                use t_vnc::client::Event;
                 match event {
                     Event::Disconnected(None) => {
                         break 'running;
