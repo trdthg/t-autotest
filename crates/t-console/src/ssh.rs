@@ -170,7 +170,7 @@ impl SSHClient {
 
         // write nanoid for regex
         let nanoid = nanoid::nanoid!();
-        let cmd = format!("{command}; echo {}\n", nanoid);
+        let cmd = format!("{command}\n echo {}\n", nanoid);
         ch.write_all(cmd.as_bytes()).unwrap();
         ch.flush().unwrap();
 

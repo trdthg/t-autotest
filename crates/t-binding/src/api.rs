@@ -51,7 +51,7 @@ pub fn ssh_assert_script_run_seperate(cmd: String, timeout: i32) -> Option<Strin
         timeout: Duration::from_millis(timeout as u64),
     }) {
         MsgRes::SSHAssertScriptRunSeperate(Ok(res)) => Some(res),
-        MsgRes::SSHAssertScriptRunSeperate(Err(MsgResError::Timeout)) => panic!("wrong msg type"),
+        MsgRes::SSHAssertScriptRunSeperate(Err(MsgResError::Timeout)) => None,
         _ => panic!("wrong msg type"),
     }
 }
@@ -62,7 +62,7 @@ pub fn ssh_assert_script_run_global(cmd: String, timeout: i32) -> Option<String>
         timeout: Duration::from_millis(timeout as u64),
     }) {
         MsgRes::SSHAssertScriptRunGlobal(Ok(res)) => Some(res),
-        MsgRes::SSHAssertScriptRunGlobal(Err(MsgResError::Timeout)) => panic!("wrong msg type"),
+        MsgRes::SSHAssertScriptRunGlobal(Err(MsgResError::Timeout)) => None,
         _ => panic!("wrong msg type"),
     }
 }

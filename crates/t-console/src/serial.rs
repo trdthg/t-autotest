@@ -140,7 +140,7 @@ impl SerialClient {
         sleep(Duration::from_millis(70));
 
         let nanoid = nanoid::nanoid!();
-        let cmd = format!("{cmd}; echo {}\n", nanoid);
+        let cmd = format!("{cmd}\n echo {}\n", nanoid);
         self.write(cmd.as_bytes()).unwrap();
 
         self.comsume_buffer_and_map(timeout, |buffer| {
