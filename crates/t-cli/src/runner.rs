@@ -187,6 +187,16 @@ impl Runner {
                         .map_err(|_| MsgResError::Timeout);
                     MsgRes::SSHAssertScriptRunGlobal(res)
                 }
+                MsgReq::SSHWriteStringGlobal { s } => {
+                    let client = ssh_client.clone();
+                    let res = client
+                        .lock()
+                        .as_mut()
+                        .expect("no ssh")
+                        .write_string(&s)
+                        .map_err(|_| MsgResError::Timeout);
+                    MsgRes::Done
+                }
                 MsgReq::SerialAssertScriptRunGlobal { cmd, timeout } => {
                     let client = serial_client.clone();
                     let res = client

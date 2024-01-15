@@ -45,6 +45,12 @@ impl JSEngine {
                         Function::new(ctx.clone(), api::ssh_assert_script_run_seperate),
                     )
                     .unwrap();
+                ctx.globals()
+                    .set(
+                        "ssh_write_string",
+                        Function::new(ctx.clone(), move |s: String| api::ssh_write_string(s)),
+                    )
+                    .unwrap();
 
                 ctx.globals()
                     .set(

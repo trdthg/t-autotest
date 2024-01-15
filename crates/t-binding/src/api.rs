@@ -67,6 +67,13 @@ pub fn ssh_assert_script_run_global(cmd: String, timeout: i32) -> Option<String>
     }
 }
 
+pub fn ssh_write_string(s: String) {
+    match req(MsgReq::SSHWriteStringGlobal { s }) {
+        MsgRes::Done => {}
+        _ => panic!("wrong msg type"),
+    }
+}
+
 pub fn serial_assert_script_run_global(cmd: String, timeout: i32) -> String {
     match req(MsgReq::SerialAssertScriptRunGlobal {
         cmd,

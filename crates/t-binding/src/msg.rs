@@ -15,6 +15,9 @@ pub enum MsgReq {
         cmd: String,
         timeout: Duration,
     },
+    SSHWriteStringGlobal {
+        s: String,
+    },
     // serial
     SerialAssertScriptRunGlobal {
         cmd: String,

@@ -96,10 +96,10 @@ impl SSHClient {
         Ok(buffer)
     }
 
-    pub fn write_global(&mut self, command: &str) -> Result<()> {
+    pub fn write_string(&mut self, s: &str) -> Result<()> {
         sleep(Duration::from_millis(100));
         let ch = &mut self.shell;
-        ch.write_all(command.as_bytes()).unwrap();
+        ch.write_all(s.as_bytes()).unwrap();
         ch.flush().unwrap();
         Ok(())
     }
