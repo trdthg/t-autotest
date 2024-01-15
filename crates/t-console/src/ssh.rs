@@ -1,23 +1,24 @@
 use super::DuplexChannelConsole;
-use crate::parse_str_from_vt100_bytes;
+use crate::{parse_str_from_vt100_bytes, BufCtl, BufEvLoopCtl, Ctl, EvLoopCtl, Req};
+
 use anyhow::Result;
-use std::io::{self, Read, Write};
+
+use std::fs;
+use std::io::Read;
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
 use std::path::Path;
 use std::thread::sleep;
 use std::time::Duration;
-use std::{fs, time};
-use tracing::{debug, error, info, trace};
+
+use tracing::{debug, info};
 
 /// This struct is a convenience wrapper
 /// around a russh client
 pub struct SSHClient {
     session: ssh2::Session,
-    shell: ssh2::Channel,
+    ctl: BufEvLoopCtl,
     tty: String,
-    buffer: Vec<u8>,
-    history: Vec<u8>,
 }
 
 impl DuplexChannelConsole for SSHClient {}
@@ -54,6 +55,7 @@ impl SSHClient {
         assert!(sess.authenticated());
         debug!(msg = "ssh auth success");
 
+        // build shell channel
         let mut channel = sess.channel_session()?;
         channel
             .request_pty("xterm", None, Some((80, 24, 0, 0)))
@@ -64,10 +66,8 @@ impl SSHClient {
 
         let mut res = Self {
             session: sess,
-            shell: channel,
+            ctl: BufEvLoopCtl::new(EvLoopCtl::new(channel)),
             tty: "".to_string(),
-            buffer: Vec::new(),
-            history: Vec::new(),
         };
 
         debug!(msg = "ssh getting tty...");
@@ -83,7 +83,7 @@ impl SSHClient {
     }
 
     pub fn dump_history(&self) -> String {
-        return parse_str_from_vt100_bytes(&self.history.clone());
+        return parse_str_from_vt100_bytes(&self.ctl.history());
     }
 
     // TODO: may blocking
@@ -98,83 +98,29 @@ impl SSHClient {
 
     pub fn write_string(&mut self, s: &str) -> Result<()> {
         sleep(Duration::from_millis(100));
-        let ch = &mut self.shell;
-        ch.write_all(s.as_bytes()).unwrap();
-        ch.flush().unwrap();
+        self.ctl.send(Req::Write(s.as_bytes().to_vec())).unwrap();
         Ok(())
     }
 
-    fn comsume_buffer_and_map<T>(
-        &mut self,
-        timeout: Duration,
-        f: impl Fn(&[u8]) -> Option<T>,
-    ) -> Result<T> {
-        let ch = &mut self.shell;
-
-        let current_buffer_start = self.buffer.len();
-
-        let start = time::SystemTime::now();
-
-        loop {
-            let mut output_buffer = [0u8; 1024];
-            let since = time::SystemTime::now().duration_since(start).unwrap();
-            debug!(msg = "elasped",elasped = ?since);
-            if since > timeout {
-                break;
-            }
-            match ch.read(&mut output_buffer) {
-                Ok(n) => {
-                    let received = &output_buffer[0..n];
-
-                    // save to buffer
-                    self.buffer.extend(received);
-                    self.history.extend(received);
-
-                    // find target pattern
-                    let res = f(&self.buffer);
-
-                    // if buffer_str.find(pattern).is_none() {
-                    if res.is_none() {
-                        continue;
-                    }
-
-                    // cut from last find
-                    self.buffer = self.buffer[current_buffer_start..].to_owned();
-                    return Ok(res.unwrap());
-                }
-                Err(e) if e.kind() == io::ErrorKind::TimedOut => {
-                    continue;
-                }
-                Err(e) => {
-                    error!(msg = "ssh read global failed", reason = ?e);
-                    break;
-                }
-            }
-        }
-        return Err(anyhow::anyhow!("timeout"));
-    }
-
     pub fn read_golbal_until(&mut self, timeout: Duration, pattern: &str) -> Result<()> {
-        self.comsume_buffer_and_map(timeout, |buffer| {
-            let buffer_str = parse_str_from_vt100_bytes(buffer);
-            buffer_str.find(pattern)
-        })
-        .map(|_| ())
+        self.ctl
+            .comsume_buffer_and_map(timeout, |buffer| {
+                let buffer_str = parse_str_from_vt100_bytes(buffer);
+                buffer_str.find(pattern)
+            })
+            .map(|_| ())
     }
 
-    pub fn exec_global(&mut self, timeout: Duration, command: &str) -> Result<String> {
+    pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<String> {
         // "echo {}\n", \n may lost if no sleep
         sleep(Duration::from_millis(100));
 
-        let ch = &mut self.shell;
-
         // write nanoid for regex
         let nanoid = nanoid::nanoid!();
-        let cmd = format!("{command}\n echo {}\n", nanoid);
-        ch.write_all(cmd.as_bytes()).unwrap();
-        ch.flush().unwrap();
+        let cmd = format!("{cmd}; echo {nanoid}\n");
+        self.write_string(&cmd).unwrap();
 
-        self.comsume_buffer_and_map(timeout, |buffer| {
+        self.ctl.comsume_buffer_and_map(timeout, |buffer| {
             // find target pattern from buffer
             let parsed_str = parse_str_from_vt100_bytes(buffer);
             debug!("current buffer: [{:?}]", parsed_str);

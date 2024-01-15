@@ -1,32 +1,20 @@
 use super::DuplexChannelConsole;
-use crate::parse_str_from_vt100_bytes;
+use crate::event_loop::{BufEvLoopCtl, Ctl};
+use crate::{parse_str_from_vt100_bytes, BufCtl, EvLoopCtl, Req, Res};
+
 use anyhow::Result;
-use image::EncodableLayout;
-use std::io::{self, Read, Write};
+
+use std::io;
 use std::path::Path;
-use std::sync::mpsc::{self, channel, Receiver, Sender};
-use std::thread::{self, sleep};
-use std::time::{self, Duration};
+use std::sync::mpsc;
+use std::thread::sleep;
+use std::time::Duration;
+
 use t_util::ExecutorError;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, info, trace};
 
 pub struct SerialClient {
-    buffer: Vec<u8>,
-    history: Vec<u8>,
-    tx: Sender<(MsgReq, Sender<MsgRes>)>,
-    stop_tx: Sender<()>,
-}
-
-#[derive(Debug)]
-enum MsgReq {
-    Write(Vec<u8>),
-    Read,
-}
-
-#[derive(Debug)]
-enum MsgRes {
-    Done,
-    ReadResponse(Vec<u8>),
+    ctl: BufEvLoopCtl,
 }
 
 impl DuplexChannelConsole for SerialClient {}
@@ -44,12 +32,8 @@ impl Drop for SerialClient {
         println!("serial client dropping...");
 
         // try send logout req
-        let (tx, rx) = channel();
-        self.tx.send((MsgReq::Write(vec![0x04]), tx)).unwrap();
-        rx.recv().unwrap();
-
-        // stop sub thread
-        self.stop_tx.send(()).unwrap();
+        self.ctl.send(Req::Write(vec![0x04])).unwrap();
+        self.ctl.stop();
     }
 }
 
@@ -71,18 +55,14 @@ impl SerialClient {
         )
         .map_err(|e| SerialError::STTY(e))?;
 
-        let (write_tx, read_rx) = mpsc::channel();
-        let (stop_tx, stop_rx) = mpsc::channel();
-
-        thread::spawn(move || {
-            SerialClientInner::new(file, bund_rate, read_rx, stop_rx).pool();
-        });
+        // connect serial
+        let port = serialport::new(&file, bund_rate)
+            .open()
+            .map_err(|e| SerialError::ConnectError(e.to_string()))
+            .unwrap();
 
         let mut res = Self {
-            buffer: Vec::new(),
-            history: Vec::new(),
-            tx: write_tx,
-            stop_tx,
+            ctl: BufEvLoopCtl::new(EvLoopCtl::new(port)),
         };
 
         res.logout();
@@ -98,17 +78,15 @@ impl SerialClient {
     }
 
     pub fn dump_history(&self) -> String {
-        parse_str_from_vt100_bytes(&self.history)
+        parse_str_from_vt100_bytes(&self.ctl.history())
     }
 
     fn write(&self, bytes: &[u8]) -> Result<(), mpsc::RecvError> {
-        let (tx, rx) = channel();
-        self.tx.send((MsgReq::Write(bytes.to_vec()), tx)).unwrap();
-        let res = rx.recv();
+        let res = self.ctl.send(Req::Write(bytes.to_vec()));
         if res.is_err() {
             Err(res.unwrap_err())
         } else {
-            assert!(matches!(res, Ok(MsgRes::Done)));
+            assert!(matches!(res, Ok(Res::Done)));
             Ok(())
         }
     }
@@ -140,10 +118,10 @@ impl SerialClient {
         sleep(Duration::from_millis(70));
 
         let nanoid = nanoid::nanoid!();
-        let cmd = format!("{cmd}\n echo {}\n", nanoid);
+        let cmd = format!("{cmd}; echo {nanoid}\n",);
         self.write(cmd.as_bytes()).unwrap();
 
-        self.comsume_buffer_and_map(timeout, |buffer| {
+        self.ctl.comsume_buffer_and_map(timeout, |buffer| {
             // find target pattern from buffer
             let parsed_str = parse_str_from_vt100_bytes(buffer);
             let res = t_util::assert_capture_between(&parsed_str, &format!("{nanoid}\n"), &nanoid)
@@ -154,136 +132,13 @@ impl SerialClient {
     }
 
     pub fn read_golbal_until(&mut self, timeout: Duration, pattern: &str) -> Result<()> {
-        self.comsume_buffer_and_map(timeout, |buffer| {
-            let buffer_str = parse_str_from_vt100_bytes(buffer);
-            debug!(msg = "serial read_golbal_until", buffer = buffer_str);
-            buffer_str.find(pattern)
-        })
-        .map(|_| ())
-    }
-
-    fn comsume_buffer_and_map<T>(
-        &mut self,
-        timeout: Duration,
-        f: impl Fn(&[u8]) -> Option<T>,
-    ) -> Result<T> {
-        let current_buffer_start = self.buffer.len();
-
-        let start = time::SystemTime::now();
-        loop {
-            if time::SystemTime::now().duration_since(start).unwrap() > timeout {
-                break;
-            }
-            let (tx, rx) = channel();
-            self.tx.send((MsgReq::Read, tx)).unwrap();
-            match rx.recv() {
-                Ok(MsgRes::ReadResponse(ref received)) => {
-                    // save to buffer
-                    if received.len() == 0 {
-                        continue;
-                    }
-
-                    self.buffer.extend(received);
-                    self.history.extend(received);
-                    trace!(msg = "received buffer", history_len = self.history.len());
-
-                    // find target pattern
-                    let res = f(&self.buffer);
-
-                    if res.is_none() {
-                        continue;
-                    }
-
-                    // cut from last find
-                    self.buffer = self.buffer[current_buffer_start..].to_owned();
-                    return Ok(res.unwrap());
-                }
-                Ok(t) => {
-                    error!(msg = "invalid msg varient", t = ?t);
-                    panic!();
-                }
-                Err(e) => {
-                    panic!("{}", format!("{}", e));
-                }
-            }
-        }
-        return Err(anyhow::anyhow!("timeout"));
-    }
-}
-
-struct SerialClientInner {
-    conn: Box<dyn serialport::SerialPort>,
-    req_rx: Receiver<(MsgReq, Sender<MsgRes>)>,
-    stop_rx: Receiver<()>,
-    history: Vec<u8>,
-    last_read_index: usize,
-}
-
-impl SerialClientInner {
-    fn new(
-        file: impl Into<String>,
-        bund_rate: u32,
-        rx: Receiver<(MsgReq, Sender<MsgRes>)>,
-        stop_rx: Receiver<()>,
-    ) -> Self {
-        let port = serialport::new(&file.into(), bund_rate)
-            .open()
-            .map_err(|e| SerialError::ConnectError(e.to_string()))
-            .unwrap();
-
-        Self {
-            conn: port,
-            req_rx: rx,
-            stop_rx,
-            history: Vec::new(),
-            last_read_index: 0,
-        }
-    }
-
-    fn pool(self: &mut Self) {
-        let mut output_buffer = [0u8; 4096];
-        loop {
-            // handle serial output
-            match self.conn.read(&mut output_buffer) {
-                Ok(n) => {
-                    let received = &output_buffer[0..n];
-                    self.history.extend(received);
-                }
-                Err(e) if e.kind() == io::ErrorKind::TimedOut => {}
-                Err(e) => {
-                    error!(msg = "connection may be broken", reason = ?e);
-                    break;
-                }
-            }
-
-            // handle user read, write request
-            match self.req_rx.try_recv() {
-                Ok((req, tx)) => {
-                    let res = match req {
-                        MsgReq::Write(msg) => {
-                            self.conn.write_all(msg.as_bytes()).unwrap();
-                            self.conn.flush().unwrap();
-                            MsgRes::Done
-                        }
-                        MsgReq::Read => {
-                            let res = &self.history[self.last_read_index..];
-                            self.last_read_index = self.history.len();
-                            MsgRes::ReadResponse(res.to_vec())
-                        }
-                    };
-                    tx.send(res).unwrap();
-                }
-                Err(mpsc::TryRecvError::Empty) => {}
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    error!(msg = "serial disconnected")
-                }
-            }
-
-            // handle stop
-            if let Ok(()) = self.stop_rx.try_recv() {
-                break;
-            }
-        }
+        self.ctl
+            .comsume_buffer_and_map(timeout, |buffer| {
+                let buffer_str = parse_str_from_vt100_bytes(buffer);
+                debug!(msg = "serial read_golbal_until", buffer = buffer_str);
+                buffer_str.find(pattern)
+            })
+            .map(|_| ())
     }
 }
 

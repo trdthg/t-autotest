@@ -1,7 +1,9 @@
+mod event_loop;
 mod serial;
 mod ssh;
 mod vnc;
 
+pub use event_loop::*;
 pub use serial::SerialClient;
 pub use ssh::{SSHAuthAuth, SSHClient};
 pub use vnc::{Rect, VNCClient, VNCError, VNCEventReq, VNCEventRes, PNG};
@@ -27,6 +29,5 @@ fn parse_str_from_vt100_bytes(bytes: &[u8]) -> String {
         let contents = parser.screen().contents();
         res.push_str(contents.as_str());
     }
-    println!("{} {}", bytes.len(), res.len());
     res
 }
