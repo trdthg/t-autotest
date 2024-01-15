@@ -2,7 +2,6 @@ use super::DuplexChannelConsole;
 use crate::parse_str_from_vt100_bytes;
 use anyhow::Result;
 use image::EncodableLayout;
-use serialport::TTYPort;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::mpsc::{self, channel, Receiver, Sender};
@@ -72,15 +71,11 @@ impl SerialClient {
         )
         .map_err(|e| SerialError::STTY(e))?;
 
-        let port = serialport::new(&file, bund_rate)
-            .open_native()
-            .map_err(|e| SerialError::ConnectError(e.to_string()))?;
-
         let (write_tx, read_rx) = mpsc::channel();
         let (stop_tx, stop_rx) = mpsc::channel();
 
         thread::spawn(move || {
-            SerialClientInner::new(port, read_rx, stop_rx).pool();
+            SerialClientInner::new(file, bund_rate, read_rx, stop_rx).pool();
         });
 
         let mut res = Self {
@@ -217,7 +212,7 @@ impl SerialClient {
 }
 
 struct SerialClientInner {
-    conn: serialport::TTYPort,
+    conn: Box<dyn serialport::SerialPort>,
     req_rx: Receiver<(MsgReq, Sender<MsgRes>)>,
     stop_rx: Receiver<()>,
     history: Vec<u8>,
@@ -225,9 +220,19 @@ struct SerialClientInner {
 }
 
 impl SerialClientInner {
-    fn new(conn: TTYPort, rx: Receiver<(MsgReq, Sender<MsgRes>)>, stop_rx: Receiver<()>) -> Self {
+    fn new(
+        file: impl Into<String>,
+        bund_rate: u32,
+        rx: Receiver<(MsgReq, Sender<MsgRes>)>,
+        stop_rx: Receiver<()>,
+    ) -> Self {
+        let port = serialport::new(&file.into(), bund_rate)
+            .open()
+            .map_err(|e| SerialError::ConnectError(e.to_string()))
+            .unwrap();
+
         Self {
-            conn,
+            conn: port,
             req_rx: rx,
             stop_rx,
             history: Vec::new(),
