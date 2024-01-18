@@ -78,7 +78,7 @@ jobs:
       - run: cargo clippy -- -D warnings
 
   build:
-    name: Clippy
+    name: Build
     runs-on: ubuntu-latest
     steps:
       - name: dependencies
@@ -93,12 +93,11 @@ jobs:
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: ${{ matrix.rust }}
           profile: minimal
+          toolchain: stable
           override: true
-          target: ${{ matrix.target }}
 
       - name: Build binary
-        run: cargo build --verbose --release --target ${{ matrix.target }}
+        run: cargo build --verbose
         env:
           RUST_BACKTRACE: 1
