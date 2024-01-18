@@ -157,10 +157,13 @@ mod test {
 
     #[test]
     fn test_serial_boot() {
-        let mut port = serialport::new("/dev/ttyUSB0", 115200)
+        let port = serialport::new("/dev/ttyUSB0", 115200)
             .timeout(Duration::from_secs(10))
-            .open_native()
-            .unwrap();
+            .open_native();
+        if port.is_err() {
+            return;
+        }
+        let mut port = port.unwrap();
         sleep(Duration::from_secs(20));
         loop {
             let mut buf = [0; 1024];
@@ -179,9 +182,13 @@ mod test {
         }
     }
 
-    fn get_config_from_file() -> Config {
-        let f = env::var("AUTOTEST_CONFIG_FILE").unwrap();
-        t_config::load_config_from_file(f).unwrap()
+    fn get_config_from_file() -> Option<Config> {
+        let f = env::var("AUTOTEST_CONFIG_FILE").map_or(None, |v| Some(v));
+        if f.is_none() {
+            return None;
+        }
+        let c = t_config::load_config_from_file(f.unwrap()).map(|v| Some(v));
+        c.unwrap()
     }
 
     fn get_client(c: &Config) -> SerialClient {
@@ -203,6 +210,10 @@ mod test {
     #[tracing_test::traced_test]
     fn test_exec_global() {
         let c = get_config_from_file();
+        if c.is_none() {
+            return;
+        }
+        let c = c.unwrap();
         if !c.console.serial.enable {
             return;
         }

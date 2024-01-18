@@ -118,7 +118,7 @@ mod test {
     #[test]
     fn get_needle() {
         let needle = NeedleManager::new("./assets/needles");
-        let (cfg, png) = needle.load_by_tag("normal");
+        let (cfg, png) = needle.load_by_tag("normal2");
         let rect = &cfg.area[0];
         let rect = Rect {
             left: rect.left,
@@ -129,7 +129,7 @@ mod test {
 
         assert!(cmp_image_rect(&png, &png, &rect));
 
-        let png2 = needle.load_file_by_tag("normal2");
+        let png2 = needle.load_file_by_tag("normal");
         assert!(!cmp_image_rect(&png, &png2, &rect));
     }
 }

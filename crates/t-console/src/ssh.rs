@@ -144,13 +144,13 @@ mod test {
 
     use super::*;
 
-    fn get_config_from_file() -> t_config::Config {
-        let f = env::var("AUTOTEST_CONFIG_FILE").unwrap();
-        t_config::load_config_from_file(f).unwrap()
+    fn get_config_from_file() -> Option<t_config::Config> {
+        let f = env::var("AUTOTEST_CONFIG_FILE").ok()?;
+        t_config::load_config_from_file(f).map(|v| Some(v)).unwrap()
     }
 
-    fn get_ssh_client() -> SSHClient {
-        let c = get_config_from_file();
+    fn get_ssh_client() -> Option<SSHClient> {
+        let c = get_config_from_file()?;
         assert!(c.console.ssh.enable);
 
         let key_path = c.console.ssh.auth.private_key;
@@ -175,7 +175,7 @@ mod test {
 
         dbg!(&key_path, &username, &addrs);
         let serial = SSHClient::connect(None, auth, username, addrs).unwrap();
-        serial
+        Some(serial)
     }
 
     #[test]
@@ -185,7 +185,11 @@ mod test {
             (r#"echo "A=$A""#, "A=\n"),
             (r#"export A=1;echo "A=$A""#, "A=1\n"),
         ];
-        let mut ssh = get_ssh_client();
+        let ssh = get_ssh_client();
+        if ssh.is_none() {
+            return;
+        }
+        let mut ssh = ssh.unwrap();
         for cmd in cmds {
             let res = ssh.exec_seperate(cmd.0).unwrap();
             assert_eq!(res, cmd.1);
@@ -194,8 +198,13 @@ mod test {
 
     #[test]
     fn test_tty_and_read_until() {
-        let mut ssh = get_ssh_client();
-        let mut ssh2 = get_ssh_client();
+        let ssh = get_ssh_client();
+        let ssh2 = get_ssh_client();
+        if ssh.is_none() || ssh2.is_none() {
+            return;
+        }
+        let mut ssh = ssh.unwrap();
+        let mut ssh2 = ssh2.unwrap();
 
         let tty = ssh.tty();
 
@@ -209,7 +218,11 @@ mod test {
 
     #[test]
     fn test_wr() {
-        let mut ssh = get_ssh_client();
+        let ssh = get_ssh_client();
+        if ssh.is_none() {
+            return;
+        }
+        let mut ssh = ssh.unwrap();
 
         let cmds = vec![
             // (r#"echo "A=$A"\n"#, "A=\n"),
