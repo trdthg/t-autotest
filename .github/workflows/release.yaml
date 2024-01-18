@@ -1,0 +1,78 @@
+name: build
+
+on:
+  push:
+    tags:
+      - v[0-9]+.*
+
+jobs:
+  build:
+    name: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        build: [linux, macos, windows]
+        include:
+          - build: linux
+            os: ubuntu-22.04
+            rust: stable
+            target: x86_64-unknown-linux-gnu
+            archive-name: autotest-linux.tar.gz
+          - build: macos
+            os: macos-latest
+            rust: stable
+            target: x86_64-apple-darwin
+            archive-name: autotest-macos.tar.gz
+          - build: windows
+            os: windows-2019
+            rust: stable-x86_64-msvc
+            target: x86_64-pc-windows-msvc
+            archive-name: autotest-windows.7z
+      fail-fast: false
+
+    steps:
+      - name: dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get install libudev-dev
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          profile: minimal
+          override: true
+          target: ${{ matrix.target }}
+
+      - name: Build binary
+        run: cargo build --verbose --release --target ${{ matrix.target }}
+        env:
+          RUST_BACKTRACE: 1
+
+      - name: Strip binary (linux and macos)
+        if: matrix.build == 'linux' || matrix.build == 'macos'
+        run: strip "target/${{ matrix.target }}/release/autotest"
+
+      - name: Build archive
+        shell: bash
+        run: |
+          mkdir archive
+          cp LICENSE README.md archive/
+          cd archive
+          if [ "${{ matrix.build }}" = "windows" ]; then
+            cp "../target/${{ matrix.target }}/release/autotest.exe" ./
+            7z a "${{ matrix.archive-name }}" LICENSE README.md autotest.exe
+          else
+            cp "../target/${{ matrix.target }}/release/autotest" ./
+            tar -czf "${{ matrix.archive-name }}" LICENSE README.md autotest
+          fi
+      - name: Upload archive
+        uses: actions/upload-artifact@v1
+        with:
+          name: ${{ matrix.archive-name }}
+          path: archive/${{ matrix.archive-name }}
