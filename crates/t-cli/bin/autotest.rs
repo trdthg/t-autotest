@@ -29,7 +29,7 @@ fn main() {
                 "debug" => Level::DEBUG,
                 "warn" => Level::WARN,
                 "error" => Level::ERROR,
-                "info" | _ => Level::INFO,
+                _ => Level::INFO,
             },
             _ => Level::INFO,
         })

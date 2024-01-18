@@ -31,9 +31,9 @@ impl Runner {
     pub fn new(file: impl AsRef<Path>, config: Config) -> Self {
         let content = fs::read_to_string(&file).unwrap();
         let ext = file.as_ref().extension().and_then(|x| x.to_str()).unwrap();
-        let e = match ext {
-            "js" => JSEngine::new(),
-            "lua" => LuaEngine::new(),
+        let e: Box<dyn ScriptEngine> = match ext {
+            "js" => Box::new(JSEngine::new()),
+            "lua" => Box::new(LuaEngine::new()),
             _ => unimplemented!(),
         };
 
@@ -167,7 +167,7 @@ impl Runner {
                         .map(|v| v.to_owned())
                         .unwrap_or(toml::Value::String("".to_string())),
                 ),
-                MsgReq::SSHAssertScriptRunSeperate { cmd, timeout } => {
+                MsgReq::SSHAssertScriptRunSeperate { cmd, timeout: _ } => {
                     let client = ssh_client.clone();
                     let res = client
                         .lock()
@@ -189,7 +189,7 @@ impl Runner {
                 }
                 MsgReq::SSHWriteStringGlobal { s } => {
                     let client = ssh_client.clone();
-                    let res = client
+                    let _res = client
                         .lock()
                         .as_mut()
                         .expect("no ssh")
@@ -252,7 +252,7 @@ impl Runner {
                     );
                     MsgRes::AssertScreen {
                         similarity: 0,
-                        ok: matches!(res, Ok(_)),
+                        ok: res.is_ok(),
                     }
                 }
                 MsgReq::MouseMove { x, y } => {
@@ -328,7 +328,7 @@ impl Runner {
         if self.config.console.ssh.enable {
             info!(msg = "collecting ssh log...");
             let mut log_path = PathBuf::new();
-            log_path.push(&log_dir);
+            log_path.push(log_dir);
             log_path.push("ssh_full_log.txt");
             let history = self.ssh_client.lock().as_ref().unwrap().dump_history();
             fs::write(log_path, history).unwrap();
@@ -345,7 +345,7 @@ impl Runner {
                 .unwrap()
                 .dump_history();
             let mut log_path = PathBuf::new();
-            log_path.push(&log_dir);
+            log_path.push(log_dir);
             log_path.push("serial_full_log.txt");
             fs::write(log_path, history).unwrap();
             info!(msg = "collecting serialport log done");

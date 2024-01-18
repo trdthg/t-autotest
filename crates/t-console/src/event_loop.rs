@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::Result;
 use image::EncodableLayout;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Debug)]
 pub enum Req {
@@ -43,7 +43,7 @@ pub struct EvLoopCtl {
 
 impl EvLoopCtl {
     pub fn new<T: Read + Write + Send + 'static>(conn: T) -> Self {
-        let (req_tx, stop_tx) = EventLoop::new(conn);
+        let (req_tx, stop_tx) = EventLoop::spawn(conn);
         Self { req_tx, stop_tx }
     }
 }
@@ -57,7 +57,15 @@ impl Ctl for EvLoopCtl {
     }
 
     fn stop(&self) {
-        self.stop_tx.send(()).unwrap()
+        if let Err(_e) = self.stop_tx.send(()) {
+            warn!("evloop may already stopped");
+        }
+    }
+}
+
+impl Drop for EvLoopCtl {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
@@ -73,7 +81,7 @@ impl<T> EventLoop<T>
 where
     T: Read + Write + Send + 'static,
 {
-    pub fn new(conn: T) -> (Sender<(Req, Sender<Res>)>, Sender<()>) {
+    pub fn spawn(conn: T) -> (Sender<(Req, Sender<Res>)>, Sender<()>) {
         let (write_tx, read_rx) = mpsc::channel();
         let (stop_tx, stop_rx) = mpsc::channel();
 
@@ -90,7 +98,7 @@ where
         (write_tx, stop_tx)
     }
 
-    fn pool(self: &mut Self) {
+    fn pool(&mut self) {
         let mut output_buffer = [0u8; 4096];
         loop {
             // handle serial output
@@ -182,7 +190,7 @@ impl BufCtl for BufEvLoopCtl {
             match res {
                 Ok(Res::Value(ref received)) => {
                     // save to buffer
-                    if received.len() == 0 {
+                    if received.is_empty() {
                         continue;
                     }
 
@@ -214,6 +222,6 @@ impl BufCtl for BufEvLoopCtl {
                 }
             }
         }
-        return Err(anyhow::anyhow!("timeout"));
+        Err(anyhow::anyhow!("timeout"))
     }
 }

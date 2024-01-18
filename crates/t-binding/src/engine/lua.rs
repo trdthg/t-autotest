@@ -8,10 +8,15 @@ impl ScriptEngine for LuaEngine {
     }
 }
 
+impl Default for LuaEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LuaEngine {
-    pub fn new() -> Box<dyn ScriptEngine> {
-        let e = Self {};
-        Box::new(e)
+    pub fn new() -> Self {
+        Self {}
     }
 }
 

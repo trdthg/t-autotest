@@ -14,10 +14,8 @@ pub trait ScreenControlConsole {}
 
 pub trait DuplexChannelConsole {}
 
-#[cfg(test)]
-mod test {}
-
 // magic string, used for regex extract in ssh or serial output
+#[allow(dead_code)]
 static MAGIC_STRING: &str = "n8acxy9o47xx7x7xw";
 
 // get display string from raw xt100 output
@@ -31,3 +29,6 @@ fn parse_str_from_vt100_bytes(bytes: &[u8]) -> String {
     }
     res
 }
+
+#[cfg(test)]
+mod test {}

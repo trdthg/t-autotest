@@ -23,7 +23,7 @@ pub struct Cli {
     command: Vec<String>,
 }
 
-fn main() -> () {
+fn main() {
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
         .finish();
@@ -39,5 +39,5 @@ fn main() -> () {
         cli.password
     );
 
-    VNCClient::connect(&format!("{}:{}", cli.host, cli.port), cli.password).unwrap();
+    VNCClient::connect(format!("{}:{}", cli.host, cli.port), cli.password).unwrap();
 }

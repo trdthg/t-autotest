@@ -79,11 +79,11 @@ impl SSHClient {
     }
 
     pub fn tty(&self) -> String {
-        return self.tty.clone();
+        self.tty.clone()
     }
 
     pub fn dump_history(&self) -> String {
-        return parse_str_from_vt100_bytes(&self.ctl.history());
+        parse_str_from_vt100_bytes(&self.ctl.history())
     }
 
     // TODO: may blocking
@@ -124,9 +124,8 @@ impl SSHClient {
             // find target pattern from buffer
             let parsed_str = parse_str_from_vt100_bytes(buffer);
             debug!("current buffer: [{:?}]", parsed_str);
-            let res = t_util::assert_capture_between(&parsed_str, &format!("{nanoid}\n"), &nanoid)
-                .unwrap();
-            res
+
+            t_util::assert_capture_between(&parsed_str, &format!("{nanoid}\n"), &nanoid).unwrap()
         })
     }
 
@@ -134,7 +133,7 @@ impl SSHClient {
         let p: &Path = remote_path.as_ref();
         assert!(p.exists());
         let stat = fs::metadata(p).unwrap();
-        self.session.scp_send(p, 0644, stat.len(), None).unwrap();
+        self.session.scp_send(p, 644, stat.len(), None).unwrap();
     }
 }
 
@@ -146,7 +145,7 @@ mod test {
 
     fn get_config_from_file() -> Option<t_config::Config> {
         let f = env::var("AUTOTEST_CONFIG_FILE").ok()?;
-        t_config::load_config_from_file(f).map(|v| Some(v)).unwrap()
+        t_config::load_config_from_file(f).map(Some).unwrap()
     }
 
     fn get_ssh_client() -> Option<SSHClient> {

@@ -12,7 +12,7 @@ use std::{
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use image::ImageBuffer;
 use t_vnc::PixelFormat;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::ScreenControlConsole;
 
@@ -61,8 +61,8 @@ impl Error for VNCError {}
 impl Display for VNCError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            VNCError::VNCError(e) => write!(f, "{}", e.to_string()),
-            VNCError::Io(e) => write!(f, "{}", e.to_string()),
+            VNCError::VNCError(e) => write!(f, "{}", e),
+            VNCError::Io(e) => write!(f, "{}", e),
         }
     }
 }
@@ -71,7 +71,7 @@ impl VNCClient {
     pub fn connect<A: Into<String>>(addrs: A, password: Option<String>) -> Result<Self, VNCError> {
         let stream =
             TcpStream::connect_timeout(&addrs.into().parse().unwrap(), Duration::from_secs(3))
-                .map_err(|e| VNCError::Io(e))?;
+                .map_err(VNCError::Io)?;
 
         let mut vnc = t_vnc::Client::from_tcp_stream(stream, false, |methods| {
             for method in methods {
@@ -94,12 +94,15 @@ impl VNCClient {
                             }
                         }
                     }
-                    _ => unimplemented!(),
+                    m => {
+                        warn!(msg = "unimplemented", method = ?m);
+                        continue;
+                    }
                 }
             }
             None
         })
-        .map_err(|e| VNCError::VNCError(e))?;
+        .map_err(VNCError::VNCError)?;
 
         vnc.format();
 
@@ -152,7 +155,7 @@ impl VncClientInner {
                         // 获取 PixelFormat 对象和像素数据
                         let new_rect = RectContainer::new_with_data(
                             (rect.left, rect.top, rect.width, rect.height).into(),
-                            convert_to_rgb(&self.pixel_format, &pixels),
+                            convert_to_rgb(&self.pixel_format, pixels),
                         );
                         self.copy_rect(new_rect);
                     }
@@ -293,6 +296,7 @@ fn convert_to_rgb(pixel_format: &PixelFormat, raw_pixel_chunks: &[u8]) -> Vec<[u
 }
 
 // convert vnc pixels to png
+#[allow(dead_code)]
 fn convert_to_imagebuffer(
     width: u16,
     height: u16,

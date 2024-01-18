@@ -15,8 +15,14 @@ impl ScriptEngine for JSEngine {
     }
 }
 
+impl Default for JSEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl JSEngine {
-    pub fn new() -> Box<dyn ScriptEngine> {
+    pub fn new() -> Self {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();
 
@@ -149,12 +155,10 @@ impl JSEngine {
             })
             .unwrap();
 
-        let e = Self {
+        Self {
             _runtime: runtime,
             context,
-        };
-
-        Box::new(e)
+        }
     }
 
     pub fn run(&mut self, script: &str) -> Result<(), String> {
@@ -228,28 +232,29 @@ mod test {
 
     fn get_context() -> rquickjs::Context {
         let runtime = Runtime::new().unwrap();
-        let context = Context::full(&runtime).unwrap();
-        context
+
+        Context::full(&runtime).unwrap()
     }
 
     #[test]
     fn test_engine() {
-        JSEngine::new().run(
-            r#"
+        JSEngine::new()
+            .run(
+                r#"
         print("1");
         assert_script_run("whoami", 600);
         print("2");
     "#,
-        );
+            )
+            .unwrap();
     }
 
     #[test]
     fn test_quickjs_basic() {
         get_context().with(|ctx| {
-            let func_add = rquickjs::Function::new(ctx.clone(), move |a: i32, b: i32| -> i32 {
-                return a + b;
-            })
-            .unwrap();
+            let func_add =
+                rquickjs::Function::new(ctx.clone(), move |a: i32, b: i32| -> i32 { a + b })
+                    .unwrap();
             ctx.globals().set("add", func_add).map_err(|_| ()).unwrap();
 
             let value = ctx

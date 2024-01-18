@@ -24,7 +24,7 @@ pub enum SerialError {
     ConnectError(String),
     Read(io::Error),
     Write(io::Error),
-    STTY(ExecutorError),
+    Stty(ExecutorError),
 }
 
 impl Drop for SerialClient {
@@ -53,7 +53,7 @@ impl SerialClient {
         t_util::execute_shell(
             format!("stty -F {} {} -echo -icrnl -onlcr -icanon", file, bund_rate).as_str(),
         )
-        .map_err(|e| SerialError::STTY(e))?;
+        .map_err(SerialError::Stty)?;
 
         // connect serial
         let port = serialport::new(&file, bund_rate)
@@ -83,8 +83,8 @@ impl SerialClient {
 
     fn write(&self, bytes: &[u8]) -> Result<(), mpsc::RecvError> {
         let res = self.ctl.send(Req::Write(bytes.to_vec()));
-        if res.is_err() {
-            Err(res.unwrap_err())
+        if let Err(e) = res {
+            Err(e)
         } else {
             assert!(matches!(res, Ok(Res::Done)));
             Ok(())
@@ -183,11 +183,9 @@ mod test {
     }
 
     fn get_config_from_file() -> Option<Config> {
-        let f = env::var("AUTOTEST_CONFIG_FILE").map_or(None, |v| Some(v));
-        if f.is_none() {
-            return None;
-        }
-        let c = t_config::load_config_from_file(f.unwrap()).map(|v| Some(v));
+        let f = env::var("AUTOTEST_CONFIG_FILE").ok();
+        f.as_ref()?;
+        let c = t_config::load_config_from_file(f.unwrap()).map(Some);
         c.unwrap()
     }
 
@@ -202,8 +200,7 @@ mod test {
             None
         };
 
-        let serial = SerialClient::connect(&c.serial_file, c.bund_rate, auth).unwrap();
-        serial
+        SerialClient::connect(&c.serial_file, c.bund_rate, auth).unwrap()
     }
 
     #[test]
@@ -220,7 +217,7 @@ mod test {
 
         let mut serial = get_client(&c);
 
-        let cmds = vec![
+        let cmds = [
             ("unset A", ""),
             (r#"echo "A=$A""#, "A=\n"),
             ("export A=1", ""),

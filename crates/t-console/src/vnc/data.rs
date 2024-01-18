@@ -28,13 +28,13 @@ impl From<t_vnc::Rect> for Rect {
     }
 }
 
-impl Into<t_vnc::Rect> for &Rect {
-    fn into(self) -> t_vnc::Rect {
+impl From<&Rect> for t_vnc::Rect {
+    fn from(val: &Rect) -> Self {
         t_vnc::Rect {
-            left: self.left,
-            top: self.top,
-            width: self.width,
-            height: self.height,
+            left: val.left,
+            top: val.top,
+            width: val.width,
+            height: val.height,
         }
     }
 }
@@ -46,9 +46,18 @@ pub struct RectContainer<P> {
     pub data: Vec<P>,
 }
 
-impl<P: Clone> RectContainer<P> {
+impl<P: Clone + Sized> RectContainer<P> {
     pub fn new(rect: Rect) -> Self {
-        let mut data = Vec::with_capacity(rect.width as usize * rect.height as usize);
+        let cap = rect.width as usize * rect.height as usize;
+        let mut data = Vec::with_capacity(cap);
+
+        unsafe {
+            let size_of_element = std::mem::size_of::<u32>();
+            let buffer_ptr = data.as_mut_ptr();
+            std::ptr::write_bytes(buffer_ptr, 0, cap * size_of_element);
+            data.set_len(cap);
+        }
+
         unsafe { data.set_len(rect.width as usize * rect.height as usize) };
         Self { rect, data }
     }

@@ -4,7 +4,7 @@ use t_console::{SSHAuthAuth, SSHClient};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
-fn main() -> () {
+fn main() {
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
         .finish();

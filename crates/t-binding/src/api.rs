@@ -1,6 +1,6 @@
 use crate::{get_global_sender, msg::MsgResError, MsgReq, MsgRes};
 use std::{sync::mpsc, time::Duration};
-use tracing::{debug, error, info, trace, warn, Level};
+use tracing::{error, info, trace, Level};
 
 pub fn print(level: tracing::Level, msg: String) {
     match level {

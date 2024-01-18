@@ -14,7 +14,9 @@ pub trait ScriptEngine {
     fn run(&mut self, content: &str);
 }
 
-static mut GLOBAL_BASE_SENDER: Option<RwLock<Sender<(MsgReq, Sender<MsgRes>)>>> = None;
+type GlobalSharedSender = Option<RwLock<Sender<(MsgReq, Sender<MsgRes>)>>>;
+
+static mut GLOBAL_BASE_SENDER: GlobalSharedSender = None;
 
 pub fn init(sender: Sender<(MsgReq, Sender<MsgRes>)>) {
     unsafe {

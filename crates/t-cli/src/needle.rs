@@ -21,7 +21,7 @@ impl NeedleManager {
         let json_path = PathBuf::from_iter(vec![&self.dir, &format!("{tag}.json")]);
         let json_file = File::open(json_path).unwrap();
         let json: NeedleConfig = serde_json::from_reader(BufReader::new(json_file)).unwrap();
-        return (json, needle_png);
+        (json, needle_png)
     }
 
     #[cfg(test)]
@@ -29,22 +29,22 @@ impl NeedleManager {
         let needle_path = PathBuf::from_iter(vec![&self.dir, &format!("{tag}.png")]);
         let needle_file = File::open(needle_path).unwrap();
         let needle_png = image::load(BufReader::new(needle_file), image::ImageFormat::Png).unwrap();
-        let needle_png = needle_png.into_rgb8();
 
-        return needle_png;
+        needle_png.into_rgb8()
     }
 
     pub fn cmp_by_tag(&self, s: &PNG, tag: &str) -> bool {
-        let (needle_cfg, needle_png) = self.load_by_tag(&tag);
+        let (needle_cfg, needle_png) = self.load_by_tag(tag);
         for area in needle_cfg.area.iter() {
-            if !cmp_image_rect(&needle_png, &s, &area.into()) {
+            if !cmp_image_rect(&needle_png, s, &area.into()) {
                 return false;
             }
         }
-        return true;
+        true
     }
 }
 
+#[allow(dead_code)]
 pub fn cmp_image_full(img1: &PNG, img2: &PNG) -> bool {
     // 检查图像的宽度和高度是否相同
     if img1.width() != img2.width() || img1.height() != img2.height() {
@@ -98,13 +98,13 @@ pub struct Area {
     pub height: u16,
 }
 
-impl Into<Rect> for &Area {
-    fn into(self) -> Rect {
+impl From<&Area> for Rect {
+    fn from(val: &Area) -> Self {
         Rect {
-            left: self.left,
-            top: self.top,
-            width: self.width,
-            height: self.height,
+            left: val.left,
+            top: val.top,
+            width: val.width,
+            height: val.height,
         }
     }
 }

@@ -15,8 +15,8 @@ impl Error for ConfigError {}
 impl Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConfigError::ConfigFileNotFound(e) => write!(f, "{}", e.to_string()),
-            ConfigError::DeserializeFailed(e) => write!(f, "{}", e.to_string()),
+            ConfigError::ConfigFileNotFound(e) => write!(f, "{}", e),
+            ConfigError::DeserializeFailed(e) => write!(f, "{}", e),
         }
     }
 }
@@ -24,8 +24,8 @@ impl Display for ConfigError {
 pub fn load_config_from_file(f: impl AsRef<Path>) -> Result<Config, ConfigError> {
     println!("{:?}", f.as_ref().display());
     println!("{:?}", env::current_dir().unwrap());
-    let f = fs::read_to_string(f).map_err(|e| ConfigError::ConfigFileNotFound(e))?;
-    toml::from_str::<Config>(f.as_str()).map_err(|e| ConfigError::DeserializeFailed(e))
+    let f = fs::read_to_string(f).map_err(ConfigError::ConfigFileNotFound)?;
+    toml::from_str::<Config>(f.as_str()).map_err(ConfigError::DeserializeFailed)
 }
 
 #[cfg(test)]

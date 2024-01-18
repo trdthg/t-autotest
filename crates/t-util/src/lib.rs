@@ -15,10 +15,10 @@ pub fn assert_capture_between(
 ) -> Result<Option<String>, RegexError> {
     let re = format!("(?s){}(.*){}", regex::escape(left), regex::escape(right));
     trace!(re = re, src = src, left = left, right = right,);
-    let re = Regex::new(&re).map_err(|e| RegexError::RegexBuildError(e))?;
+    let re = Regex::new(&re).map_err(RegexError::RegexBuildError)?;
 
     let mut locs = re.capture_locations();
-    if re.captures_read(&mut locs, &src).is_none() {
+    if re.captures_read(&mut locs, src).is_none() {
         return Ok(None);
     }
     let res_loc = locs.get(1).unwrap();
@@ -26,7 +26,7 @@ pub fn assert_capture_between(
     Ok(Some(src[res_loc.0..res_loc.1].to_string()))
 }
 
-pub fn run_with_timeout<F, T>(f: F, timeout: Duration) -> Result<T, ()>
+pub fn run_with_timeout<F, T>(f: F, timeout: Duration) -> Result<T, mpsc::RecvTimeoutError>
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
@@ -45,10 +45,7 @@ where
         info!(msg = "run_with_timeout done");
     });
 
-    match receiver.recv_timeout(timeout) {
-        Ok(result) => Ok(result),
-        Err(_) => Err(()),
-    }
+    receiver.recv_timeout(timeout)
 }
 
 #[derive(Debug)]
@@ -60,8 +57,8 @@ impl Error for ExecutorError {}
 impl Display for ExecutorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ExecutorError::SpawnCommand(e) => write!(f, "{}", e.to_string()),
-            ExecutorError::WaitProcess(e) => write!(f, "{}", e.to_string()),
+            ExecutorError::SpawnCommand(e) => write!(f, "{}", e),
+            ExecutorError::WaitProcess(e) => write!(f, "{}", e),
         }
     }
 }
@@ -88,7 +85,7 @@ mod test {
     #[test]
     fn test_exec_cmd() {
         let output = Command::new("bash")
-            .args(&["-c", "echo 1"])
+            .args(["-c", "echo 1"])
             .output()
             .expect("Failed to execute command");
 
@@ -118,7 +115,7 @@ mod test {
 
         let res = assert_capture_between(src, cmd, prompt).unwrap().unwrap();
         println!("res: [{:?}]", res);
-        assert!(res == "");
+        assert!(res.is_empty());
     }
 
     #[test]
@@ -129,7 +126,7 @@ mod test {
 
         let res = assert_capture_between(src, cmd, prompt).unwrap().unwrap();
         println!("res: [{:?}]", res);
-        assert!(res == "");
+        assert!(res.is_empty());
     }
 
     #[test]
