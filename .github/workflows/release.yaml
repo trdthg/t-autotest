@@ -1,13 +1,34 @@
-name: build
+name: Release
+
+permissions:
+  contents: write
 
 on:
   push:
     tags:
       - v[0-9]+.*
 
+  workflow_dispatch:
+
 jobs:
+  create_release:
+    name: Create release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+
   build:
     name: build
+    needs: create_release
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -76,3 +97,13 @@ jobs:
         with:
           name: ${{ matrix.archive-name }}
           path: archive/${{ matrix.archive-name }}
+
+      - name: Upload Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create_release.outputs.upload_url }}
+          asset_path: archive/${{ matrix.archive-name }}
+          asset_name: ${{ matrix.archive-name }}
+          asset_content_type: application/zip
