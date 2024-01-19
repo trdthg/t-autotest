@@ -39,17 +39,6 @@ pub struct VNCClient {
     pub event_tx: Sender<(VNCEventReq, Sender<VNCEventRes>)>,
 }
 
-struct VncClientInner {
-    width: u16,
-    height: u16,
-    mouse_x: u16,
-    mouse_y: u16,
-    pixel_format: PixelFormat,
-    unstable_screen: RectContainer<RGBPixel>,
-    stable_screen: RectContainer<RGBPixel>,
-    event_rx: Receiver<(VNCEventReq, Sender<VNCEventRes>)>,
-}
-
 impl ScreenControlConsole for VNCClient {}
 
 #[derive(Debug)]
@@ -128,6 +117,17 @@ impl VNCClient {
 
         Ok(Self { event_tx: tx })
     }
+}
+
+struct VncClientInner {
+    width: u16,
+    height: u16,
+    mouse_x: u16,
+    mouse_y: u16,
+    pixel_format: PixelFormat,
+    unstable_screen: RectContainer<RGBPixel>,
+    stable_screen: RectContainer<RGBPixel>,
+    event_rx: Receiver<(VNCEventReq, Sender<VNCEventRes>)>,
 }
 
 impl VncClientInner {

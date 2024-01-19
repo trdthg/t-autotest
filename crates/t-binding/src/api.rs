@@ -46,23 +46,23 @@ pub fn req(req: MsgReq) -> MsgRes {
 }
 
 pub fn ssh_assert_script_run_seperate(cmd: String, timeout: i32) -> Option<String> {
-    match req(MsgReq::SSHAssertScriptRunSeperate {
+    match req(MsgReq::SSHScriptRunSeperate {
         cmd,
         timeout: Duration::from_millis(timeout as u64),
     }) {
-        MsgRes::SSHAssertScriptRunSeperate(Ok(res)) => Some(res),
-        MsgRes::SSHAssertScriptRunSeperate(Err(MsgResError::Timeout)) => None,
+        MsgRes::SSHScriptRunSeperate(Ok(res)) => Some(res),
+        MsgRes::SSHScriptRunSeperate(Err(MsgResError::Timeout)) => None,
         _ => panic!("wrong msg type"),
     }
 }
 
 pub fn ssh_assert_script_run_global(cmd: String, timeout: i32) -> Option<String> {
-    match req(MsgReq::SSHAssertScriptRunGlobal {
+    match req(MsgReq::SSHScriptRunGlobal {
         cmd,
         timeout: Duration::from_millis(timeout as u64),
     }) {
-        MsgRes::SSHAssertScriptRunGlobal(Ok(res)) => Some(res),
-        MsgRes::SSHAssertScriptRunGlobal(Err(MsgResError::Timeout)) => None,
+        MsgRes::SSHScriptRunGlobal(Ok(res)) => Some(res),
+        MsgRes::SSHScriptRunGlobal(Err(MsgResError::Timeout)) => None,
         _ => panic!("wrong msg type"),
     }
 }
@@ -74,13 +74,30 @@ pub fn ssh_write_string(s: String) {
     }
 }
 
-pub fn serial_assert_script_run_global(cmd: String, timeout: i32) -> String {
-    match req(MsgReq::SerialAssertScriptRunGlobal {
+pub fn serial_script_run_global(cmd: String, timeout: i32) -> Option<String> {
+    match req(MsgReq::SerialScriptRunGlobal {
         cmd,
         timeout: Duration::from_millis(timeout as u64),
     }) {
-        MsgRes::SerialAssertScriptRunGlobal(Ok(res)) => res,
-        MsgRes::SerialAssertScriptRunGlobal(Err(MsgResError::Timeout)) => "".to_owned(),
+        MsgRes::SerialScriptRunGlobal(Ok(res)) => Some(res.1),
+        MsgRes::SerialScriptRunGlobal(Err(MsgResError::Timeout)) => None,
+        _ => panic!("wrong msg type"),
+    }
+}
+
+pub fn serial_assert_script_run_global(cmd: String, timeout: i32) -> Option<String> {
+    match req(MsgReq::SerialScriptRunGlobal {
+        cmd,
+        timeout: Duration::from_millis(timeout as u64),
+    }) {
+        MsgRes::SerialScriptRunGlobal(Ok(res)) => {
+            if res.0 == 0 {
+                Some(res.1)
+            } else {
+                None
+            }
+        }
+        MsgRes::SerialScriptRunGlobal(Err(MsgResError::Timeout)) => None,
         _ => panic!("wrong msg type"),
     }
 }

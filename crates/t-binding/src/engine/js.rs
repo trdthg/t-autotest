@@ -28,6 +28,7 @@ impl JSEngine {
 
         context
             .with(|ctx| -> Result<(), ()> {
+                // general
                 ctx.globals()
                     .set(
                         "print",
@@ -36,7 +37,6 @@ impl JSEngine {
                         }),
                     )
                     .unwrap();
-
                 ctx.globals()
                     .set("sleep", Function::new(ctx.clone(), api::sleep))
                     .unwrap();
@@ -44,68 +44,6 @@ impl JSEngine {
                 ctx.globals()
                     .set("get_env", Function::new(ctx.clone(), api::get_env))
                     .unwrap();
-
-                ctx.globals()
-                    .set(
-                        "assert_script_run_ssh_seperate",
-                        Function::new(ctx.clone(), api::ssh_assert_script_run_seperate),
-                    )
-                    .unwrap();
-                ctx.globals()
-                    .set(
-                        "ssh_write_string",
-                        Function::new(ctx.clone(), move |s: String| api::ssh_write_string(s)),
-                    )
-                    .unwrap();
-
-                ctx.globals()
-                    .set(
-                        "assert_script_run_serial_global",
-                        Function::new(ctx.clone(), move |cmd: String, timeout: i32| -> String {
-                            api::serial_assert_script_run_global(cmd, timeout)
-                        }),
-                    )
-                    .unwrap();
-                ctx.globals()
-                    .set(
-                        "serial_write_string",
-                        Function::new(ctx.clone(), move |s: String| api::serial_write_string(s)),
-                    )
-                    .unwrap();
-
-                ctx.globals()
-                    .set(
-                        "assert_script_run_ssh_global",
-                        Function::new(ctx.clone(), api::ssh_assert_script_run_global),
-                    )
-                    .unwrap();
-
-                ctx.globals()
-                    .set(
-                        "assert_screen",
-                        Function::new(
-                            ctx.clone(),
-                            move |tag: String, timeout: i32| -> rquickjs::Result<()> {
-                                let res = api::vnc_check_screen(tag.clone(), timeout);
-                                if !res {
-                                    Err(rquickjs::Error::Exception)
-                                } else {
-                                    Ok(())
-                                }
-                            },
-                        ),
-                    )
-                    .unwrap();
-
-                ctx.globals()
-                    .set(
-                        "check_screen",
-                        Function::new(ctx.clone(), move |tag: String, timeout: i32| -> bool {
-                            api::vnc_check_screen(tag.clone(), timeout)
-                        }),
-                    )
-                    .unwrap();
-
                 ctx.globals()
                     .set(
                         "__rust_log__",
@@ -130,6 +68,87 @@ impl JSEngine {
                 )
                 .map_err(|_| ())?;
 
+                // ssh
+                ctx.globals()
+                    .set(
+                        "ssh_assert_script_run_global",
+                        Function::new(ctx.clone(), api::ssh_assert_script_run_global),
+                    )
+                    .unwrap();
+                ctx.globals()
+                    .set(
+                        "ssh_assert_script_run_seperate",
+                        Function::new(ctx.clone(), api::ssh_assert_script_run_seperate),
+                    )
+                    .unwrap();
+                ctx.globals()
+                    .set(
+                        "ssh_write_string",
+                        Function::new(ctx.clone(), move |s: String| api::ssh_write_string(s)),
+                    )
+                    .unwrap();
+
+                // serial
+                ctx.globals()
+                    .set(
+                        "serial_assert_script_run_global",
+                        Function::new(
+                            ctx.clone(),
+                            move |cmd: String, timeout: i32| -> rquickjs::Result<String> {
+                                let res = api::serial_assert_script_run_global(cmd, timeout);
+                                res.ok_or(rquickjs::Error::Exception)
+                            },
+                        ),
+                    )
+                    .unwrap();
+                ctx.globals()
+                    .set(
+                        "serial_script_run_global",
+                        Function::new(ctx.clone(), move |cmd: String, timeout: i32| -> String {
+                            api::serial_script_run_global(cmd, timeout).unwrap()
+                        }),
+                    )
+                    .unwrap();
+                ctx.globals()
+                    .set(
+                        "serial_script_run_global",
+                        Function::new(ctx.clone(), move |cmd: String, timeout: i32| -> String {
+                            api::serial_script_run_global(cmd, timeout).unwrap()
+                        }),
+                    )
+                    .unwrap();
+                ctx.globals()
+                    .set(
+                        "serial_write_string",
+                        Function::new(ctx.clone(), move |s: String| api::serial_write_string(s)),
+                    )
+                    .unwrap();
+
+                // vnc
+                ctx.globals()
+                    .set(
+                        "assert_screen",
+                        Function::new(
+                            ctx.clone(),
+                            move |tag: String, timeout: i32| -> rquickjs::Result<()> {
+                                let res = api::vnc_check_screen(tag.clone(), timeout);
+                                if !res {
+                                    Err(rquickjs::Error::Exception)
+                                } else {
+                                    Ok(())
+                                }
+                            },
+                        ),
+                    )
+                    .unwrap();
+                ctx.globals()
+                    .set(
+                        "check_screen",
+                        Function::new(ctx.clone(), move |tag: String, timeout: i32| -> bool {
+                            api::vnc_check_screen(tag.clone(), timeout)
+                        }),
+                    )
+                    .unwrap();
                 ctx.globals()
                     .set(
                         "mouse_click",

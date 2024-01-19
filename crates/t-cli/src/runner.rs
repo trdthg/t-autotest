@@ -65,7 +65,7 @@ impl Runner {
 
             let serial_console =
                 SerialClient::connect(_serial.serial_file.clone(), _serial.bund_rate, auth)
-                    .unwrap();
+                    .expect("init serial connection failed");
             info!(msg = "init serial done");
             Some(serial_console)
         } else {
@@ -96,7 +96,7 @@ impl Runner {
                 _ssh.username.clone(),
                 format!("{}:{}", _ssh.host, _ssh.port),
             )
-            .unwrap();
+            .expect("init ssh connection failed");
             info!(msg = "init ssh done");
             Some(ssh_client)
         } else {
@@ -110,7 +110,7 @@ impl Runner {
                 format!("{}:{}", _vnc.host, _vnc.port),
                 _vnc.password.clone(),
             )
-            .unwrap();
+            .expect("init vnc connection failed");
             info!(msg = "init vnc done");
             Some(vnc_client)
         } else {
@@ -167,7 +167,7 @@ impl Runner {
                         .map(|v| v.to_owned())
                         .unwrap_or(toml::Value::String("".to_string())),
                 ),
-                MsgReq::SSHAssertScriptRunSeperate { cmd, timeout: _ } => {
+                MsgReq::SSHScriptRunSeperate { cmd, timeout: _ } => {
                     let client = ssh_client.clone();
                     let res = client
                         .lock()
@@ -175,9 +175,9 @@ impl Runner {
                         .expect("no ssh")
                         .exec_seperate(&cmd)
                         .map_err(|_| MsgResError::Timeout);
-                    MsgRes::SSHAssertScriptRunSeperate(res)
+                    MsgRes::SSHScriptRunSeperate(res)
                 }
-                MsgReq::SSHAssertScriptRunGlobal { cmd, timeout } => {
+                MsgReq::SSHScriptRunGlobal { cmd, timeout } => {
                     let client = ssh_client.clone();
                     let res = client
                         .lock()
@@ -185,7 +185,7 @@ impl Runner {
                         .expect("no ssh")
                         .exec_global(timeout, &cmd)
                         .map_err(|_| MsgResError::Timeout);
-                    MsgRes::SSHAssertScriptRunGlobal(res)
+                    MsgRes::SSHScriptRunGlobal(res)
                 }
                 MsgReq::SSHWriteStringGlobal { s } => {
                     let client = ssh_client.clone();
@@ -197,7 +197,7 @@ impl Runner {
                         .map_err(|_| MsgResError::Timeout);
                     MsgRes::Done
                 }
-                MsgReq::SerialAssertScriptRunGlobal { cmd, timeout } => {
+                MsgReq::SerialScriptRunGlobal { cmd, timeout } => {
                     let client = serial_client.clone();
                     let res = client
                         .try_lock()
@@ -206,7 +206,7 @@ impl Runner {
                         .expect("no serial")
                         .exec_global(timeout, &cmd)
                         .map_err(|_| MsgResError::Timeout);
-                    MsgRes::SerialAssertScriptRunGlobal(res)
+                    MsgRes::SerialScriptRunGlobal(res)
                 }
                 MsgReq::SerialWriteStringGlobal { s } => {
                     let client = serial_client.clone();
@@ -304,6 +304,7 @@ impl Runner {
                     assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
                     MsgRes::Done
                 }
+                _ => unimplemented!(),
             };
             info!(msg = format!("sending res: {:?}", res));
             if let Err(e) = tx.send(res) {

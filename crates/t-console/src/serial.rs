@@ -11,7 +11,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use t_util::ExecutorError;
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
 
 pub struct SerialClient {
     ctl: BufEvLoopCtl,
@@ -113,21 +113,50 @@ impl SerialClient {
         self.write(s.as_bytes())
     }
 
-    pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<String> {
+    pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
         // wait for prompt show, cmd may write too fast before prompt show, which will broken regex
         sleep(Duration::from_millis(70));
 
         let nanoid = nanoid::nanoid!();
-        let cmd = format!("{cmd}; echo {nanoid}\n",);
+        let cmd = format!("{cmd}; echo $?{nanoid}\n",);
         self.write(cmd.as_bytes()).unwrap();
 
         self.ctl.comsume_buffer_and_map(timeout, |buffer| {
             // find target pattern from buffer
             let parsed_str = parse_str_from_vt100_bytes(buffer);
-            let res = t_util::assert_capture_between(&parsed_str, &format!("{nanoid}\n"), &nanoid)
-                .unwrap();
-            trace!(nanoid = nanoid, parsed_str = parsed_str);
-            res
+            let catched_output =
+                t_util::assert_capture_between(&parsed_str, &format!("{nanoid}\n"), &nanoid)
+                    .unwrap();
+            match catched_output {
+                Some(v) => {
+                    info!(
+                        msg = "catched_output",
+                        nanoid = nanoid,
+                        parsed_str = parsed_str,
+                    );
+                    if let Some((res, flag)) = v.rsplit_once('\n') {
+                        info!(nanoid = nanoid, flag = flag, res = res);
+                        if let Ok(flag) = flag.parse::<i32>() {
+                            return Some((flag, res.to_string()));
+                        }
+                    } else {
+                        // some command doesn't print, like 'sleep'
+                        if let Ok(flag) = v.parse::<i32>() {
+                            return Some((flag, "".to_string()));
+                        }
+                    }
+                    Some((1, v))
+                }
+                // means continue
+                None => {
+                    debug!(
+                        msg = "current bufferw",
+                        nanoid = nanoid,
+                        parsed_str = parsed_str
+                    );
+                    None
+                }
+            }
         })
     }
 
@@ -228,7 +257,8 @@ mod test {
             for cmd in cmds.iter() {
                 trace!(cmd = cmd.0);
                 let res = serial.exec_global(Duration::from_secs(1), cmd.0).unwrap();
-                assert_eq!(res, cmd.1);
+                assert_eq!(res.0, 0);
+                assert_eq!(res.1, cmd.1);
             }
         })
     }
