@@ -11,6 +11,7 @@ pkgs.mkShell {
     minicom
     quickjs
     tigervnc
+    file
 
     ### build(lib)
     # libudev-sys: find libudev
@@ -20,6 +21,8 @@ pkgs.mkShell {
     # openssl-sys: ssh2
     openssl.dev
 
+    ### ci
+    act
   ];
   buildInputs = with pkgs;[
   ];

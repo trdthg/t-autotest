@@ -4,7 +4,8 @@ use std::{
     io,
     net::TcpStream,
     ops::Add,
-    sync::mpsc::{self, Receiver, Sender},
+    path::PathBuf,
+    sync::mpsc::{self, channel, Receiver, Sender},
     thread,
     time::{self, Duration, UNIX_EPOCH},
 };
@@ -37,6 +38,8 @@ pub enum VNCEventRes {
 
 pub struct VNCClient {
     pub event_tx: Sender<(VNCEventReq, Sender<VNCEventRes>)>,
+    pub stop_tx: Sender<()>,
+    // pub screenshot_dir: Option<PathBuf>,
 }
 
 impl ScreenControlConsole for VNCClient {}
@@ -57,7 +60,11 @@ impl Display for VNCError {
 }
 
 impl VNCClient {
-    pub fn connect<A: Into<String>>(addrs: A, password: Option<String>) -> Result<Self, VNCError> {
+    pub fn connect<A: Into<String>>(
+        addrs: A,
+        password: Option<String>,
+        screenshot_dir: Option<String>,
+    ) -> Result<Self, VNCError> {
         let stream =
             TcpStream::connect_timeout(&addrs.into().parse().unwrap(), Duration::from_secs(3))
                 .map_err(VNCError::Io)?;
@@ -98,7 +105,10 @@ impl VNCClient {
         let size = vnc.size();
         let pixel_format = vnc.format();
 
-        let (tx, rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let (stop_tx, stop_rx) = channel();
+        let (screenshot_tx, screenshot_rx) = channel();
+
         let mut inner = VncClientInner {
             width: size.0,
             height: size.1,
@@ -108,14 +118,43 @@ impl VNCClient {
             unstable_screen: RectContainer::new((0, 0, size.0, size.1).into()),
             stable_screen: RectContainer::new((0, 0, size.0, size.1).into()),
 
-            event_rx: rx,
+            event_rx,
+            stop_rx,
+            screenshot_tx,
+
+            screenshot: screenshot_dir.is_some(),
         };
 
         thread::spawn(move || {
             inner.pool(&mut vnc);
         });
 
-        Ok(Self { event_tx: tx })
+        if let Some(dir) = screenshot_dir {
+            let path: PathBuf = PathBuf::from(dir);
+            thread::spawn(move || {
+                let mut path = path;
+                while let Ok(screen) = screenshot_rx.recv() {
+                    let p = ImageBuffer::from(screen);
+
+                    let image_name = format!(
+                        "output-{}.png",
+                        time::SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs(),
+                    );
+                    path.push(&image_name);
+                    p.save(&path).unwrap();
+                    path.pop();
+
+                    path.push("latest.png");
+                    p.save(&path).unwrap();
+                    path.pop();
+                }
+            });
+        }
+
+        Ok(Self { event_tx, stop_tx })
     }
 }
 
@@ -124,10 +163,16 @@ struct VncClientInner {
     height: u16,
     mouse_x: u16,
     mouse_y: u16,
+
     pixel_format: PixelFormat,
     unstable_screen: RectContainer<RGBPixel>,
     stable_screen: RectContainer<RGBPixel>,
+
     event_rx: Receiver<(VNCEventReq, Sender<VNCEventRes>)>,
+    stop_rx: Receiver<()>,
+    screenshot_tx: Sender<RectContainer<[u8; 3]>>,
+
+    screenshot: bool,
 }
 
 impl VncClientInner {
@@ -135,6 +180,10 @@ impl VncClientInner {
     fn pool(&mut self, vnc: &mut t_vnc::Client) {
         info!(msg = "start event pool loop");
         'running: loop {
+            if let Ok(()) = self.stop_rx.try_recv() {
+                break;
+            }
+
             const FRAME_MS: u64 = 1000 / 60;
             let start = std::time::Instant::now();
 
@@ -171,17 +220,12 @@ impl VncClientInner {
                     Event::EndOfFrame => {
                         info!(msg = "Event::EndOfFrame");
                         self.stable_screen = self.unstable_screen.clone();
-                        let image_path = format!(
-                            "./.private/assets/output-{}.png",
-                            time::SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs(),
-                        );
-                        self.dump_screen().save(image_path).unwrap();
-                        self.dump_screen()
-                            .save("./.private/assets/output-latest.png")
-                            .unwrap();
+                        if self.screenshot
+                            && self.screenshot_tx.send(self.stable_screen.clone()).is_err()
+                        {
+                            info!(msg = "vnc inner client stopped");
+                            break;
+                        }
                     }
                     Event::Clipboard(ref _text) => {}
                     Event::SetCursor { .. } => {}
@@ -195,7 +239,6 @@ impl VncClientInner {
                     .add(Duration::from_millis(FRAME_MS))
             };
 
-            //
             let mouse_buttons_mask = 0u8;
             let mouse_button_left = 0x01;
             while let Ok((msg, tx)) = self.event_rx.recv_timeout(timeout()) {
@@ -261,6 +304,21 @@ impl VncClientInner {
             pixel[0] = self.stable_screen.data[i][0];
             pixel[1] = self.stable_screen.data[i][1];
             pixel[2] = self.stable_screen.data[i][2];
+        }
+
+        image_buffer
+    }
+}
+
+impl From<RectContainer<[u8; 3]>> for PNG {
+    fn from(value: RectContainer<[u8; 3]>) -> Self {
+        let mut image_buffer: PNG =
+            ImageBuffer::new(value.rect.width as u32, value.rect.height as u32);
+
+        for (i, pixel) in image_buffer.chunks_mut(3).enumerate() {
+            pixel[0] = value.data[i][0];
+            pixel[1] = value.data[i][1];
+            pixel[2] = value.data[i][2];
         }
 
         image_buffer

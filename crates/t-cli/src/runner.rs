@@ -109,6 +109,7 @@ impl Runner {
             let vnc_client = VNCClient::connect(
                 format!("{}:{}", _vnc.host, _vnc.port),
                 _vnc.password.clone(),
+                _vnc.screenshot_dir,
             )
             .expect("init vnc connection failed");
             info!(msg = "init vnc done");

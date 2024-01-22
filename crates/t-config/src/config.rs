@@ -56,6 +56,7 @@ pub struct ConsoleVNC {
     pub host: String,
     pub port: u16,
     pub password: Option<String>,
+    pub screenshot_dir: Option<String>,
 }
 
 #[cfg(test)]
