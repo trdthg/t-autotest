@@ -1,30 +1,33 @@
 use std::time::Duration;
 
 #[derive(Debug)]
-#[non_exhaustive]
+pub enum TextConsole {
+    SSH,
+    Serial,
+}
+
+#[derive(Debug)]
 pub enum MsgReq {
     // runner
     GetConfig {
         key: String,
+    },
+    ScriptRun {
+        cmd: String,
+        timeout: Duration,
     },
     // ssh
     SSHScriptRunSeperate {
         cmd: String,
         timeout: Duration,
     },
-    SSHScriptRunGlobal {
+    ScriptRunGlobal {
+        console: Option<TextConsole>,
         cmd: String,
         timeout: Duration,
     },
-    SSHWriteStringGlobal {
-        s: String,
-    },
-    // serial
-    SerialScriptRunGlobal {
-        cmd: String,
-        timeout: Duration,
-    },
-    SerialWriteStringGlobal {
+    WriteStringGlobal {
+        console: Option<TextConsole>,
         s: String,
     },
     // vnc
@@ -42,18 +45,14 @@ pub enum MsgReq {
 }
 
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum MsgResError {
     Timeout,
 }
 
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum MsgRes {
     Done,
     Value(toml::Value),
-    SSHScriptRunSeperate(Result<String, MsgResError>),
-    SSHScriptRunGlobal(Result<String, MsgResError>),
-    SerialScriptRunGlobal(Result<(i32, String), MsgResError>),
+    ScriptRun(Result<(i32, String), MsgResError>),
     AssertScreen { similarity: i32, ok: bool },
 }

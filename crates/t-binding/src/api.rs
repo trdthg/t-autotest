@@ -1,4 +1,8 @@
-use crate::{get_global_sender, msg::MsgResError, MsgReq, MsgRes};
+use crate::{
+    get_global_sender,
+    msg::{MsgResError, TextConsole},
+    MsgReq, MsgRes,
+};
 use std::{sync::mpsc, time::Duration};
 use tracing::{error, info, trace, Level};
 
@@ -50,60 +54,69 @@ pub fn ssh_assert_script_run_seperate(cmd: String, timeout: i32) -> Option<Strin
         cmd,
         timeout: Duration::from_millis(timeout as u64),
     }) {
-        MsgRes::SSHScriptRunSeperate(Ok(res)) => Some(res),
-        MsgRes::SSHScriptRunSeperate(Err(MsgResError::Timeout)) => None,
+        MsgRes::ScriptRun(Ok(res)) => Some(res.1),
+        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => None,
         _ => panic!("wrong msg type"),
     }
 }
 
 pub fn ssh_assert_script_run_global(cmd: String, timeout: i32) -> Option<String> {
-    match req(MsgReq::SSHScriptRunGlobal {
+    match req(MsgReq::ScriptRunGlobal {
         cmd,
+        console: Some(TextConsole::SSH),
         timeout: Duration::from_millis(timeout as u64),
     }) {
-        MsgRes::SSHScriptRunGlobal(Ok(res)) => Some(res),
-        MsgRes::SSHScriptRunGlobal(Err(MsgResError::Timeout)) => None,
+        MsgRes::ScriptRun(Ok(res)) => Some(res.1),
+        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => None,
         _ => panic!("wrong msg type"),
     }
 }
 
 pub fn ssh_write_string(s: String) {
-    match req(MsgReq::SSHWriteStringGlobal { s }) {
+    match req(MsgReq::WriteStringGlobal {
+        s,
+        console: Some(TextConsole::SSH),
+    }) {
         MsgRes::Done => {}
         _ => panic!("wrong msg type"),
     }
 }
 
 pub fn serial_script_run_global(cmd: String, timeout: i32) -> Option<String> {
-    match req(MsgReq::SerialScriptRunGlobal {
+    match req(MsgReq::ScriptRunGlobal {
         cmd,
+        console: Some(TextConsole::Serial),
         timeout: Duration::from_millis(timeout as u64),
     }) {
-        MsgRes::SerialScriptRunGlobal(Ok(res)) => Some(res.1),
-        MsgRes::SerialScriptRunGlobal(Err(MsgResError::Timeout)) => None,
+        MsgRes::ScriptRun(Ok(res)) => Some(res.1),
+        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => None,
         _ => panic!("wrong msg type"),
     }
 }
 
 pub fn serial_assert_script_run_global(cmd: String, timeout: i32) -> Option<String> {
-    match req(MsgReq::SerialScriptRunGlobal {
+    match req(MsgReq::ScriptRunGlobal {
         cmd,
+        console: Some(TextConsole::SSH),
         timeout: Duration::from_millis(timeout as u64),
     }) {
-        MsgRes::SerialScriptRunGlobal(Ok(res)) => {
+        MsgRes::ScriptRun(Ok(res)) => {
             if res.0 == 0 {
                 Some(res.1)
             } else {
                 None
             }
         }
-        MsgRes::SerialScriptRunGlobal(Err(MsgResError::Timeout)) => None,
+        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => None,
         _ => panic!("wrong msg type"),
     }
 }
 
 pub fn serial_write_string(s: String) {
-    match req(MsgReq::SerialWriteStringGlobal { s }) {
+    match req(MsgReq::WriteStringGlobal {
+        s,
+        console: Some(TextConsole::SSH),
+    }) {
         MsgRes::Done => {}
         _ => panic!("wrong msg type"),
     }

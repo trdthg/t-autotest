@@ -1,5 +1,4 @@
-use super::DuplexChannelConsole;
-use crate::{parse_str_from_vt100_bytes, BufCtl, BufEvLoopCtl, Ctl, EvLoopCtl, Req};
+use crate::{parse_str_from_vt100_bytes, EvLoopCtl};
 
 use anyhow::Result;
 
@@ -13,6 +12,8 @@ use std::time::Duration;
 
 use tracing::{debug, info};
 
+use super::text_console::BufEvLoopCtl;
+
 /// This struct is a convenience wrapper
 /// around a russh client
 pub struct SSHClient {
@@ -20,8 +21,6 @@ pub struct SSHClient {
     ctl: BufEvLoopCtl,
     tty: String,
 }
-
-impl DuplexChannelConsole for SSHClient {}
 
 #[derive(Debug)]
 pub enum SSHAuthAuth<P: AsRef<Path>> {
@@ -71,7 +70,10 @@ impl SSHClient {
         };
 
         debug!(msg = "ssh getting tty...");
-        let tty = res.exec_global(Duration::from_secs(10), "tty").unwrap();
+        let (ok, tty) = res.exec_global(Duration::from_secs(10), "tty").unwrap();
+        if ok != 0 {
+            return Err(anyhow::anyhow!("get tty failed"));
+        }
         res.tty = tty;
         info!(msg = "ssh client tty", tty = res.tty.trim());
 
@@ -87,18 +89,23 @@ impl SSHClient {
     }
 
     // TODO: may blocking
-    pub fn exec_seperate(&mut self, command: &str) -> Result<String> {
+    pub fn exec_seperate(&mut self, command: &str) -> Result<(i32, String)> {
         let mut exec_ch = self.session.channel_session().unwrap();
 
         exec_ch.exec(command)?;
         let mut buffer = String::new();
         exec_ch.read_to_string(&mut buffer)?;
-        Ok(buffer)
+
+        exec_ch.exec("echo $?\n")?;
+        let mut code = String::new();
+        exec_ch.read_to_string(&mut code)?;
+
+        Ok((code.parse::<i32>()?, buffer))
     }
 
     pub fn write_string(&mut self, s: &str) -> Result<()> {
         sleep(Duration::from_millis(100));
-        self.ctl.send(Req::Write(s.as_bytes().to_vec())).unwrap();
+        self.ctl.write_string(s)?;
         Ok(())
     }
 
@@ -111,22 +118,10 @@ impl SSHClient {
             .map(|_| ())
     }
 
-    pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<String> {
+    pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
         // "echo {}\n", \n may lost if no sleep
         sleep(Duration::from_millis(100));
-
-        // write nanoid for regex
-        let nanoid = nanoid::nanoid!();
-        let cmd = format!("{cmd}; echo {nanoid}\n");
-        self.write_string(&cmd).unwrap();
-
-        self.ctl.comsume_buffer_and_map(timeout, |buffer| {
-            // find target pattern from buffer
-            let parsed_str = parse_str_from_vt100_bytes(buffer);
-            debug!("current buffer: [{:?}]", parsed_str);
-
-            t_util::assert_capture_between(&parsed_str, &format!("{nanoid}\n"), &nanoid).unwrap()
-        })
+        self.ctl.exec_global(timeout, cmd)
     }
 
     pub fn upload_file(&mut self, remote_path: impl AsRef<Path>) {
@@ -191,7 +186,7 @@ mod test {
         let mut ssh = ssh.unwrap();
         for cmd in cmds {
             let res = ssh.exec_seperate(cmd.0).unwrap();
-            assert_eq!(res, cmd.1);
+            assert_eq!(res.1, cmd.1);
         }
     }
 
@@ -233,7 +228,7 @@ mod test {
         ];
         for cmd in cmds {
             let res = ssh.exec_global(Duration::from_secs(1), cmd.0).unwrap();
-            assert_eq!(res, cmd.1);
+            assert_eq!(res.1, cmd.1);
         }
     }
 }

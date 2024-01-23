@@ -2,12 +2,18 @@ use std::{
     io::{self, Read, Write},
     sync::mpsc::{self, channel, Receiver, Sender},
     thread,
-    time::{self, Duration},
 };
 
 use anyhow::Result;
 use image::EncodableLayout;
-use tracing::{error, info};
+use tracing::error;
+
+mod serial;
+mod ssh;
+mod text_console;
+
+pub use serial::*;
+pub use ssh::*;
 
 #[derive(Debug)]
 pub enum Req {
@@ -21,16 +27,6 @@ pub enum Res {
     Value(Vec<u8>),
 }
 
-pub trait Ctl {
-    fn send(&self, req: Req) -> Result<Res, mpsc::RecvError>;
-}
-
-impl Ctl for BufEvLoopCtl {
-    fn send(&self, req: Req) -> Result<Res, mpsc::RecvError> {
-        self.ctl.send(req)
-    }
-}
-
 pub struct EvLoopCtl {
     req_tx: Sender<(Req, Sender<Res>)>,
 }
@@ -40,9 +36,7 @@ impl EvLoopCtl {
         let req_tx = EventLoop::spawn(conn);
         Self { req_tx }
     }
-}
 
-impl Ctl for EvLoopCtl {
     fn send(&self, req: Req) -> Result<Res, mpsc::RecvError> {
         let (tx, rx) = channel();
         self.req_tx.send((req, tx)).unwrap();
@@ -91,6 +85,11 @@ where
     fn pool(&mut self) {
         let mut output_buffer = [0u8; 4096];
         loop {
+            // handle stop
+            if let Ok(()) = self.stop_rx.try_recv() {
+                break;
+            }
+
             // handle serial output
             match self.conn.read(&mut output_buffer) {
                 Ok(n) => {
@@ -123,95 +122,10 @@ where
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    error!(msg = "serial disconnected")
-                }
-            }
-
-            // handle stop
-            if let Ok(()) = self.stop_rx.try_recv() {
-                break;
-            }
-        }
-    }
-}
-
-pub trait BufCtl {
-    fn comsume_buffer_and_map<T>(
-        &mut self,
-        timeout: Duration,
-        f: impl Fn(&[u8]) -> Option<T>,
-    ) -> Result<T>;
-}
-
-pub struct BufEvLoopCtl {
-    ctl: EvLoopCtl,
-    buffer: Vec<u8>,
-    history: Vec<u8>,
-}
-
-impl BufEvLoopCtl {
-    pub fn new(ctl: EvLoopCtl) -> Self {
-        Self {
-            ctl,
-            buffer: Vec::new(),
-            history: Vec::new(),
-        }
-    }
-
-    pub fn history(&self) -> Vec<u8> {
-        self.history.clone()
-    }
-}
-
-impl BufCtl for BufEvLoopCtl {
-    fn comsume_buffer_and_map<T>(
-        &mut self,
-        timeout: Duration,
-        f: impl Fn(&[u8]) -> Option<T>,
-    ) -> Result<T> {
-        let current_buffer_start = self.buffer.len();
-
-        let start = time::SystemTime::now();
-        loop {
-            if time::SystemTime::now().duration_since(start).unwrap() > timeout {
-                break;
-            }
-            let res = self.ctl.send(Req::Read);
-            match res {
-                Ok(Res::Value(ref received)) => {
-                    // save to buffer
-                    if received.is_empty() {
-                        continue;
-                    }
-
-                    self.buffer.extend(received);
-                    self.history.extend(received);
-                    info!(
-                        msg = "event loop",
-                        buffer_len = received.len(),
-                        history_len = self.history.len()
-                    );
-
-                    // find target pattern
-                    let res = f(&self.buffer);
-
-                    if res.is_none() {
-                        continue;
-                    }
-
-                    // cut from last find
-                    self.buffer = self.buffer[current_buffer_start..].to_owned();
-                    return Ok(res.unwrap());
-                }
-                Ok(t) => {
-                    error!(msg = "invalid msg varient", t = ?t);
-                    panic!();
-                }
-                Err(e) => {
-                    panic!("{}", format!("{}", e));
+                    error!(msg = "serial disconnected");
+                    break;
                 }
             }
         }
-        Err(anyhow::anyhow!("timeout"))
     }
 }

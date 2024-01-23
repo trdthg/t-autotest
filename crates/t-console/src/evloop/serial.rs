@@ -1,23 +1,21 @@
-use super::DuplexChannelConsole;
-use crate::event_loop::{BufEvLoopCtl, Ctl};
-use crate::{parse_str_from_vt100_bytes, BufCtl, EvLoopCtl, Req, Res};
+use crate::{parse_str_from_vt100_bytes, EvLoopCtl, Req};
 
 use anyhow::Result;
 
 use std::io;
 use std::path::Path;
-use std::sync::mpsc;
+
 use std::thread::sleep;
 use std::time::Duration;
 
 use t_util::ExecutorError;
 use tracing::{debug, info};
 
+use super::text_console::BufEvLoopCtl;
+
 pub struct SerialClient {
     ctl: BufEvLoopCtl,
 }
-
-impl DuplexChannelConsole for SerialClient {}
 
 #[derive(Debug)]
 pub enum SerialError {
@@ -78,83 +76,35 @@ impl SerialClient {
         parse_str_from_vt100_bytes(&self.ctl.history())
     }
 
-    fn write(&self, bytes: &[u8]) -> Result<(), mpsc::RecvError> {
-        let res = self.ctl.send(Req::Write(bytes.to_vec()));
-        if let Err(e) = res {
-            Err(e)
-        } else {
-            assert!(matches!(res, Ok(Res::Done)));
-            Ok(())
-        }
+    pub fn write_string(&mut self, s: &str) -> Result<()> {
+        sleep(Duration::from_millis(100));
+        self.ctl.write_string(s)?;
+        Ok(())
     }
 
     fn logout(&mut self) {
         // logout
-        self.write(b"\x04\n").unwrap();
+        self.ctl.write(b"\x04\n");
         sleep(Duration::from_millis(5000));
     }
 
     fn login(&mut self, username: &str, password: &str) {
         // username
-        self.write(format!("{username}\n").as_bytes()).unwrap();
+        self.write_string(&format!("{username}\n")).unwrap();
         sleep(Duration::from_millis(5000));
 
         // password
-        self.write(format!("{password}\n").as_bytes()).unwrap();
+        self.write_string(&format!("{password}\n")).unwrap();
         sleep(Duration::from_millis(3000));
 
         info!("{}", "try login done");
-    }
-
-    pub fn write_string(&self, s: &str) -> Result<(), mpsc::RecvError> {
-        self.write(s.as_bytes())
     }
 
     pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
         // wait for prompt show, cmd may write too fast before prompt show, which will broken regex
         sleep(Duration::from_millis(70));
 
-        let nanoid = nanoid::nanoid!();
-        let cmd = format!("{cmd}; echo $?{nanoid}\n",);
-        self.write(cmd.as_bytes()).unwrap();
-
-        self.ctl.comsume_buffer_and_map(timeout, |buffer| {
-            // find target pattern from buffer
-            let parsed_str = parse_str_from_vt100_bytes(buffer);
-            let catched_output =
-                t_util::assert_capture_between(&parsed_str, &format!("{nanoid}\n"), &nanoid)
-                    .unwrap();
-            match catched_output {
-                Some(v) => {
-                    info!(
-                        msg = "catched_output",
-                        nanoid = nanoid,
-                        parsed_str = parsed_str,
-                    );
-                    if let Some((res, flag)) = v.rsplit_once('\n') {
-                        info!(nanoid = nanoid, flag = flag, res = res);
-                        if let Ok(flag) = flag.parse::<i32>() {
-                            return Some((flag, res.to_string()));
-                        }
-                    } else {
-                        // some command doesn't print, like 'sleep'
-                        if let Ok(flag) = v.parse::<i32>() {
-                            return Some((flag, "".to_string()));
-                        }
-                    }
-                    Some((1, v))
-                }
-                // means continue
-                None => {
-                    debug!(
-                        msg = "current bufferw",
-                        nanoid = nanoid,
-                        parsed_str = parsed_str
-                    );
-                    None
-                }
-            }
-        })
+        self.ctl.exec_global(timeout, cmd)
     }
 
     pub fn read_golbal_until(&mut self, timeout: Duration, pattern: &str) -> Result<()> {

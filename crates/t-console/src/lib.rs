@@ -1,11 +1,7 @@
-mod event_loop;
-mod serial;
-mod ssh;
+mod evloop;
 mod vnc;
 
-pub use event_loop::*;
-pub use serial::SerialClient;
-pub use ssh::{SSHAuthAuth, SSHClient};
+pub use evloop::*;
 pub use vnc::{Rect, VNCClient, VNCError, VNCEventReq, VNCEventRes, PNG};
 
 pub trait FullPowerConsole: ScreenControlConsole + DuplexChannelConsole {}

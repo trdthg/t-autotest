@@ -31,6 +31,7 @@ pub enum VNCEventReq {
 
 pub type PNG = ImageBuffer<image::Rgb<u8>, Vec<u8>>;
 
+#[derive(Debug)]
 pub enum VNCEventRes {
     Done,
     Screen(PNG),

@@ -1,13 +1,14 @@
 use parking_lot::Mutex;
 use std::{
     fs::{self},
+    ops::Add,
     path::{Path, PathBuf},
     sync::{
         mpsc::{self, Receiver, Sender},
         Arc,
     },
     thread,
-    time::Duration,
+    time::{self, Duration},
 };
 use t_binding::{JSEngine, LuaEngine, MsgReq, MsgRes, MsgResError, ScriptEngine};
 use t_config::{Config, Console, ConsoleSSHAuthType};
@@ -16,26 +17,55 @@ use tracing::{error, info, warn};
 
 use crate::needle::NeedleManager;
 
+#[derive(Clone)]
+struct AMOption<T> {
+    inner: Arc<Mutex<Option<T>>>,
+}
+
+impl<T> AMOption<T> {
+    fn new(val: Option<T>) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(val)),
+        }
+    }
+
+    fn map_mut<R, F>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        self.inner.lock().as_mut().map(f)
+    }
+
+    fn map_ref<R, F>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&T) -> R,
+    {
+        self.inner.lock().as_ref().map(f)
+    }
+
+    fn is_some(&self) -> bool {
+        self.inner.lock().is_some()
+    }
+}
+
 pub struct Runner {
-    engine: Box<dyn ScriptEngine>,
-    content: String,
+    // done_tx: mpsc::Sender<()>,
+    // content: String,
     config: Config,
 
-    done_ch: mpsc::Sender<()>,
-    ssh_client: Arc<Mutex<Option<SSHClient>>>,
-    serial_client: Arc<Mutex<Option<SerialClient>>>,
-    vnc_client: Arc<Mutex<Option<VNCClient>>>,
+    done_rx: mpsc::Receiver<()>,
+    start_tx: mpsc::Sender<()>,
+
+    rx: Receiver<(MsgReq, Sender<MsgRes>)>,
+
+    ssh_client: AMOption<SSHClient>,
+    serial_client: AMOption<SerialClient>,
+    vnc_client: AMOption<VNCClient>,
 }
 
 impl Runner {
     pub fn new(file: impl AsRef<Path>, config: Config) -> Self {
         let content = fs::read_to_string(&file).unwrap();
-        let ext = file.as_ref().extension().and_then(|x| x.to_str()).unwrap();
-        let e: Box<dyn ScriptEngine> = match ext {
-            "js" => Box::new(JSEngine::new()),
-            "lua" => Box::new(LuaEngine::new()),
-            _ => unimplemented!(),
-        };
 
         let Config {
             console:
@@ -71,7 +101,6 @@ impl Runner {
         } else {
             None
         };
-        let serial_client = Arc::new(Mutex::new(serial_client));
 
         let ssh_client = if _ssh.enable {
             info!(msg = "init ssh...");
@@ -102,7 +131,6 @@ impl Runner {
         } else {
             None
         };
-        let ssh_client = Arc::new(Mutex::new(ssh_client));
 
         let vnc_client = if _vnc.enable {
             info!(msg = "init vnc...");
@@ -117,50 +145,77 @@ impl Runner {
         } else {
             None
         };
-        let vnc_client = Arc::new(Mutex::new(vnc_client));
 
         let (tx, rx) = mpsc::channel();
         t_binding::init(tx);
 
         let (done_tx, done_rx) = mpsc::channel();
+        let (start_tx, start_rx) = mpsc::channel();
+
+        let ext = file
+            .as_ref()
+            .extension()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+
+        thread::spawn(move || {
+            start_rx.recv().unwrap();
+
+            let mut e: Box<dyn ScriptEngine> = match ext.as_str() {
+                "js" => Box::new(JSEngine::new()),
+                "lua" => Box::new(LuaEngine::new()),
+                _ => unimplemented!(),
+            };
+            e.run(content.as_str());
+            if let Err(e) = done_tx.send(()) {
+                error!(msg = "send to done channel should not failed", reason = ?e);
+                panic!();
+            }
+        });
 
         let res = Self {
-            engine: e,
-            content,
             config,
-            done_ch: done_tx,
-            ssh_client,
-            serial_client,
-            vnc_client,
-        };
 
-        res.spawn_handler(rx, done_rx);
+            done_rx,
+
+            start_tx,
+
+            rx,
+
+            ssh_client: AMOption::new(ssh_client),
+            serial_client: AMOption::new(serial_client),
+            vnc_client: AMOption::new(vnc_client),
+        };
 
         res
     }
 
-    fn spawn_handler(&self, rx: Receiver<(MsgReq, Sender<MsgRes>)>, done_rx: Receiver<()>) {
+    pub fn run(&self) {
+        self.start_tx.send(()).unwrap();
         info!(msg = "start msg handler thread");
 
         let config = self.config.clone();
-        let ssh_client = self.ssh_client.clone();
-        let serial_client = self.serial_client.clone();
-        let vnc_client = self.vnc_client.clone();
+        let ssh_client = &self.ssh_client;
+        let serial_client = &self.serial_client;
+        let vnc_client = &self.vnc_client;
 
-        thread::spawn(move || loop {
+        loop {
             // stop on receive done signal
-            if let Ok(()) = done_rx.try_recv() {
+            if let Ok(()) = self.done_rx.try_recv() {
                 info!(msg = "runner handler thread stopped");
                 break;
             }
 
-            let res = rx.recv_timeout(Duration::from_secs(10));
+            // handle msg
+            let res = self.rx.recv_timeout(Duration::from_secs(10));
             if res.is_err() {
                 continue;
             }
             let (req, tx) = res.unwrap();
             info!(msg = "recv script engine request", req = ?req);
             let res = match req {
+                // common
                 MsgReq::GetConfig { key } => MsgRes::Value(
                     config
                         .env
@@ -168,56 +223,76 @@ impl Runner {
                         .map(|v| v.to_owned())
                         .unwrap_or(toml::Value::String("".to_string())),
                 ),
+                MsgReq::ScriptRun { cmd, timeout } => {
+                    if ssh_client.is_some() {
+                        let res = ssh_client
+                            .map_mut(|c| c.exec_seperate(&cmd))
+                            .unwrap_or(Ok((-1, "no ssh".to_string())))
+                            .map_err(|_| MsgResError::Timeout);
+                        MsgRes::ScriptRun(res)
+                    } else if serial_client.is_some() {
+                        let res = serial_client
+                            .map_mut(|c| c.exec_global(timeout, &cmd))
+                            .unwrap_or(Ok((-1, "no serial".to_string())))
+                            .map_err(|_| MsgResError::Timeout);
+                        MsgRes::ScriptRun(res)
+                    } else {
+                        MsgRes::ScriptRun(Err(MsgResError::Timeout))
+                    }
+                }
+                // ssh
                 MsgReq::SSHScriptRunSeperate { cmd, timeout: _ } => {
-                    let client = ssh_client.clone();
+                    let client = ssh_client;
                     let res = client
-                        .lock()
-                        .as_mut()
-                        .expect("no ssh")
-                        .exec_seperate(&cmd)
+                        .map_mut(|c| c.exec_seperate(&cmd))
+                        .unwrap_or(Ok((-1, "no ssh".to_string())))
                         .map_err(|_| MsgResError::Timeout);
-                    MsgRes::SSHScriptRunSeperate(res)
+                    MsgRes::ScriptRun(res)
                 }
-                MsgReq::SSHScriptRunGlobal { cmd, timeout } => {
-                    let client = ssh_client.clone();
-                    let res = client
-                        .lock()
-                        .as_mut()
-                        .expect("no ssh")
-                        .exec_global(timeout, &cmd)
-                        .map_err(|_| MsgResError::Timeout);
-                    MsgRes::SSHScriptRunGlobal(res)
+                MsgReq::ScriptRunGlobal {
+                    cmd,
+                    console,
+                    timeout,
+                } => {
+                    let res = match console {
+                        Some(t_binding::TextConsole::Serial) | None if serial_client.is_some() => {
+                            let res = serial_client
+                                .map_mut(|c| c.exec_global(timeout, &cmd))
+                                .unwrap_or(Ok((1, "no serial".to_string())))
+                                .map_err(|_| MsgResError::Timeout);
+                            res
+                        }
+                        Some(t_binding::TextConsole::SSH) | None if ssh_client.is_some() => {
+                            let res = ssh_client
+                                .map_mut(|c| c.exec_global(timeout, &cmd))
+                                .unwrap_or(Ok((-1, "no ssh".to_string())))
+                                .map_err(|_| MsgResError::Timeout);
+                            res
+                        }
+                        _ => Err(MsgResError::Timeout),
+                    };
+                    MsgRes::ScriptRun(res)
                 }
-                MsgReq::SSHWriteStringGlobal { s } => {
-                    let client = ssh_client.clone();
-                    let _res = client
-                        .lock()
-                        .as_mut()
-                        .expect("no ssh")
-                        .write_string(&s)
-                        .map_err(|_| MsgResError::Timeout);
-                    MsgRes::Done
-                }
-                MsgReq::SerialScriptRunGlobal { cmd, timeout } => {
-                    let client = serial_client.clone();
-                    let res = client
-                        .try_lock()
-                        .unwrap()
-                        .as_mut()
-                        .expect("no serial")
-                        .exec_global(timeout, &cmd)
-                        .map_err(|_| MsgResError::Timeout);
-                    MsgRes::SerialScriptRunGlobal(res)
-                }
-                MsgReq::SerialWriteStringGlobal { s } => {
-                    let client = serial_client.clone();
-                    client
-                        .try_lock()
-                        .unwrap()
-                        .as_ref()
-                        .expect("no serial")
-                        .write_string(&s)
-                        .unwrap();
+                MsgReq::WriteStringGlobal { console, s } => {
+                    match console {
+                        Some(t_binding::TextConsole::SSH) => {
+                            let client = ssh_client;
+                            client
+                                .map_mut(|c| c.write_string(&s))
+                                .expect("no ssh")
+                                .map_err(|_| MsgResError::Timeout)
+                                .unwrap();
+                        }
+                        Some(t_binding::TextConsole::Serial) => {
+                            let client = serial_client;
+                            client
+                                .map_mut(|c| c.write_string(&s))
+                                .expect("no serial")
+                                .map_err(|_| MsgResError::Timeout)
+                                .unwrap();
+                        }
+                        None => {}
+                    }
                     MsgRes::Done
                 }
                 MsgReq::AssertScreen {
@@ -225,70 +300,62 @@ impl Runner {
                     threshold: _,
                     timeout,
                 } => {
-                    let client = vnc_client.clone();
                     let nmg = NeedleManager::new(&config.needle_dir);
-                    let res = t_util::run_with_timeout(
-                        move || loop {
+                    let res = {
+                        let deadline = time::Instant::now().add(timeout);
+                        loop {
                             let (tx, rx) = mpsc::channel();
-                            client
-                                .lock()
-                                .as_ref()
+
+                            vnc_client
+                                .map_ref(|c| c.event_tx.send((VNCEventReq::Dump, tx)))
                                 .expect("no vnc")
-                                .event_tx
-                                .send((VNCEventReq::Dump, tx))
                                 .unwrap();
-                            let res = if let VNCEventRes::Screen(s) = rx.recv().unwrap() {
-                                nmg.cmp_by_tag(&s, &tag)
-                            } else {
-                                false
-                            };
-                            if !res {
-                                warn!(msg = "match failed", tag = tag);
-                                continue;
+
+                            match rx.recv_deadline(deadline) {
+                                Ok(VNCEventRes::Screen(s)) => {
+                                    let res = nmg.cmp_by_tag(&s, &tag);
+                                    if !res {
+                                        warn!(msg = "match failed", tag = tag);
+                                        continue;
+                                    }
+                                    info!(msg = "match success", tag = tag);
+                                    break Ok(res);
+                                }
+                                Ok(res) => {
+                                    warn!(msg = "invalid msg type", v = ?res);
+                                }
+                                Err(_e) => break Err(MsgResError::Timeout),
                             }
-                            warn!(msg = "match success", tag = tag);
-                            break res;
-                        },
-                        timeout,
-                    );
+                        }
+                    };
                     MsgRes::AssertScreen {
                         similarity: 0,
                         ok: res.is_ok(),
                     }
                 }
                 MsgReq::MouseMove { x, y } => {
-                    let client = vnc_client.clone();
+                    let client = vnc_client;
                     let (tx, rx) = mpsc::channel();
                     client
-                        .lock()
-                        .as_ref()
-                        .expect("no vnc")
-                        .event_tx
-                        .send((VNCEventReq::MouseMove(x, y), tx))
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::MouseMove(x, y), tx)))
+                        .unwrap()
                         .unwrap();
                     assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
                     MsgRes::Done
                 }
                 MsgReq::MouseClick => {
-                    let client = vnc_client.clone();
-
                     let (tx, rx) = mpsc::channel();
-                    client
-                        .lock()
-                        .as_ref()
-                        .expect("no vnc")
-                        .event_tx
-                        .send((VNCEventReq::MoveDown, tx))
+                    vnc_client
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::MoveDown, tx)))
+                        .unwrap()
                         .unwrap();
                     assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
 
                     let (tx, rx) = mpsc::channel();
-                    client
-                        .lock()
-                        .as_ref()
-                        .expect("no vnc")
-                        .event_tx
-                        .send((VNCEventReq::MoveUp, tx))
+
+                    vnc_client
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::MoveUp, tx)))
+                        .unwrap()
                         .unwrap();
                     assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
                     MsgRes::Done
@@ -296,31 +363,18 @@ impl Runner {
                 MsgReq::MouseHide => {
                     let (tx, rx) = mpsc::channel();
                     vnc_client
-                        .lock()
-                        .as_ref()
-                        .expect("no vnc")
-                        .event_tx
-                        .send((VNCEventReq::MouseHide, tx))
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::MouseHide, tx)))
+                        .unwrap()
                         .unwrap();
                     assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
                     MsgRes::Done
                 }
-                _ => unimplemented!(),
             };
             info!(msg = format!("sending res: {:?}", res));
             if let Err(e) = tx.send(res) {
                 info!(msg = "script engine receiver closed", reason = ?e);
                 break;
             }
-        });
-        info!(msg = "init done");
-    }
-
-    pub fn run(&mut self) {
-        self.engine.run(self.content.as_str());
-        if let Err(e) = self.done_ch.send(()) {
-            error!(msg = "send to done channel should not failed", reason = ?e);
-            panic!();
         }
     }
 
@@ -332,20 +386,14 @@ impl Runner {
             let mut log_path = PathBuf::new();
             log_path.push(log_dir);
             log_path.push("ssh_full_log.txt");
-            let history = self.ssh_client.lock().as_ref().unwrap().dump_history();
+            let history = self.ssh_client.map_ref(|c| c.dump_history()).unwrap();
             fs::write(log_path, history).unwrap();
             info!(msg = "collecting ssh log done");
         }
 
         if self.config.console.serial.enable {
             info!(msg = "collecting serialport log...");
-            let history = self
-                .serial_client
-                .clone()
-                .lock()
-                .as_ref()
-                .unwrap()
-                .dump_history();
+            let history = self.serial_client.map_ref(|c| c.dump_history()).unwrap();
             let mut log_path = PathBuf::new();
             log_path.push(log_dir);
             log_path.push("serial_full_log.txt");

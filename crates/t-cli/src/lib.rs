@@ -1,3 +1,5 @@
+#![feature(deadline_api)]
+
 mod needle;
 mod runner;
 pub use runner::Runner;
