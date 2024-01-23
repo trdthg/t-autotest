@@ -29,11 +29,8 @@ pub enum SerialError {
 
 impl Drop for SerialClient {
     fn drop(&mut self) {
-        println!("serial client dropping...");
-
-        // try send logout req
+        // try logout
         self.ctl.send(Req::Write(vec![0x04])).unwrap();
-        self.ctl.stop();
     }
 }
 

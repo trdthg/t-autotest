@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::Result;
 use image::EncodableLayout;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 #[derive(Debug)]
 pub enum Req {
@@ -23,28 +23,22 @@ pub enum Res {
 
 pub trait Ctl {
     fn send(&self, req: Req) -> Result<Res, mpsc::RecvError>;
-    fn stop(&self);
 }
 
 impl Ctl for BufEvLoopCtl {
     fn send(&self, req: Req) -> Result<Res, mpsc::RecvError> {
         self.ctl.send(req)
     }
-
-    fn stop(&self) {
-        self.ctl.stop()
-    }
 }
 
 pub struct EvLoopCtl {
     req_tx: Sender<(Req, Sender<Res>)>,
-    stop_tx: Sender<()>,
 }
 
 impl EvLoopCtl {
     pub fn new<T: Read + Write + Send + 'static>(conn: T) -> Self {
-        let (req_tx, stop_tx) = EventLoop::spawn(conn);
-        Self { req_tx, stop_tx }
+        let req_tx = EventLoop::spawn(conn);
+        Self { req_tx }
     }
 }
 
@@ -55,33 +49,28 @@ impl Ctl for EvLoopCtl {
         let res = rx.recv()?;
         Ok(res)
     }
-
-    fn stop(&self) {
-        if let Err(_e) = self.stop_tx.send(()) {
-            warn!("evloop may already stopped");
-        }
-    }
-}
-
-impl Drop for EvLoopCtl {
-    fn drop(&mut self) {
-        self.stop();
-    }
 }
 
 struct EventLoop<T> {
     conn: T,
     read_rx: Receiver<(Req, Sender<Res>)>,
+    stop_tx: Sender<()>,
     stop_rx: Receiver<()>,
     buffer: Vec<u8>,
     last_read_index: usize,
+}
+
+impl<T> Drop for EventLoop<T> {
+    fn drop(&mut self) {
+        self.stop_tx.send(()).unwrap()
+    }
 }
 
 impl<T> EventLoop<T>
 where
     T: Read + Write + Send + 'static,
 {
-    pub fn spawn(conn: T) -> (Sender<(Req, Sender<Res>)>, Sender<()>) {
+    pub fn spawn(conn: T) -> Sender<(Req, Sender<Res>)> {
         let (write_tx, read_rx) = mpsc::channel();
         let (stop_tx, stop_rx) = mpsc::channel();
 
@@ -89,13 +78,14 @@ where
             Self {
                 conn,
                 read_rx,
+                stop_tx,
                 stop_rx,
                 buffer: Vec::new(),
                 last_read_index: 0,
             }
             .pool();
         });
-        (write_tx, stop_tx)
+        write_tx
     }
 
     fn pool(&mut self) {
