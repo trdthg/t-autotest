@@ -49,14 +49,11 @@ impl<T> AMOption<T> {
 }
 
 pub struct Runner {
-    // done_tx: mpsc::Sender<()>,
-    // content: String,
     config: Config,
 
-    done_rx: mpsc::Receiver<()>,
     start_tx: mpsc::Sender<()>,
-
-    rx: Receiver<(MsgReq, Sender<MsgRes>)>,
+    msg_rx: Receiver<(MsgReq, Sender<MsgRes>)>,
+    done_rx: mpsc::Receiver<()>,
 
     ssh_client: AMOption<SSHClient>,
     serial_client: AMOption<SerialClient>,
@@ -146,7 +143,7 @@ impl Runner {
             None
         };
 
-        let (tx, rx) = mpsc::channel();
+        let (tx, msg_rx) = mpsc::channel();
         t_binding::init(tx);
 
         let (done_tx, done_rx) = mpsc::channel();
@@ -174,21 +171,17 @@ impl Runner {
             }
         });
 
-        let res = Self {
+        Self {
             config,
 
-            done_rx,
-
             start_tx,
-
-            rx,
+            msg_rx,
+            done_rx,
 
             ssh_client: AMOption::new(ssh_client),
             serial_client: AMOption::new(serial_client),
             vnc_client: AMOption::new(vnc_client),
-        };
-
-        res
+        }
     }
 
     pub fn run(&self) {
@@ -208,7 +201,7 @@ impl Runner {
             }
 
             // handle msg
-            let res = self.rx.recv_timeout(Duration::from_secs(10));
+            let res = self.msg_rx.recv_timeout(Duration::from_secs(10));
             if res.is_err() {
                 continue;
             }
@@ -223,23 +216,6 @@ impl Runner {
                         .map(|v| v.to_owned())
                         .unwrap_or(toml::Value::String("".to_string())),
                 ),
-                MsgReq::ScriptRun { cmd, timeout } => {
-                    if ssh_client.is_some() {
-                        let res = ssh_client
-                            .map_mut(|c| c.exec_seperate(&cmd))
-                            .unwrap_or(Ok((-1, "no ssh".to_string())))
-                            .map_err(|_| MsgResError::Timeout);
-                        MsgRes::ScriptRun(res)
-                    } else if serial_client.is_some() {
-                        let res = serial_client
-                            .map_mut(|c| c.exec_global(timeout, &cmd))
-                            .unwrap_or(Ok((-1, "no serial".to_string())))
-                            .map_err(|_| MsgResError::Timeout);
-                        MsgRes::ScriptRun(res)
-                    } else {
-                        MsgRes::ScriptRun(Err(MsgResError::Timeout))
-                    }
-                }
                 // ssh
                 MsgReq::SSHScriptRunSeperate { cmd, timeout: _ } => {
                     let client = ssh_client;
@@ -255,19 +231,18 @@ impl Runner {
                     timeout,
                 } => {
                     let res = match console {
+                        // None if ssh_client.is_some() && serial_client.is_some() => {}
                         Some(t_binding::TextConsole::Serial) | None if serial_client.is_some() => {
-                            let res = serial_client
+                            serial_client
                                 .map_mut(|c| c.exec_global(timeout, &cmd))
                                 .unwrap_or(Ok((1, "no serial".to_string())))
-                                .map_err(|_| MsgResError::Timeout);
-                            res
+                                .map_err(|_| MsgResError::Timeout)
                         }
                         Some(t_binding::TextConsole::SSH) | None if ssh_client.is_some() => {
-                            let res = ssh_client
+                            ssh_client
                                 .map_mut(|c| c.exec_global(timeout, &cmd))
                                 .unwrap_or(Ok((-1, "no ssh".to_string())))
-                                .map_err(|_| MsgResError::Timeout);
-                            res
+                                .map_err(|_| MsgResError::Timeout)
                         }
                         _ => Err(MsgResError::Timeout),
                     };

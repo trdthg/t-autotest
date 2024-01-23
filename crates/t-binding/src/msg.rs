@@ -12,10 +12,6 @@ pub enum MsgReq {
     GetConfig {
         key: String,
     },
-    ScriptRun {
-        cmd: String,
-        timeout: Duration,
-    },
     // ssh
     SSHScriptRunSeperate {
         cmd: String,

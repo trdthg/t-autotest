@@ -1,7 +1,6 @@
+use super::text_console::BufEvLoopCtl;
 use crate::{parse_str_from_vt100_bytes, EvLoopCtl};
-
 use anyhow::Result;
-
 use std::fs;
 use std::io::Read;
 use std::net::TcpStream;
@@ -9,10 +8,7 @@ use std::net::ToSocketAddrs;
 use std::path::Path;
 use std::thread::sleep;
 use std::time::Duration;
-
 use tracing::{debug, info};
-
-use super::text_console::BufEvLoopCtl;
 
 /// This struct is a convenience wrapper
 /// around a russh client

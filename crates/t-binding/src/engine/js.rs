@@ -220,9 +220,10 @@ impl JSEngine {
                     let result: Response =
                         serde_json::from_str(&result).expect("js script wrong return type");
                     if result.code != 0 {
-                        error!(msg = "js script run failed", reason = result.msg);
+                        error!(msg = "script run failed", reason = result.msg);
+                    } else {
+                        info!(msg = "script run success", result = ?result);
                     }
-                    info!(msg = "script run success", result = ?result);
                 }
                 Err(e) => {
                     error!(

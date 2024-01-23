@@ -122,7 +122,6 @@ where
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    error!(msg = "serial disconnected");
                     break;
                 }
             }
