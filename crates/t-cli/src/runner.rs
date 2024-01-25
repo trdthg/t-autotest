@@ -270,6 +270,32 @@ impl Runner {
                     }
                     MsgRes::Done
                 }
+                MsgReq::WaitStringGlobal {
+                    console,
+                    s,
+                    timeout,
+                } => {
+                    match console {
+                        Some(t_binding::TextConsole::SSH) => {
+                            let client = ssh_client;
+                            client
+                                .map_mut(|c| c.read_golbal_until(timeout, &s))
+                                .expect("no ssh")
+                                .map_err(|_| MsgResError::Timeout)
+                                .unwrap();
+                        }
+                        Some(t_binding::TextConsole::Serial) => {
+                            let client = serial_client;
+                            client
+                                .map_mut(|c| c.read_golbal_until(timeout, &s))
+                                .expect("no serial")
+                                .map_err(|_| MsgResError::Timeout)
+                                .unwrap();
+                        }
+                        None => {}
+                    }
+                    MsgRes::Done
+                }
                 MsgReq::AssertScreen {
                     tag,
                     threshold: _,

@@ -26,6 +26,11 @@ pub enum MsgReq {
         console: Option<TextConsole>,
         s: String,
     },
+    WaitStringGlobal {
+        console: Option<TextConsole>,
+        s: String,
+        timeout: Duration,
+    },
     // vnc
     AssertScreen {
         tag: String,

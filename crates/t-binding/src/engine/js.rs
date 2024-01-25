@@ -68,11 +68,45 @@ impl JSEngine {
                 )
                 .map_err(|_| ())?;
 
+                // general console
+                ctx.globals()
+                    .set(
+                        "assert_script_run_global",
+                        Function::new(
+                            ctx.clone(),
+                            move |cmd: String, timeout: i32| -> rquickjs::Result<String> {
+                                let res = api::assert_script_run_global(cmd, timeout);
+                                res.ok_or(rquickjs::Error::Exception)
+                            },
+                        ),
+                    )
+                    .unwrap();
+                ctx.globals()
+                    .set(
+                        "script_run_global",
+                        Function::new(ctx.clone(), move |cmd: String, timeout: i32| -> String {
+                            api::script_run_global(cmd, timeout).unwrap()
+                        }),
+                    )
+                    .unwrap();
+                ctx.globals()
+                    .set(
+                        "write_string",
+                        Function::new(ctx.clone(), move |s: String| api::write_string(s)),
+                    )
+                    .unwrap();
+
                 // ssh
                 ctx.globals()
                     .set(
                         "ssh_assert_script_run_global",
                         Function::new(ctx.clone(), api::ssh_assert_script_run_global),
+                    )
+                    .unwrap();
+                ctx.globals()
+                    .set(
+                        "ssh_script_run_global",
+                        Function::new(ctx.clone(), api::ssh_script_run_global),
                     )
                     .unwrap();
                 ctx.globals()
@@ -99,14 +133,6 @@ impl JSEngine {
                                 res.ok_or(rquickjs::Error::Exception)
                             },
                         ),
-                    )
-                    .unwrap();
-                ctx.globals()
-                    .set(
-                        "serial_script_run_global",
-                        Function::new(ctx.clone(), move |cmd: String, timeout: i32| -> String {
-                            api::serial_script_run_global(cmd, timeout).unwrap()
-                        }),
                     )
                     .unwrap();
                 ctx.globals()

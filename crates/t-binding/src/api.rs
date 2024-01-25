@@ -49,9 +49,28 @@ pub fn req(req: MsgReq) -> MsgRes {
     }
 }
 
-pub fn ssh_assert_script_run_seperate(cmd: String, timeout: i32) -> Option<String> {
-    match req(MsgReq::SSHScriptRunSeperate {
+pub fn assert_script_run_global(cmd: String, timeout: i32) -> Option<String> {
+    match req(MsgReq::ScriptRunGlobal {
         cmd,
+        console: None,
+        timeout: Duration::from_millis(timeout as u64),
+    }) {
+        MsgRes::ScriptRun(Ok(res)) => {
+            if res.0 == 0 {
+                Some(res.1)
+            } else {
+                None
+            }
+        }
+        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => None,
+        _ => panic!("wrong msg type"),
+    }
+}
+
+pub fn script_run_global(cmd: String, timeout: i32) -> Option<String> {
+    match req(MsgReq::ScriptRunGlobal {
+        cmd,
+        console: None,
         timeout: Duration::from_millis(timeout as u64),
     }) {
         MsgRes::ScriptRun(Ok(res)) => Some(res.1),
@@ -60,7 +79,49 @@ pub fn ssh_assert_script_run_seperate(cmd: String, timeout: i32) -> Option<Strin
     }
 }
 
+pub fn write_string(s: String) {
+    match req(MsgReq::WriteStringGlobal { s, console: None }) {
+        MsgRes::Done => {}
+        _ => panic!("wrong msg type"),
+    }
+}
+
+pub fn ssh_assert_script_run_seperate(cmd: String, timeout: i32) -> Option<String> {
+    match req(MsgReq::SSHScriptRunSeperate {
+        cmd,
+        timeout: Duration::from_millis(timeout as u64),
+    }) {
+        MsgRes::ScriptRun(Ok(res)) => {
+            if res.0 == 0 {
+                Some(res.1)
+            } else {
+                None
+            }
+        }
+        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => None,
+        _ => panic!("wrong msg type"),
+    }
+}
+
 pub fn ssh_assert_script_run_global(cmd: String, timeout: i32) -> Option<String> {
+    match req(MsgReq::ScriptRunGlobal {
+        cmd,
+        console: Some(TextConsole::SSH),
+        timeout: Duration::from_millis(timeout as u64),
+    }) {
+        MsgRes::ScriptRun(Ok(res)) => {
+            if res.0 == 0 {
+                Some(res.1)
+            } else {
+                None
+            }
+        }
+        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => None,
+        _ => panic!("wrong msg type"),
+    }
+}
+
+pub fn ssh_script_run_global(cmd: String, timeout: i32) -> Option<String> {
     match req(MsgReq::ScriptRunGlobal {
         cmd,
         console: Some(TextConsole::SSH),
