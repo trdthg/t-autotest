@@ -312,7 +312,7 @@ impl Runner {
                                 .expect("no vnc")
                                 .unwrap();
 
-                            match rx.recv_deadline(deadline) {
+                            match rx.recv_timeout(deadline - time::Instant::now()) {
                                 Ok(VNCEventRes::Screen(s)) => {
                                     let res = nmg.cmp_by_tag(&s, &tag);
                                     if !res {

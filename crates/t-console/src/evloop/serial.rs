@@ -133,7 +133,16 @@ mod test {
 
     #[test]
     fn test_serial_boot() {
-        let port = serialport::new("/dev/ttyUSB0", 115200)
+        let c = get_config_from_file();
+        if c.is_none() {
+            return;
+        }
+        let c = c.unwrap();
+        if !c.console.serial.enable {
+            return;
+        }
+
+        let port = serialport::new(c.console.serial.serial_file, c.console.serial.bund_rate)
             .timeout(Duration::from_secs(10))
             .open_native();
         if port.is_err() {
