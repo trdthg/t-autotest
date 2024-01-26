@@ -84,9 +84,12 @@ impl JSEngine {
                 ctx.globals()
                     .set(
                         "script_run_global",
-                        Function::new(ctx.clone(), move |cmd: String, timeout: i32| -> String {
-                            api::script_run_global(cmd, timeout).unwrap()
-                        }),
+                        Function::new(
+                            ctx.clone(),
+                            move |cmd: String, timeout: i32| -> Option<String> {
+                                api::script_run_global(cmd, timeout)
+                            },
+                        ),
                     )
                     .unwrap();
                 ctx.globals()
@@ -100,7 +103,13 @@ impl JSEngine {
                 ctx.globals()
                     .set(
                         "ssh_assert_script_run_global",
-                        Function::new(ctx.clone(), api::ssh_assert_script_run_global),
+                        Function::new(
+                            ctx.clone(),
+                            move |cmd: String, timeout: i32| -> rquickjs::Result<String> {
+                                api::ssh_assert_script_run_global(cmd, timeout)
+                                    .ok_or(rquickjs::Error::Exception)
+                            },
+                        ),
                     )
                     .unwrap();
                 ctx.globals()
@@ -112,7 +121,14 @@ impl JSEngine {
                 ctx.globals()
                     .set(
                         "ssh_assert_script_run_seperate",
-                        Function::new(ctx.clone(), api::ssh_assert_script_run_seperate),
+                        Function::new(
+                            ctx.clone(),
+                            move |cmd: String, timeout: i32| -> rquickjs::Result<String> {
+                                let res: Option<String> =
+                                    api::ssh_assert_script_run_seperate(cmd, timeout);
+                                res.ok_or(rquickjs::Error::Exception)
+                            },
+                        ),
                     )
                     .unwrap();
                 ctx.globals()
@@ -138,9 +154,12 @@ impl JSEngine {
                 ctx.globals()
                     .set(
                         "serial_script_run_global",
-                        Function::new(ctx.clone(), move |cmd: String, timeout: i32| -> String {
-                            api::serial_script_run_global(cmd, timeout).unwrap()
-                        }),
+                        Function::new(
+                            ctx.clone(),
+                            move |cmd: String, timeout: i32| -> Option<String> {
+                                api::serial_script_run_global(cmd, timeout)
+                            },
+                        ),
                     )
                     .unwrap();
                 ctx.globals()
