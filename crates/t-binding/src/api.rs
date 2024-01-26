@@ -158,7 +158,7 @@ pub fn serial_script_run_global(cmd: String, timeout: i32) -> Option<String> {
 pub fn serial_assert_script_run_global(cmd: String, timeout: i32) -> Option<String> {
     match req(MsgReq::ScriptRunGlobal {
         cmd,
-        console: Some(TextConsole::SSH),
+        console: Some(TextConsole::Serial),
         timeout: Duration::from_millis(timeout as u64),
     }) {
         MsgRes::ScriptRun(Ok(res)) => {
@@ -176,7 +176,7 @@ pub fn serial_assert_script_run_global(cmd: String, timeout: i32) -> Option<Stri
 pub fn serial_write_string(s: String) {
     match req(MsgReq::WriteStringGlobal {
         s,
-        console: Some(TextConsole::SSH),
+        console: Some(TextConsole::Serial),
     }) {
         MsgRes::Done => {}
         _ => panic!("wrong msg type"),
