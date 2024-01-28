@@ -1,6 +1,6 @@
 use std::{
     sync::mpsc,
-    time::{self, Duration},
+    time::{Duration, Instant},
 };
 
 use anyhow::Result;
@@ -11,7 +11,7 @@ use crate::{parse_str_from_vt100_bytes, EvLoopCtl, Req, Res};
 pub struct BufEvLoopCtl {
     ctl: EvLoopCtl,
     buffer: Vec<u8>,
-    history: Vec<u8>,
+    last_buffer_start: usize,
 }
 
 impl BufEvLoopCtl {
@@ -19,12 +19,12 @@ impl BufEvLoopCtl {
         Self {
             ctl,
             buffer: Vec::new(),
-            history: Vec::new(),
+            last_buffer_start: 0,
         }
     }
 
     pub fn history(&self) -> Vec<u8> {
-        self.history.clone()
+        self.buffer.clone()
     }
 
     pub fn send(&self, req: Req) -> Result<Res, mpsc::RecvError> {
@@ -48,12 +48,14 @@ impl BufEvLoopCtl {
         let cmd = format!("{cmd}; echo $?{nanoid}\n",);
         self.write_string(&cmd)?;
 
-        self.comsume_buffer_and_map(timeout, |buffer| {
+        self.comsume_buffer_and_map_inner(timeout, |buffer| {
             // find target pattern from buffer
             let parsed_str = parse_str_from_vt100_bytes(buffer);
-            let catched_output =
+            let Ok(catched_output) =
                 t_util::assert_capture_between(&parsed_str, &format!("{nanoid}\n"), &nanoid)
-                    .unwrap();
+            else {
+                return ConsumeAction::BreakValue((1, "invalid consume regex".to_string()));
+            };
             match catched_output {
                 Some(v) => {
                     info!(
@@ -64,15 +66,15 @@ impl BufEvLoopCtl {
                     if let Some((res, flag)) = v.rsplit_once('\n') {
                         info!(nanoid = nanoid, flag = flag, res = res);
                         if let Ok(flag) = flag.parse::<i32>() {
-                            return Some((flag, res.to_string()));
+                            return ConsumeAction::BreakValue((flag, res.to_string()));
                         }
                     } else {
                         // some command doesn't print, like 'sleep'
                         if let Ok(flag) = v.parse::<i32>() {
-                            return Some((flag, "".to_string()));
+                            return ConsumeAction::BreakValue((flag, "".to_string()));
                         }
                     }
-                    Some((1, v))
+                    ConsumeAction::BreakValue((1, v))
                 }
                 // means continue
                 None => {
@@ -81,7 +83,7 @@ impl BufEvLoopCtl {
                         nanoid = nanoid,
                         parsed_str = parsed_str
                     );
-                    None
+                    ConsumeAction::Continue
                 }
             }
         })
@@ -92,11 +94,21 @@ impl BufEvLoopCtl {
         timeout: Duration,
         f: impl Fn(&[u8]) -> Option<T>,
     ) -> Result<T> {
-        let current_buffer_start = self.buffer.len();
+        self.comsume_buffer_and_map_inner(timeout, |bytes| {
+            f(bytes).map_or(ConsumeAction::Continue, |v| ConsumeAction::BreakValue(v))
+        })
+    }
 
-        let start = time::SystemTime::now();
+    fn comsume_buffer_and_map_inner<T>(
+        &mut self,
+        timeout: Duration,
+        f: impl Fn(&[u8]) -> ConsumeAction<T>,
+    ) -> Result<T> {
+        let deadline = Instant::now() + timeout;
+
+        let mut buffer_len = 0;
         loop {
-            if time::SystemTime::now().duration_since(start).unwrap() > timeout {
+            if Instant::now() > deadline {
                 break;
             }
             let res = self.ctl.send(Req::Read);
@@ -107,24 +119,27 @@ impl BufEvLoopCtl {
                         continue;
                     }
 
+                    buffer_len += received.len();
                     self.buffer.extend(received);
-                    self.history.extend(received);
                     info!(
                         msg = "event loop",
                         buffer_len = received.len(),
-                        history_len = self.history.len()
+                        history_len = self.buffer.len()
                     );
 
                     // find target pattern
-                    let res = f(&self.buffer);
+                    let res = f(&self.buffer[self.last_buffer_start..]);
 
-                    if res.is_none() {
-                        continue;
+                    match res {
+                        ConsumeAction::BreakValue(v) => {
+                            // cut from last find
+                            self.last_buffer_start = self.buffer.len() - buffer_len;
+                            return Ok(v);
+                        }
+                        ConsumeAction::Continue => {
+                            continue;
+                        }
                     }
-
-                    // cut from last find
-                    self.buffer = self.buffer[current_buffer_start..].to_owned();
-                    return Ok(res.unwrap());
                 }
                 Ok(t) => {
                     error!(msg = "invalid msg varient", t = ?t);
@@ -137,4 +152,9 @@ impl BufEvLoopCtl {
         }
         Err(anyhow::anyhow!("timeout"))
     }
+}
+
+enum ConsumeAction<T> {
+    BreakValue(T),
+    Continue,
 }
