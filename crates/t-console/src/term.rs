@@ -32,7 +32,7 @@ impl Term for VT102 {
     }
 
     fn parse(bytes: &[u8]) -> String {
-        let vt_regex = Regex::new(r"\x1b\[\??([\d]+(;)?)+[lhmk](\r\n)?").unwrap();
+        let vt_regex = Regex::new(r"\x1b\[\??([\d]+(;)?)+[lhmk]").unwrap();
         let text = String::from_utf8_lossy(bytes);
         let cleaned_text = vt_regex.replace_all(&text, "");
         cleaned_text.into_owned()
