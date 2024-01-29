@@ -15,8 +15,6 @@ use image::ImageBuffer;
 use t_vnc::PixelFormat;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::ScreenControlConsole;
-
 use super::{data::RectContainer, pixel::RGBPixel};
 
 pub enum VNCEventReq {
@@ -42,8 +40,6 @@ pub struct VNCClient {
     pub stop_tx: Sender<()>,
     // pub screenshot_dir: Option<PathBuf>,
 }
-
-impl ScreenControlConsole for VNCClient {}
 
 #[derive(Debug)]
 pub enum VNCError {

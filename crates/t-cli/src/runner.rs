@@ -12,7 +12,7 @@ use std::{
 };
 use t_binding::{JSEngine, LuaEngine, MsgReq, MsgRes, MsgResError, ScriptEngine};
 use t_config::{Config, Console, ConsoleSSHAuthType};
-use t_console::{SSHAuthAuth, SSHClient, SerialClient, VNCClient, VNCEventReq, VNCEventRes};
+use t_console::{SSHAuthAuth, SSHClient, SerialClient, VNCClient, VNCEventReq, VNCEventRes, VT102};
 use tracing::{error, info, warn};
 
 use crate::needle::NeedleManager;
@@ -55,8 +55,8 @@ pub struct Runner {
     msg_rx: Receiver<(MsgReq, Sender<MsgRes>)>,
     done_rx: mpsc::Receiver<()>,
 
-    ssh_client: AMOption<SSHClient>,
-    serial_client: AMOption<SerialClient>,
+    ssh_client: AMOption<SSHClient<VT102>>,
+    serial_client: AMOption<SerialClient<VT102>>,
     vnc_client: AMOption<VNCClient>,
 }
 

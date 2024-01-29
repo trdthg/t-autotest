@@ -6,7 +6,7 @@ pkgs.mkShell {
     ### build(bin/examples) SDL2-sys
     SDL2.dev
 
-    ### dev
+    ### dev tool
     socat
     minicom
     quickjs

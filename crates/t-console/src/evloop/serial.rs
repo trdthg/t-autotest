@@ -1,4 +1,4 @@
-use crate::{parse_str_from_vt100_bytes, EvLoopCtl, Req};
+use crate::{term::Term, EvLoopCtl, Req};
 
 use anyhow::Result;
 
@@ -13,8 +13,8 @@ use tracing::{debug, info};
 
 use super::text_console::BufEvLoopCtl;
 
-pub struct SerialClient {
-    ctl: BufEvLoopCtl,
+pub struct SerialClient<T: Term> {
+    ctl: BufEvLoopCtl<T>,
 }
 
 #[derive(Debug)]
@@ -25,14 +25,20 @@ pub enum SerialError {
     Stty(ExecutorError),
 }
 
-impl Drop for SerialClient {
+impl<T> Drop for SerialClient<T>
+where
+    T: Term,
+{
     fn drop(&mut self) {
         // try logout
         self.ctl.send(Req::Write(vec![0x04])).unwrap();
     }
 }
 
-impl SerialClient {
+impl<T> SerialClient<T>
+where
+    T: Term,
+{
     pub fn connect(
         file: impl Into<String>,
         bund_rate: u32,
@@ -73,7 +79,7 @@ impl SerialClient {
     }
 
     pub fn dump_history(&self) -> String {
-        parse_str_from_vt100_bytes(&self.ctl.history())
+        T::parse(&self.ctl.history())
     }
 
     pub fn write_string(&mut self, s: &str) -> Result<()> {
@@ -110,7 +116,7 @@ impl SerialClient {
     pub fn read_golbal_until(&mut self, timeout: Duration, pattern: &str) -> Result<()> {
         self.ctl
             .comsume_buffer_and_map(timeout, |buffer| {
-                let buffer_str = parse_str_from_vt100_bytes(buffer);
+                let buffer_str = T::parse(buffer);
                 debug!(msg = "serial read_golbal_until", buffer = buffer_str);
                 buffer_str.find(pattern)
             })
@@ -123,7 +129,10 @@ mod test {
     use t_config::Config;
     use tracing::trace;
 
-    use crate::{parse_str_from_vt100_bytes, SerialClient};
+    use crate::{
+        term::{Term, VT102},
+        SerialClient,
+    };
     use std::{
         env,
         io::{ErrorKind, Read},
@@ -154,7 +163,7 @@ mod test {
             let mut buf = [0; 1024];
             match port.read(&mut buf) {
                 Ok(n) => {
-                    println!("{}", parse_str_from_vt100_bytes(&buf[0..n]));
+                    println!("{}", VT102::parse(&buf[0..n]));
                 }
                 Err(e) if e.kind() == ErrorKind::TimedOut => {
                     println!("timeout");
@@ -174,7 +183,7 @@ mod test {
         c.unwrap()
     }
 
-    fn get_client(c: &Config) -> SerialClient {
+    fn get_client(c: &Config) -> SerialClient<VT102> {
         assert!(c.console.serial.enable);
 
         let c = c.console.serial.clone();

@@ -1,5 +1,6 @@
 use super::text_console::BufEvLoopCtl;
-use crate::{parse_str_from_vt100_bytes, EvLoopCtl};
+use crate::term::Term;
+use crate::EvLoopCtl;
 use anyhow::Result;
 use std::fs;
 use std::io::Read;
@@ -12,9 +13,9 @@ use tracing::{debug, info};
 
 /// This struct is a convenience wrapper
 /// around a russh client
-pub struct SSHClient {
+pub struct SSHClient<T: Term> {
     session: ssh2::Session,
-    ctl: BufEvLoopCtl,
+    ctl: BufEvLoopCtl<T>,
     tty: String,
 }
 
@@ -24,7 +25,10 @@ pub enum SSHAuthAuth<P: AsRef<Path>> {
     Password(String),
 }
 
-impl SSHClient {
+impl<Tm> SSHClient<Tm>
+where
+    Tm: Term,
+{
     pub fn connect<P: AsRef<Path>, A: ToSocketAddrs>(
         timeout: Option<Duration>,
         auth: SSHAuthAuth<P>,
@@ -81,7 +85,7 @@ impl SSHClient {
     }
 
     pub fn dump_history(&self) -> String {
-        parse_str_from_vt100_bytes(&self.ctl.history())
+        Tm::parse(&self.ctl.history())
     }
 
     // TODO: may blocking
@@ -108,7 +112,7 @@ impl SSHClient {
     pub fn read_golbal_until(&mut self, timeout: Duration, pattern: &str) -> Result<()> {
         self.ctl
             .comsume_buffer_and_map(timeout, |buffer| {
-                let buffer_str = parse_str_from_vt100_bytes(buffer);
+                let buffer_str = Tm::parse(buffer);
                 buffer_str.find(pattern)
             })
             .map(|_| ())
@@ -132,6 +136,8 @@ impl SSHClient {
 mod test {
     use std::{env, thread};
 
+    use crate::term::VT102;
+
     use super::*;
 
     fn get_config_from_file() -> Option<t_config::Config> {
@@ -139,7 +145,7 @@ mod test {
         t_config::load_config_from_file(f).map(Some).unwrap()
     }
 
-    fn get_ssh_client() -> Option<SSHClient> {
+    fn get_ssh_client() -> Option<SSHClient<VT102>> {
         let c = get_config_from_file()?;
         assert!(c.console.ssh.enable);
 

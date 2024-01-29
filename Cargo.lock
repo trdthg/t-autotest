@@ -1296,6 +1296,7 @@ dependencies = [
  "image",
  "nanoid",
  "png",
+ "regex",
  "serialport",
  "ssh2",
  "t-config",
