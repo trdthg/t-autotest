@@ -15,6 +15,7 @@ use super::text_console::BufEvLoopCtl;
 
 pub struct SerialClient<T: Term> {
     ctl: BufEvLoopCtl<T>,
+    tty: String,
 }
 
 #[derive(Debug)]
@@ -64,15 +65,20 @@ where
 
         let mut res = Self {
             ctl: BufEvLoopCtl::new(EvLoopCtl::new(port)),
+            tty: "".to_string(),
         };
-
         res.logout();
 
         res.read_golbal_until(Duration::from_secs(30), "login")
             .unwrap();
-
         if let Some((username, password)) = auth {
             res.login(&username.into(), &password.into());
+        }
+
+        if let Ok(tty) = res.exec_global(Duration::from_secs(10), "tty") {
+            res.tty = tty.1;
+        } else {
+            panic!("serial basic ")
         }
 
         Ok(res)

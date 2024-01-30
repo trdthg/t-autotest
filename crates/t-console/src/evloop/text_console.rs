@@ -50,12 +50,12 @@ where
         // wait for prompt show, cmd may write too fast before prompt show, which will broken regex
         std::thread::sleep(Duration::from_millis(70));
 
-        let nanoid = nanoid::nanoid!();
+        let nanoid = nanoid::nanoid!(6);
         let cmd = format!("{cmd}; echo $?{nanoid}{}", Tm::get_enter());
+        self.write_string(&cmd)?;
+
         let match_left = &format!("{nanoid}{}", Tm::get_enter());
         let match_right = &nanoid;
-
-        self.write_string(&cmd)?;
 
         self.comsume_buffer_and_map_inner(timeout, |buffer| {
             // find target pattern from buffer
@@ -77,7 +77,12 @@ where
                 Some(v) => {
                     info!(msg = "catched_output", nanoid = nanoid, catched_output = v,);
                     if let Some((res, flag)) = v.rsplit_once('\n') {
-                        info!(nanoid = nanoid, flag = flag);
+                        info!(
+                            msg = "catched_output info",
+                            nanoid = nanoid,
+                            flag = flag,
+                            res = res
+                        );
                         if let Ok(flag) = flag.parse::<i32>() {
                             return ConsumeAction::BreakValue((flag, res.to_string()));
                         }
@@ -123,7 +128,7 @@ where
             }
 
             // read buffer
-            let res = self.ctl.send(Req::Read);
+            let res = self.ctl.send_timeout(Req::Read, timeout);
             match res {
                 Ok(Res::Value(ref recv)) => {
                     if recv.is_empty() {
@@ -162,8 +167,9 @@ where
                     error!(msg = "invalid msg varient", t = ?t);
                     panic!();
                 }
-                Err(e) => {
-                    panic!("{}", format!("{}", e));
+                Err(_e) => {
+                    error!(msg = "recv timeout");
+                    break;
                 }
             }
         }

@@ -70,9 +70,11 @@ where
         };
 
         debug!(msg = "ssh getting tty...");
-        let (ok, tty) = res.exec_global(Duration::from_secs(10), "tty").unwrap();
-        if ok != 0 {
-            return Err(anyhow::anyhow!("get tty failed"));
+        let (code, tty) = res
+            .exec_global(Duration::from_secs(10), "tty")
+            .expect("ssh get tty failed");
+        if code != 0 {
+            panic!("get tty failed");
         }
         res.tty = tty;
         info!(msg = "ssh client tty", tty = res.tty.trim());

@@ -2,11 +2,12 @@ use std::{
     io::{self, Read, Write},
     sync::mpsc::{self, channel, Receiver, Sender},
     thread,
+    time::Duration,
 };
 
 use anyhow::Result;
 use image::EncodableLayout;
-use tracing::error;
+use tracing::{error, info};
 
 mod serial;
 mod ssh;
@@ -40,8 +41,13 @@ impl EvLoopCtl {
     fn send(&self, req: Req) -> Result<Res, mpsc::RecvError> {
         let (tx, rx) = channel();
         self.req_tx.send((req, tx)).unwrap();
-        let res = rx.recv()?;
-        Ok(res)
+        rx.recv()
+    }
+
+    fn send_timeout(&self, req: Req, timeout: Duration) -> Result<Res, mpsc::RecvTimeoutError> {
+        let (tx, rx) = channel();
+        self.req_tx.send((req, tx)).unwrap();
+        rx.recv_timeout(timeout)
     }
 }
 
@@ -50,8 +56,9 @@ struct EventLoop<T> {
     read_rx: Receiver<(Req, Sender<Res>)>,
     stop_tx: Sender<()>,
     stop_rx: Receiver<()>,
-    buffer: Vec<u8>,
+    history: Vec<u8>,
     last_read_index: usize,
+    buffer: Vec<u8>,
 }
 
 impl<T> Drop for EventLoop<T> {
@@ -74,8 +81,9 @@ where
                 read_rx,
                 stop_tx,
                 stop_rx,
-                buffer: Vec::new(),
+                history: Vec::new(),
                 last_read_index: 0,
+                buffer: vec![0u8; 4096],
             }
             .pool();
         });
@@ -83,18 +91,19 @@ where
     }
 
     fn pool(&mut self) {
-        let mut output_buffer = [0u8; 4096];
-        loop {
+        'out: loop {
             // handle stop
             if let Ok(()) = self.stop_rx.try_recv() {
                 break;
             }
 
             // handle serial output
-            match self.conn.read(&mut output_buffer) {
+            match self.conn.read(&mut self.buffer) {
                 Ok(n) => {
-                    let received = &output_buffer[0..n];
-                    self.buffer.extend(received);
+                    if n != 0 {
+                        let received = &self.buffer[0..n];
+                        self.history.extend(received);
+                    }
                 }
                 Err(e) if e.kind() == io::ErrorKind::TimedOut => {}
                 Err(e) => {
@@ -106,23 +115,65 @@ where
             // handle user read, write request
             match self.read_rx.try_recv() {
                 Ok((req, tx)) => {
-                    let res = match req {
-                        Req::Write(msg) => {
-                            self.conn.write_all(msg.as_bytes()).unwrap();
-                            self.conn.flush().unwrap();
-                            Res::Done
-                        }
-                        Req::Read => {
-                            let res = &self.buffer[self.last_read_index..];
-                            self.last_read_index = self.buffer.len();
-                            Res::Value(res.to_vec())
-                        }
+                    let Ok(res) = self.handle_req(req, true) else {
+                        info!("stopped while blocking");
+                        break 'out;
                     };
                     tx.send(res).unwrap();
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
                 Err(mpsc::TryRecvError::Disconnected) => {
                     break;
+                }
+            }
+        }
+    }
+
+    // block until receive new buffer, try receive only once
+    fn handle_req(&mut self, req: Req, blocking: bool) -> Result<Res, ()> {
+        match req {
+            Req::Write(msg) => {
+                self.conn.write_all(msg.as_bytes()).unwrap();
+                self.conn.flush().unwrap();
+                info!(msg = "write done");
+                Ok(Res::Done)
+            }
+            Req::Read => self.read_buffer(blocking).map(Res::Value),
+        }
+    }
+
+    fn consume_buffer(&mut self) -> Option<Vec<u8>> {
+        if self.last_read_index == self.history.len() {
+            return None;
+        }
+        let res = &self.history[self.last_read_index..];
+        self.last_read_index = self.history.len();
+        Some(res.to_vec())
+    }
+
+    fn read_buffer(&mut self, blocking: bool) -> Result<Vec<u8>, ()> {
+        if let Some(res) = self.consume_buffer() {
+            return Ok(res);
+        }
+        if !blocking {
+            return Ok(Vec::new());
+        }
+
+        // block until receive new buffer
+        info!(msg = "blocking... try read");
+        loop {
+            // handle stop
+            if let Ok(()) = self.stop_rx.try_recv() {
+                // stop?
+                return Err(());
+            }
+
+            // handle serial output
+            if let Ok(n) = self.conn.read(&mut self.buffer) {
+                if n != 0 {
+                    let received = &self.buffer[0..n];
+                    self.history.extend(received);
+                    return Ok(unsafe { self.consume_buffer().unwrap_unchecked() });
                 }
             }
         }
