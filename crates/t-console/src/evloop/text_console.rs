@@ -52,7 +52,7 @@ where
 
         let nanoid = nanoid::nanoid!();
         let cmd = format!("{cmd}; echo $?{nanoid}{}", Tm::get_enter());
-        let match_left = &format!("{nanoid}{}\r", Tm::get_enter());
+        let match_left = &format!("{nanoid}{}", Tm::get_enter());
         let match_right = &nanoid;
 
         self.write_string(&cmd)?;
@@ -116,6 +116,7 @@ where
 
         let mut buffer_len = 0;
         loop {
+            // debug!(msg = "deadline", deadline = ?(deadline - Instant::now()));
             // handle timeout
             if Instant::now() > deadline {
                 break;
