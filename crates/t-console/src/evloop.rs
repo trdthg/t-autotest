@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::Result;
 use image::EncodableLayout;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 mod serial;
 mod ssh;
@@ -20,6 +20,7 @@ pub use ssh::*;
 pub enum Req {
     Write(Vec<u8>),
     Read,
+    Dump,
 }
 
 #[derive(Debug)]
@@ -135,10 +136,11 @@ where
             Req::Write(msg) => {
                 self.conn.write_all(msg.as_bytes()).unwrap();
                 self.conn.flush().unwrap();
-                info!(msg = "write done");
+                debug!(msg = "write done");
                 Ok(Res::Done)
             }
             Req::Read => self.read_buffer(blocking).map(Res::Value),
+            Req::Dump => Ok(Res::Value(self.history.clone())),
         }
     }
 

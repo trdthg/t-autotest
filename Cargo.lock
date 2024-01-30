@@ -1268,6 +1268,7 @@ dependencies = [
  "dotenv",
  "home",
  "image",
+ "nanoid",
  "parking_lot 0.12.1",
  "pipe-trait",
  "png",

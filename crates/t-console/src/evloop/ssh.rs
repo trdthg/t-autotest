@@ -111,13 +111,13 @@ where
         Ok(())
     }
 
-    pub fn read_golbal_until(&mut self, timeout: Duration, pattern: &str) -> Result<()> {
-        self.ctl
-            .comsume_buffer_and_map(timeout, |buffer| {
-                let buffer_str = Tm::parse(buffer);
-                buffer_str.find(pattern)
-            })
-            .map(|_| ())
+    pub fn wait_string_ntimes(
+        &mut self,
+        timeout: Duration,
+        pattern: &str,
+        repeat: usize,
+    ) -> Result<String> {
+        self.ctl.wait_string_ntimes(timeout, pattern, repeat)
     }
 
     pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
@@ -210,7 +210,7 @@ mod test {
             ssh2.exec_seperate(format!(r#"sleep 5 && echo "asdfg" > {}"#, tty).as_str())
         });
 
-        ssh.read_golbal_until(Duration::from_secs(1), "asdfg")
+        ssh.wait_string_ntimes(Duration::from_secs(1), "asdfg", 1)
             .unwrap();
     }
 

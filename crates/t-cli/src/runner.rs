@@ -195,6 +195,9 @@ impl Runner {
         let serial_client = &self.serial_client;
         let vnc_client = &self.vnc_client;
 
+        let _ssh_tty = ssh_client.map_ref(|c| c.tty()).unwrap();
+        let serial_tty = serial_client.map_ref(|c| c.tty()).unwrap();
+
         loop {
             // stop on receive done signal
             if let Ok(()) = self.done_rx.try_recv() {
@@ -233,14 +236,49 @@ impl Runner {
                     timeout,
                 } => {
                     let res = match console {
+                        None if serial_client.is_some() && ssh_client.is_some() => {
+                            info!(msg = "both terminal");
+                            let key = nanoid::nanoid!(6);
+                            ssh_client
+                                .map_mut(|c| {
+                                    c.write_string(&format!(
+                                        "echo {} > {}; {} &> {}; echo $?{} > {}\n",
+                                        &key, serial_tty, cmd, serial_tty, &key, serial_tty
+                                    ))
+                                })
+                                .unwrap()
+                                .map_err(|_| MsgResError::Timeout)
+                                .unwrap();
+                            let res = serial_client
+                                .map_mut(|c| c.wait_string_ntimes(timeout, &key, 2))
+                                .map(|v| match v {
+                                    Ok(v) => {
+                                        let catched =
+                                            t_util::assert_capture_between(&v, &key, &key)
+                                                .unwrap()
+                                                .unwrap();
+                                        match catched.rsplit_once('\n') {
+                                            Some((res, flag)) => match flag.parse::<i32>() {
+                                                Ok(flag) => Ok((flag, res.to_string())),
+                                                Err(_e) => Ok((-1, catched.to_string())),
+                                            },
+                                            None => Ok((-1, catched)),
+                                        }
+                                    }
+                                    Err(e) => Err(e),
+                                })
+                                .unwrap_or(Ok((1, "no serial".to_string())))
+                                .map_err(|_e| MsgResError::Timeout);
+                            res
+                        }
                         // None if ssh_client.is_some() && serial_client.is_some() => {}
-                        Some(t_binding::TextConsole::Serial) | None if serial_client.is_some() => {
+                        None | Some(t_binding::TextConsole::Serial) if serial_client.is_some() => {
                             serial_client
                                 .map_mut(|c| c.exec_global(timeout, &cmd))
                                 .unwrap_or(Ok((1, "no serial".to_string())))
                                 .map_err(|_| MsgResError::Timeout)
                         }
-                        Some(t_binding::TextConsole::SSH) | None if ssh_client.is_some() => {
+                        None | Some(t_binding::TextConsole::SSH) if ssh_client.is_some() => {
                             ssh_client
                                 .map_mut(|c| c.exec_global(timeout, &cmd))
                                 .unwrap_or(Ok((-1, "no ssh".to_string())))
@@ -281,7 +319,7 @@ impl Runner {
                         Some(t_binding::TextConsole::SSH) => {
                             let client = ssh_client;
                             client
-                                .map_mut(|c| c.read_golbal_until(timeout, &s))
+                                .map_mut(|c| c.wait_string_ntimes(timeout, &s, 1))
                                 .expect("no ssh")
                                 .map_err(|_| MsgResError::Timeout)
                                 .unwrap();
@@ -289,7 +327,7 @@ impl Runner {
                         Some(t_binding::TextConsole::Serial) => {
                             let client = serial_client;
                             client
-                                .map_mut(|c| c.read_golbal_until(timeout, &s))
+                                .map_mut(|c| c.wait_string_ntimes(timeout, &s, 1))
                                 .expect("no serial")
                                 .map_err(|_| MsgResError::Timeout)
                                 .unwrap();

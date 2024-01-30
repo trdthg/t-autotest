@@ -9,7 +9,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use t_util::ExecutorError;
-use tracing::{debug, info};
+use tracing::info;
 
 use super::text_console::BufEvLoopCtl;
 
@@ -52,10 +52,10 @@ where
         }
 
         // init tty
-        t_util::execute_shell(
-            format!("stty -F {} {} -echo -icrnl -onlcr -icanon", file, bund_rate).as_str(),
-        )
-        .map_err(SerialError::Stty)?;
+        // t_util::execute_shell(
+        //     format!("stty -F {} {} -echo -icrnl -onlcr -icanon", file, bund_rate).as_str(),
+        // )
+        // .map_err(SerialError::Stty)?;
 
         // connect serial
         let port = serialport::new(&file, bund_rate)
@@ -67,21 +67,31 @@ where
             ctl: BufEvLoopCtl::new(EvLoopCtl::new(port)),
             tty: "".to_string(),
         };
-        res.logout();
 
-        res.read_golbal_until(Duration::from_secs(30), "login")
-            .unwrap();
         if let Some((username, password)) = auth {
+            info!(msg = "serial try logout");
+            res.logout();
+
+            info!(msg = "serial waiting login");
+            res.wait_string_ntimes(Duration::from_secs(30), "login", 1)
+                .unwrap();
+
+            info!(msg = "serial login");
             res.login(&username.into(), &password.into());
         }
 
+        info!(msg = "serial get tty");
         if let Ok(tty) = res.exec_global(Duration::from_secs(10), "tty") {
             res.tty = tty.1;
         } else {
-            panic!("serial basic ")
+            panic!("serial get tty failed")
         }
 
         Ok(res)
+    }
+
+    pub fn tty(&self) -> String {
+        self.tty.to_owned()
     }
 
     pub fn dump_history(&self) -> String {
@@ -119,14 +129,13 @@ where
         self.ctl.exec_global(timeout, cmd)
     }
 
-    pub fn read_golbal_until(&mut self, timeout: Duration, pattern: &str) -> Result<()> {
-        self.ctl
-            .comsume_buffer_and_map(timeout, |buffer| {
-                let buffer_str = T::parse(buffer);
-                debug!(msg = "serial read_golbal_until", buffer = buffer_str);
-                buffer_str.find(pattern)
-            })
-            .map(|_| ())
+    pub fn wait_string_ntimes(
+        &mut self,
+        timeout: Duration,
+        pattern: &str,
+        repeat: usize,
+    ) -> Result<String> {
+        self.ctl.wait_string_ntimes(timeout, pattern, repeat)
     }
 }
 

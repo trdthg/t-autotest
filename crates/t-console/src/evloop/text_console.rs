@@ -30,7 +30,11 @@ where
     }
 
     pub fn history(&self) -> Vec<u8> {
-        self.history.clone()
+        match self.ctl.send(Req::Dump) {
+            Ok(Res::Value(v)) => v,
+            Ok(_v) => self.history.clone(),
+            Err(_e) => self.history.clone(),
+        }
     }
 
     pub fn send(&self, req: Req) -> Result<Res, mpsc::RecvError> {
@@ -42,8 +46,29 @@ where
     }
 
     pub fn write_string(&mut self, s: &str) -> Result<()> {
+        debug!(msg = "write_string", s = s);
         self.ctl.send(Req::Write(s.as_bytes().to_vec())).unwrap();
         Ok(())
+    }
+
+    pub fn wait_string_ntimes(
+        &mut self,
+        timeout: Duration,
+        pattern: &str,
+        repeat: usize,
+    ) -> Result<String> {
+        self.comsume_buffer_and_map(timeout, |buffer| {
+            let buffer_str = Tm::parse(buffer);
+            let res = count_substring(&buffer_str, pattern, repeat);
+            debug!(
+                msg = "wait_string_ntimes",
+                pattern = pattern,
+                repeat = repeat,
+                res = res,
+                buffer = buffer_str,
+            );
+            res.then_some(buffer_str)
+        })
     }
 
     pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
@@ -180,4 +205,19 @@ where
 enum ConsumeAction<T> {
     BreakValue(T),
     Continue,
+}
+
+fn count_substring(s: &str, substring: &str, n: usize) -> bool {
+    let mut count = 0;
+    let mut start = 0;
+
+    while let Some(pos) = s[start..].find(substring) {
+        count += 1;
+        if count == n {
+            return true;
+        }
+        start += pos + substring.len();
+    }
+
+    false
 }

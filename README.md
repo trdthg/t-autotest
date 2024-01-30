@@ -27,7 +27,7 @@ Invoke-WebRequest -Uri "https://github.com/trdthg/t-autotest/raw/main/scripts/in
 使用方法: `autotest -f <config.toml> -c <case.ext>`
 
 - `config.toml` 指定测试环境配置
-- `case.ext` 指定需要运行的测试脚本, 目前支持 js 语言 
+- `case.ext` 指定需要运行的测试脚本, 目前支持 js 语言
 
 ## 模块
 
@@ -53,7 +53,7 @@ Invoke-WebRequest -Uri "https://github.com/trdthg/t-autotest/raw/main/scripts/in
   - 集成到各个语言
     - js: 基于 quickjs 引擎完成 JS 测试脚本运行
     - python: TODO (pyO3)
-- t-vnc 模块 
+- t-vnc 模块
   - ([fork](https://github.com/trdthg/rust-vnc) 自 whitequark/rust-vnc, MIT)
   - 解决 windows 无法编译
 - config 模块 (提供测试，命令行 需要的通用配置文件解析)
@@ -109,3 +109,14 @@ Invoke-WebRequest -Uri "https://github.com/trdthg/t-autotest/raw/main/scripts/in
 - 宿主机：nixos
 - 测试方法：ssh + serial
 - 配置文件：<https://gitee.com/yan-mingzhu/autotest-examples/blob/master/machine/rasp-pi.toml>
+
+## 已知问题
+
+在使用默认 nanoid 长度(21) 时, 从终端读取到的 nanoid 可能会被截断导致重复, 无法匹配, 例如:
+
+- 原始 nanoid: `aaaaaaabcccccc`
+- 读取到的: `aaaaaaab\rbcccccc`
+
+## Roadmap
+
+- [ ] 以库的形式提供 python 包
