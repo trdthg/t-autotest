@@ -8,10 +8,18 @@
 
 下载完成后配置环境变量即可
 
-如果你是 linux 系统, 则可以直接使用下面的脚本安装:
+可以直接使用下面的脚本安装:
+
+### linux / mac
 
 ```bash
-curl -sSL https://github.com/trdthg/t-autotest/blob/main/scripts/install-linux.sh | bash -
+curl -sSL https://github.com/trdthg/t-autotest/blob/main/scripts/install.sh | bash -
+```
+
+### windows
+
+```powershell
+Invoke-WebRequest -Uri "https://github.com/trdthg/t-autotest/raw/main/scripts/install.ps1" -UseBasicParsing | Invoke-Expression
 ```
 
 ## Usage

@@ -1,13 +1,11 @@
-name: Release
+name: Build
 
 permissions:
   contents: write
 
 on:
   push:
-    tags:
-      - v[0-9]+.*
-
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -20,6 +18,7 @@ jobs:
       - name: Create release
         id: create_release
         uses: actions/create-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -48,7 +47,7 @@ jobs:
             os: windows-2019
             rust: stable-x86_64-msvc
             target: x86_64-pc-windows-msvc
-            archive-name: autotest-windows.7z
+            archive-name: autotest-windows.zip
       fail-fast: false
 
     steps:
@@ -87,7 +86,7 @@ jobs:
           cd archive
           if [ "${{ matrix.build }}" = "windows" ]; then
             cp "../target/${{ matrix.target }}/release/autotest.exe" ./
-            7z a "${{ matrix.archive-name }}" LICENSE README.md autotest.exe
+            7z a -tzip "${{ matrix.archive-name }}" LICENSE README.md autotest.exe
           else
             cp "../target/${{ matrix.target }}/release/autotest" ./
             tar -czf "${{ matrix.archive-name }}" LICENSE README.md autotest
@@ -100,6 +99,7 @@ jobs:
 
       - name: Upload Release
         uses: actions/upload-release-asset@v1
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

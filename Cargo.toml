@@ -3,7 +3,7 @@ resolver = "2"
 members  = ["crates/t-cli", "crates/t-console", "crates/t-vnc", "crates/t-util", "crates/t-binding", "crates/t-config"]
 
 [workspace.package]
-version       = "0.2.0-rc2"
+version       = "0.2.0-rc4"
 description   = "autotest tool"
 authors       = ["trdthg"]
 edition       = "2021"
