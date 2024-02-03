@@ -31,7 +31,7 @@ where
 {
     pub fn connect<P: AsRef<Path>, A: ToSocketAddrs>(
         timeout: Option<Duration>,
-        auth: SSHAuthAuth<P>,
+        auth: &SSHAuthAuth<P>,
         user: impl Into<String>,
         addrs: A,
     ) -> Result<Self> {
@@ -172,7 +172,7 @@ mod test {
         };
 
         dbg!(&key_path, &username, &addrs);
-        let serial = SSHClient::connect(None, auth, username, addrs).unwrap();
+        let serial = SSHClient::connect(None, &auth, username, addrs).unwrap();
         Some(serial)
     }
 

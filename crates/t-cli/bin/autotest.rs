@@ -12,6 +12,9 @@ pub struct Cli {
 
     #[clap(short, long)]
     case: String,
+
+    #[clap(long)]
+    env: Vec<String>,
 }
 
 fn main() {
@@ -19,6 +22,7 @@ fn main() {
         .without_time()
         .with_target(false)
         .with_level(true)
+        .with_ansi(atty::is(atty::Stream::Stdout))
         .with_source_location(true)
         .compact();
 
@@ -40,8 +44,17 @@ fn main() {
     let cli = Cli::parse();
     info!(msg = "current cli", cli = ?cli);
 
-    let config: Config = toml::from_str(fs::read_to_string(&cli.file).unwrap().as_str()).unwrap();
+    let mut config: Config =
+        toml::from_str(fs::read_to_string(&cli.file).unwrap().as_str()).unwrap();
     info!(msg = "current config", config = ?config);
+
+    for e in cli.env {
+        if let Some((key, value)) = e.split_once('=') {
+            config
+                .env
+                .insert(key.to_string(), toml::Value::String(value.to_string()));
+        }
+    }
 
     let mut runner = Runner::new(cli.case, config);
     runner.run();

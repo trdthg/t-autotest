@@ -63,20 +63,26 @@ pub struct Runner {
 }
 
 impl Runner {
-    pub fn new(file: impl AsRef<Path>, config: Config) -> Self {
-        let content = fs::read_to_string(&file).unwrap();
+    pub fn new(case: impl AsRef<Path>, config: Config) -> Self {
+        // create folder if not exists
+        let folders = vec![
+            Some(config.needle_dir.clone()),
+            Some(config.log_dir.clone()),
+            config.console.vnc.screenshot_dir.clone(),
+        ];
+        folders.iter().flatten().for_each(|f| {
+            if fs::metadata(f).is_err() {
+                fs::create_dir_all(f).unwrap();
+            }
+        });
 
-        let Config {
-            console:
-                Console {
-                    ssh: _ssh,
-                    serial: _serial,
-                    vnc: _vnc,
-                },
-            log_dir: _,
-            needle_dir: _,
-            env: _,
-        } = config.clone();
+        let content = fs::read_to_string(&case).unwrap();
+
+        let Console {
+            ssh: _ssh,
+            serial: _serial,
+            vnc: _vnc,
+        } = config.console.clone();
 
         info!(msg = "init...");
 
@@ -120,11 +126,11 @@ impl Runner {
             };
             let ssh_client = SSHClient::connect(
                 _ssh.timeout,
-                auth,
+                &auth,
                 _ssh.username.clone(),
                 format!("{}:{}", _ssh.host, _ssh.port),
             )
-            .expect("init ssh connection failed");
+            .unwrap_or_else(|_| panic!("init ssh connection failed: {:?}", auth));
             info!(msg = "init ssh done");
             Some(ssh_client)
         } else {
@@ -151,7 +157,7 @@ impl Runner {
         let (done_tx, done_rx) = mpsc::channel();
         let (start_tx, start_rx) = mpsc::channel();
 
-        let ext = file
+        let ext = case
             .as_ref()
             .extension()
             .unwrap()

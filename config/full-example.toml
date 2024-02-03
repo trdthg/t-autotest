@@ -1,3 +1,6 @@
+machine    = "linux"
+arch       = "riscv64"
+os         = "ubuntu"
 log_dir    = "testresults"
 needle_dir = "needles"
 

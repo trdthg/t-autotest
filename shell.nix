@@ -7,6 +7,7 @@ pkgs.mkShell {
     SDL2.dev
 
     ### dev tool
+    python310
     socat
     minicom
     quickjs

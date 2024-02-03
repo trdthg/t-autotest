@@ -162,7 +162,7 @@ where
         }
 
         // block until receive new buffer
-        info!(msg = "blocking... try read");
+        debug!(msg = "blocking... try read");
         loop {
             // handle stop
             if let Ok(()) = self.stop_rx.try_recv() {

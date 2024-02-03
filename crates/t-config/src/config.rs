@@ -4,6 +4,9 @@ use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
+    pub machine: String,
+    pub arch: String,
+    pub os: String,
     pub log_dir: String,
     pub needle_dir: String,
     pub console: Console,
