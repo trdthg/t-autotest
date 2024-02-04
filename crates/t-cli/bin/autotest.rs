@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::{env, fs};
-use t_cli::Runner;
 use t_config::Config;
+use t_runner::Runner;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -56,7 +56,7 @@ fn main() {
         }
     }
 
-    let mut runner = Runner::new(cli.case, config);
+    let mut runner = Runner::with_engine(cli.case, config);
     runner.run();
 
     info!(msg = "uploading logs.....");

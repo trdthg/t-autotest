@@ -1,6 +1,6 @@
 [package]
-name                    = "t-cli"
-version                 = "0.1.0"
+name                    = "t-runner"
+version.workspace       = true
 description.workspace   = true
 authors.workspace       = true
 edition.workspace       = true
@@ -11,17 +11,12 @@ documentation.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[[bin]]
-name = "autotest"
-path = "bin/autotest.rs"
-
 [dependencies]
 t-console = { workspace = true }
 t-vnc     = { workspace = true }
 t-binding = { workspace = true }
 t-util    = { workspace = true }
 t-config  = { workspace = true }
-t-runner  = { workspace = true }
 
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }

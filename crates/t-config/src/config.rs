@@ -1,7 +1,8 @@
+use pyo3::prelude::*;
+use serde::Deserialize;
 use std::{collections::HashMap, time::Duration};
 
-use serde::Deserialize;
-
+#[pyclass]
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
     pub machine: String,

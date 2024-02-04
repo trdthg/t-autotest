@@ -1273,6 +1273,7 @@ dependencies = [
  "rquickjs",
  "serde",
  "serde_json",
+ "t-config",
  "t-console",
  "toml",
  "tracing",
@@ -1300,6 +1301,7 @@ dependencies = [
  "t-binding",
  "t-config",
  "t-console",
+ "t-runner",
  "t-util",
  "t-vnc",
  "toml",
@@ -1311,6 +1313,7 @@ dependencies = [
 name = "t-config"
 version = "0.1.0"
 dependencies = [
+ "pyo3",
  "serde",
  "toml",
 ]
@@ -1338,6 +1341,47 @@ dependencies = [
  "tracing-subscriber",
  "tracing-test",
  "vt100",
+]
+
+[[package]]
+name = "t-pylib"
+version = "0.2.0-rc4"
+dependencies = [
+ "pyo3",
+ "t-binding",
+ "t-cli",
+ "t-config",
+ "t-runner",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "t-runner"
+version = "0.2.0-rc4"
+dependencies = [
+ "anyhow",
+ "atty",
+ "clap",
+ "dotenv",
+ "home",
+ "image",
+ "nanoid",
+ "parking_lot 0.12.1",
+ "pipe-trait",
+ "png",
+ "serde",
+ "serde_json",
+ "shell-escape",
+ "ssh2",
+ "t-binding",
+ "t-config",
+ "t-console",
+ "t-util",
+ "t-vnc",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

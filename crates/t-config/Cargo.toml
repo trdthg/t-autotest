@@ -14,3 +14,4 @@ documentation.workspace = true
 [dependencies]
 serde = { workspace = true }
 toml  = { workspace = true }
+pyo3  = { workspace = true }

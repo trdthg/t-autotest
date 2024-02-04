@@ -21,6 +21,8 @@ pkgs.mkShell {
     systemd.dev
     # openssl-sys: ssh2
     openssl.dev
+    # build python binding
+    maturin
 
     ### ci
     act

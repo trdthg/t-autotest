@@ -16,9 +16,9 @@ pub fn print(level: tracing::Level, msg: String) {
     }
 }
 
-pub fn get_env(key: String) -> String {
+pub fn get_env(key: String) -> Option<String> {
     match req(MsgReq::GetConfig { key }) {
-        MsgRes::Value(res) => res.to_string(),
+        MsgRes::ConfigValue(res) => res,
         _ => panic!("wrong msg type"),
     }
 }

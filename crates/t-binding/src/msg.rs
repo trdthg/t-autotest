@@ -53,7 +53,7 @@ pub enum MsgResError {
 #[derive(Debug)]
 pub enum MsgRes {
     Done,
-    Value(toml::Value),
+    ConfigValue(Option<String>),
     ScriptRun(Result<(i32, String), MsgResError>),
     AssertScreen { similarity: i32, ok: bool },
 }
