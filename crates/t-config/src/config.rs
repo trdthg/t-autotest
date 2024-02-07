@@ -1,8 +1,6 @@
-use pyo3::prelude::*;
 use serde::Deserialize;
 use std::{collections::HashMap, time::Duration};
 
-#[pyclass]
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
     pub machine: String,
@@ -12,6 +10,12 @@ pub struct Config {
     pub needle_dir: String,
     pub console: Console,
     pub env: HashMap<String, toml::Value>,
+}
+
+impl Config {
+    pub fn from_toml_str(s: &str) -> Result<Self, toml::de::Error> {
+        toml::from_str(s)
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]

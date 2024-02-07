@@ -1,11 +1,13 @@
 #![allow(unused)]
 use pyo3::{
-    exceptions::{self, PyTypeError},
+    exceptions::{self, PyException, PyTypeError},
     prelude::*,
 };
 use t_binding::api;
 use t_config::Config;
 use t_runner::Runner;
+
+pyo3::create_exception!(defaultmodule, StringError, PyException);
 
 /// Entrypoint, A Python module implemented in Rust.
 #[pymodule]
@@ -23,16 +25,30 @@ fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
 
 #[pyclass]
 struct Driver {
-    debug: bool,
+    runner: Runner,
 }
 
 #[pymethods]
 impl Driver {
     #[new]
-    fn __init__(debug: bool, config: Config) -> PyResult<Self> {
-        let runner = Runner::new(config);
-        runner.run();
-        Ok(Self { debug })
+    fn __init__(config: String) -> PyResult<Self> {
+        let mut runner = Runner::new(
+            Config::from_toml_str(&config).map_err(|e| StringError::new_err(e.to_string()))?,
+        );
+        runner.start();
+        Ok(Self { runner })
+    }
+
+    fn stop(&mut self) {
+        self.runner.stop();
+    }
+
+    fn dump_log(&mut self) {
+        self.runner.dump_log();
+    }
+
+    fn run_script(&mut self, script: String) {
+        self.runner.run_script(script);
     }
 
     /// Returns the sum of two numbers.

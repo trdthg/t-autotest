@@ -1,5 +1,6 @@
 use clap::Parser;
-use std::{env, fs};
+use pipe_trait::Pipe;
+use std::{env, fs, path::Path};
 use t_config::Config;
 use t_runner::Runner;
 use tracing::{info, Level};
@@ -8,10 +9,10 @@ use tracing_subscriber::FmtSubscriber;
 #[derive(clap::Parser, Debug)]
 pub struct Cli {
     #[clap(short, long)]
-    file: String,
+    config: String,
 
     #[clap(short, long)]
-    case: String,
+    script: String,
 
     #[clap(long)]
     env: Vec<String>,
@@ -45,7 +46,7 @@ fn main() {
     info!(msg = "current cli", cli = ?cli);
 
     let mut config: Config =
-        toml::from_str(fs::read_to_string(&cli.file).unwrap().as_str()).unwrap();
+        toml::from_str(fs::read_to_string(&cli.config).unwrap().as_str()).unwrap();
     info!(msg = "current config", config = ?config);
 
     for e in cli.env {
@@ -56,12 +57,22 @@ fn main() {
         }
     }
 
-    let mut runner = Runner::with_engine(cli.case, config);
-    runner.run();
+    let script = fs::read_to_string(cli.script.as_str()).expect("script not exists");
+    let ext = Path::new(cli.script.as_str())
+        .extension()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
 
-    info!(msg = "uploading logs.....");
-    runner.dump_log();
-    info!(msg = "done!");
+    Runner::new_with_engine(config, ext)
+        .start()
+        .run_script(script)
+        .stop()
+        .pipe(|s| {
+            info!(msg = "dumping logs");
+            s
+        })
+        .dump_log();
 }
 
 #[cfg(test)]

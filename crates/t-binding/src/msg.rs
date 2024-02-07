@@ -48,6 +48,7 @@ pub enum MsgReq {
 #[derive(Debug)]
 pub enum MsgResError {
     Timeout,
+    String(String),
 }
 
 #[derive(Debug)]
