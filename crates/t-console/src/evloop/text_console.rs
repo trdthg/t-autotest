@@ -60,7 +60,7 @@ where
         self.comsume_buffer_and_map(timeout, |buffer| {
             let buffer_str = Tm::parse(buffer);
             let res = count_substring(&buffer_str, pattern, repeat);
-            debug!(
+            info!(
                 msg = "wait_string_ntimes",
                 pattern = pattern,
                 repeat = repeat,
@@ -76,17 +76,17 @@ where
         std::thread::sleep(Duration::from_millis(70));
 
         let nanoid = nanoid::nanoid!(6);
-        let cmd = format!("{cmd}; echo $?{nanoid}{}", Tm::get_enter());
+        let cmd = format!("{cmd}; echo $?{nanoid}{}", Tm::enter_input(),);
         self.write_string(&cmd)?;
 
-        let match_left = &format!("{nanoid}{}", Tm::get_enter());
-        let match_right = &nanoid;
+        let match_left = &format!("{nanoid}{}{}", Tm::linebreak(), Tm::enter_input());
+        let match_right = &format!("{nanoid}{}", Tm::linebreak());
 
-        self.comsume_buffer_and_map_inner(timeout, |buffer| {
+        self.comsume_buffer_and_map_inner(timeout, |buffer, _new| {
             // find target pattern from buffer
             let parsed_str = Tm::parse(buffer);
-            debug!(
-                msg = "parsed_str",
+            info!(
+                msg = "recv string",
                 nanoid = nanoid,
                 buffer_len = buffer.len(),
                 parsed_str_len = parsed_str.len(),
@@ -132,7 +132,7 @@ where
         timeout: Duration,
         f: impl Fn(&[u8]) -> Option<T>,
     ) -> Result<T> {
-        self.comsume_buffer_and_map_inner(timeout, |bytes| {
+        self.comsume_buffer_and_map_inner(timeout, |bytes, _new| {
             f(bytes).map_or(ConsumeAction::Continue, |v| ConsumeAction::BreakValue(v))
         })
     }
@@ -140,7 +140,7 @@ where
     fn comsume_buffer_and_map_inner<T>(
         &mut self,
         timeout: Duration,
-        f: impl Fn(&[u8]) -> ConsumeAction<T>,
+        f: impl Fn(&[u8], &[u8]) -> ConsumeAction<T>,
     ) -> Result<T> {
         let deadline = Instant::now() + timeout;
 
@@ -174,7 +174,7 @@ where
                     );
 
                     // find target pattern
-                    let res = f(&self.history[self.last_buffer_start..]);
+                    let res = f(&self.history[self.last_buffer_start..], &recv);
 
                     match res {
                         ConsumeAction::BreakValue(v) => {

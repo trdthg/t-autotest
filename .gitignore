@@ -1,8 +1,9 @@
 /target
 .vscode
+.venv
 .private
 
-testresults
+testresults*
 needles
 
 __pycache__

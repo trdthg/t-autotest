@@ -31,4 +31,5 @@ nanoid             = { workspace = true }
 image              = { workspace = true }
 png                = { workspace = true }
 byteorder          = { workspace = true }
-strip-ansi-escapes = { workspace = true }
+unescaper          = { workspace = true }
+console            = { workspace = true }

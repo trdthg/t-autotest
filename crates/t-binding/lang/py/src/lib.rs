@@ -3,24 +3,50 @@ use pyo3::{
     exceptions::{self, PyException, PyTypeError},
     prelude::*,
 };
+use std::env;
 use t_binding::api;
 use t_config::Config;
 use t_runner::Runner;
+use tracing::Level;
+use tracing_subscriber::FmtSubscriber;
 
 pyo3::create_exception!(defaultmodule, StringError, PyException);
+pyo3::create_exception!(defaultmodule, TimeoutError, PyException);
+pyo3::create_exception!(defaultmodule, UnexpectedError, PyException);
 
 /// Entrypoint, A Python module implemented in Rust.
 #[pymodule]
 fn pyautotest(py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
+    ctrlc::set_handler(|| std::process::exit(2)).unwrap();
+    init_logger();
+
+    tracing::info!("pyautotest module initialized");
     m.add_class::<Driver>()?;
     Ok(())
 }
 
-/// Formats the sum of two numbers as string.
-#[pyfunction]
-fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
-    Ok((a + b).to_string())
+fn init_logger() {
+    let format = tracing_subscriber::fmt::format()
+        .without_time()
+        .with_target(false)
+        .with_level(true)
+        .with_source_location(true)
+        .compact();
+
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(match env::var("RUST_LOG") {
+            Ok(l) => match l.as_str() {
+                "trace" => Level::TRACE,
+                "debug" => Level::DEBUG,
+                "warn" => Level::WARN,
+                "error" => Level::ERROR,
+                _ => Level::INFO,
+            },
+            _ => Level::INFO,
+        })
+        .event_format(format)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
 #[pyclass]
@@ -71,8 +97,11 @@ impl Driver {
         ))
     }
 
-    fn script_run_global(&self, cmd: String, timeout: i32) -> String {
-        api::script_run_global(cmd, timeout).unwrap()
+    fn script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
+        match api::script_run_global(cmd, timeout) {
+            None => Err(TimeoutError::new_err("wait output timeout")),
+            Some(v) => Ok(v),
+        }
     }
 
     fn write_string(&self, s: String) {
@@ -82,12 +111,13 @@ impl Driver {
     // ssh
     fn ssh_assert_script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
         api::ssh_assert_script_run_global(cmd, timeout).ok_or(
-            exceptions::PyAssertionError::new_err("return code should be 0"),
+            exceptions::PyAssertionError::new_err("return code should be 0, or timeout"),
         )
     }
 
-    fn ssh_script_run_global(&self, cmd: String, timeout: i32) -> String {
-        api::ssh_script_run_global(cmd, timeout).unwrap()
+    fn ssh_script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
+        api::ssh_script_run_global(cmd, timeout)
+            .ok_or(exceptions::PyAssertionError::new_err("timeout"))
     }
 
     fn ssh_write_string(&self, s: String) {

@@ -41,13 +41,19 @@ impl EvLoopCtl {
 
     fn send(&self, req: Req) -> Result<Res, mpsc::RecvError> {
         let (tx, rx) = channel();
-        self.req_tx.send((req, tx)).unwrap();
+        if let Err(e) = self.req_tx.send((req, tx)) {
+            error!("evloop receiver closed, connection may be lost: {}", e);
+            return Err(mpsc::RecvError {});
+        }
         rx.recv()
     }
 
     fn send_timeout(&self, req: Req, timeout: Duration) -> Result<Res, mpsc::RecvTimeoutError> {
         let (tx, rx) = channel();
-        self.req_tx.send((req, tx)).unwrap();
+        if let Err(e) = self.req_tx.send((req, tx)) {
+            error!("evloop receiver closed, connection may be lost: {}", e);
+            return Err(mpsc::RecvTimeoutError::Disconnected);
+        }
         rx.recv_timeout(timeout)
     }
 }
@@ -64,7 +70,9 @@ struct EventLoop<T> {
 
 impl<T> Drop for EventLoop<T> {
     fn drop(&mut self) {
-        self.stop_tx.send(()).unwrap()
+        if let Err(e) = self.stop_tx.send(()) {
+            error!("evloop may already been dropped: {}", e);
+        }
     }
 }
 
@@ -120,7 +128,10 @@ where
                         info!("stopped while blocking");
                         break 'out;
                     };
-                    tx.send(res).unwrap();
+                    if let Err(e) = tx.send(res) {
+                        info!("evloop stopped while sending response: {}", e);
+                        break;
+                    }
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
                 Err(mpsc::TryRecvError::Disconnected) => {
@@ -134,8 +145,13 @@ where
     fn handle_req(&mut self, req: Req, blocking: bool) -> Result<Res, ()> {
         match req {
             Req::Write(msg) => {
-                self.conn.write_all(msg.as_bytes()).unwrap();
-                self.conn.flush().unwrap();
+                if let Err(e) = self.conn.write_all(msg.as_bytes()) {
+                    error!(msg = "write failed, connection may be broken", reason = ?e);
+                    return Err(());
+                }
+                if let Err(e) = self.conn.flush() {
+                    error!(msg = "flush failed, connection may be broken", reason = ?e);
+                }
                 debug!(msg = "write done");
                 Ok(Res::Done)
             }
