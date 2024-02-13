@@ -174,7 +174,7 @@ where
                     );
 
                     // find target pattern
-                    let res = f(&self.history[self.last_buffer_start..], &recv);
+                    let res = f(&self.history[self.last_buffer_start..], recv);
 
                     match res {
                         ConsumeAction::BreakValue(v) => {
