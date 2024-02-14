@@ -58,7 +58,7 @@ where
         repeat: usize,
     ) -> Result<String> {
         self.comsume_buffer_and_map(timeout, |buffer| {
-            let buffer_str = Tm::parse(buffer);
+            let buffer_str = Tm::parse_and_strip(buffer);
             let res = count_substring(&buffer_str, pattern, repeat);
             info!(
                 msg = "wait_string_ntimes",
@@ -84,7 +84,7 @@ where
 
         self.comsume_buffer_and_map_inner(timeout, |buffer, _new| {
             // find target pattern from buffer
-            let parsed_str = Tm::parse(buffer);
+            let parsed_str = Tm::parse_and_strip(buffer);
             info!(
                 msg = "recv string",
                 nanoid = nanoid,
@@ -101,7 +101,7 @@ where
             match catched_output {
                 Some(v) => {
                     info!(msg = "catched_output", nanoid = nanoid, catched_output = v,);
-                    if let Some((res, flag)) = v.rsplit_once('\n') {
+                    if let Some((res, flag)) = v.rsplit_once(Tm::linebreak()) {
                         info!(
                             msg = "catched_output info",
                             nanoid = nanoid,

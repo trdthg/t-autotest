@@ -1,5 +1,3 @@
-use image::EncodableLayout;
-
 #[allow(unused)]
 const LF: &str = "\n";
 const CR: &str = "\r";
@@ -18,17 +16,24 @@ pub trait Term {
         Self::enter_output()
     }
 
-    fn parse(bytes: &[u8]) -> String {
-        let text = String::from_utf8_lossy(bytes.as_bytes()).to_string();
+    fn parse_and_strip(bytes: &[u8]) -> String {
+        // bytes to string
+        let text = String::from_utf8_lossy(bytes);
+        // filter ESC and ANSI control character
         let text = console::strip_ansi_codes(&text);
-        unescaper::unescape(&text).unwrap()
+        // Unicode control character shouldn't be filtered like \n, \u{7} (or BEL, or Ctrl-G)
+        // text.chars().filter(|c| !c.is_control()).collect()
+        text.to_string()
     }
 }
+
+struct General {}
+impl Term for General {}
 
 pub struct VT100 {}
 
 impl Term for VT100 {
-    fn parse(bytes: &[u8]) -> String {
+    fn parse_and_strip(bytes: &[u8]) -> String {
         let mut parser = vt100::Parser::new(24, 80, 0);
         let mut res: String = String::new();
         for chunk in bytes.chunks(80 * 24) {
@@ -36,7 +41,9 @@ impl Term for VT100 {
             let contents = parser.screen().contents();
             res.push_str(contents.as_str());
         }
-        unescaper::unescape(&res).unwrap()
+        let text = unescaper::unescape(&res).unwrap();
+        let text = console::strip_ansi_codes(&text);
+        text.to_string()
     }
 }
 
@@ -50,18 +57,24 @@ impl Term for Xterm {}
 
 #[cfg(test)]
 mod test {
-    use super::{Term, VT102};
+    use super::General;
+    use crate::Term;
 
     #[test]
-    fn vt102() {
-        for (src, expect) in [("\u{1b}[?2004l", ""),
-            (" \u{1b}[32m", " "),
-            (" \u{1b}[1;32mboard-image", " board-image"),
+    fn test_default_parse() {
+        for (src, expect) in [
+            ("\n", "\n"), // unicode control character
+            ("\u{7}", "\u{7}"), // same
+            ("\u{1b}", "\u{1b}"),  // ANSI escape sequence, not complete
+            ("\u{1b}[?2004l", ""), // same, but complete
+            (" \u{1b}[32m", " "), // same
+            (" \u{1b}[1;32mboard-image", " board-image"), // same
             (
                 "echo $?W-x3JmwqB4C-h6yWhGTlk\r\n\u{1b}[?2004l\r0W-x3JmwqB4C-h6yWhGTlk\r\n\u{1b}[?2004hpi@raspberrypi:~$ ",
                 "echo $?W-x3JmwqB4C-h6yWhGTlk\r\n\r0W-x3JmwqB4C-h6yWhGTlk\r\npi@raspberrypi:~$ "
-            )] {
-            assert_eq!(VT102::parse(src.as_bytes()), expect);
+            )
+        ] {
+            assert_eq!(General::parse_and_strip(src.as_bytes()), expect);
         }
     }
 }
