@@ -1,6 +1,6 @@
 use clap::Parser;
 use std::path::PathBuf;
-use t_console::{SSHAuthAuth, SSHClient, VT102};
+use t_console::{SSHAuthAuth, SSHClient, Xterm};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -25,7 +25,7 @@ fn main() {
     );
 
     // Session is a wrapper around a russh client, defined down below
-    let mut ssh: SSHClient<VT102> = SSHClient::connect(
+    let mut ssh: SSHClient<Xterm> = SSHClient::connect(
         None,
         &SSHAuthAuth::PrivateKey(cli.private_key.unwrap_or(default_private_key())),
         cli.username.unwrap_or(default_username()),

@@ -1,5 +1,12 @@
 let
   pkgs = import (fetchTarball https://nixos.org/channels/nixos-unstable/nixexprs.tar.xz) { };
+  prepareVenvIfNotExists = ''
+    # create .venv if not exists
+    if [ ! -d .venv ]; then
+      python3 -m venv .venv
+    fi
+    source .venv/bin/activate
+  '';
 in
 pkgs.mkShell {
   nativeBuildInputs = with pkgs; [
@@ -7,6 +14,7 @@ pkgs.mkShell {
     SDL2.dev
 
     ### dev tool
+    rust-analyzer
     python310
     socat
     minicom
@@ -21,6 +29,8 @@ pkgs.mkShell {
     systemd.dev
     # openssl-sys: ssh2
     openssl.dev
+    # build python binding
+    maturin
 
     ### ci
     act
@@ -31,5 +41,7 @@ pkgs.mkShell {
     export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${
       pkgs.lib.makeLibraryPath  [
       ]
-    }"'';
+    }"
+    ${prepareVenvIfNotExists}
+  '';
 }

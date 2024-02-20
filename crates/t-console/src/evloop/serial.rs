@@ -95,7 +95,7 @@ where
     }
 
     pub fn dump_history(&self) -> String {
-        T::parse(&self.ctl.history())
+        T::parse_and_strip(&self.ctl.history())
     }
 
     pub fn write_string(&mut self, s: &str) -> Result<()> {
@@ -178,7 +178,7 @@ mod test {
             let mut buf = [0; 1024];
             match port.read(&mut buf) {
                 Ok(n) => {
-                    println!("{}", VT102::parse(&buf[0..n]));
+                    println!("{}", VT102::parse_and_strip(&buf[0..n]));
                 }
                 Err(e) if e.kind() == ErrorKind::TimedOut => {
                     println!("timeout");

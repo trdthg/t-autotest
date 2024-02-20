@@ -1,6 +1,15 @@
 [workspace]
 resolver = "2"
-members  = ["crates/t-cli", "crates/t-console", "crates/t-vnc", "crates/t-util", "crates/t-binding", "crates/t-config"]
+members = [
+    "crates/t-cli",
+    "crates/t-runner",
+    "crates/t-binding",
+    "crates/t-binding/lang/*",
+    "crates/t-console",
+    "crates/t-vnc",
+    "crates/t-util",
+    "crates/t-config",
+]
 
 [workspace.package]
 version       = "0.2.0-rc4"
@@ -15,6 +24,7 @@ documentation = "https://github.com/trdthg/t-autotest"
 [workspace.dependencies]
 # Crates
 t-cli     = { path = "./crates/t-cli" }
+t-runner  = { path = "./crates/t-runner" }
 t-console = { path = "./crates/t-console" }
 t-vnc     = { path = "./crates/t-vnc" }
 t-util    = { path = "./crates/t-util" }
@@ -40,16 +50,18 @@ toml               = { version = "0.8.8" }
 ssh2               = { version = "0.9.4", features = [] }
 serialport         = { version = "4.3.0" }
 vt100              = { version = "0.15.2" }
-strip-ansi-escapes = { version = "0.2.0" }
+console            = { version = "0.15.8" }
 image              = { version = "0.24.7" }
 png                = { version = "0.17.10" }
 byteorder          = { version = "1.5.0" }
 parking_lot        = { version = "0.12.1" }
 atty               = { version = "0.2.14" }
+unescaper          = { version = "0.1.4" }
 
 rquickjs = { version = "0.4.0" }
 mlua     = { version = "0.9.1", features = ["lua54", "vendored"] }
 pyo3     = { version = "0.20.0", features = ["auto-initialize"] }
+ctrlc    = { version = "3.4.2" }
 
 [profile.dev]
 incremental = true

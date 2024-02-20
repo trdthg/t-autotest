@@ -1,3 +1,4 @@
+use crate::needle::NeedleManager;
 use parking_lot::Mutex;
 use std::{
     fs::{self},
@@ -7,17 +8,14 @@ use std::{
         mpsc::{self, Receiver, Sender},
         Arc,
     },
-    thread,
     time::{self, Duration},
 };
-use t_binding::{JSEngine, LuaEngine, MsgReq, MsgRes, MsgResError, ScriptEngine};
+use t_binding::{MsgReq, MsgRes, MsgResError};
 use t_config::{Config, Console, ConsoleSSHAuthType};
 use t_console::{
     SSHAuthAuth, SSHClient, SerialClient, VNCClient, VNCEventReq, VNCEventRes, Xterm, VT102,
 };
 use tracing::{error, info, warn};
-
-use crate::needle::NeedleManager;
 
 #[derive(Clone)]
 struct AMOption<T> {
@@ -50,20 +48,34 @@ impl<T> AMOption<T> {
     }
 }
 
-pub struct Runner {
+pub struct Server {
     config: Config,
 
-    start_tx: mpsc::Sender<()>,
     msg_rx: Receiver<(MsgReq, Sender<MsgRes>)>,
-    done_rx: mpsc::Receiver<()>,
+
+    stop_rx: mpsc::Receiver<mpsc::Sender<()>>,
 
     ssh_client: AMOption<SSHClient<Xterm>>,
     serial_client: AMOption<SerialClient<VT102>>,
     vnc_client: AMOption<VNCClient>,
 }
 
-impl Runner {
-    pub fn new(case: impl AsRef<Path>, config: Config) -> Self {
+pub struct ServerCtl {
+    stop_tx: mpsc::Sender<mpsc::Sender<()>>,
+}
+
+impl ServerCtl {
+    pub fn stop(&self) {
+        let (tx, rx) = mpsc::channel();
+        if let Err(e) = self.stop_tx.send(tx) {
+            error!(msg = "script engine sender closed", reason = ?e);
+        }
+        rx.recv().unwrap();
+    }
+}
+
+impl Server {
+    pub fn new(config: Config) -> (Self, ServerCtl) {
         // create folder if not exists
         let folders = vec![
             Some(config.needle_dir.clone()),
@@ -75,8 +87,6 @@ impl Runner {
                 fs::create_dir_all(f).unwrap();
             }
         });
-
-        let content = fs::read_to_string(&case).unwrap();
 
         let Console {
             ssh: _ssh,
@@ -154,46 +164,26 @@ impl Runner {
         let (tx, msg_rx) = mpsc::channel();
         t_binding::init(tx);
 
-        let (done_tx, done_rx) = mpsc::channel();
-        let (start_tx, start_rx) = mpsc::channel();
+        let (stop_tx, stop_rx) = mpsc::channel();
 
-        let ext = case
-            .as_ref()
-            .extension()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
+        (
+            Self {
+                config,
 
-        thread::spawn(move || {
-            start_rx.recv().unwrap();
+                msg_rx,
 
-            let mut e: Box<dyn ScriptEngine> = match ext.as_str() {
-                "js" => Box::new(JSEngine::new()),
-                "lua" => Box::new(LuaEngine::new()),
-                _ => unimplemented!(),
-            };
-            e.run(content.as_str());
-            if let Err(e) = done_tx.send(()) {
-                error!(msg = "send to done channel should not failed", reason = ?e);
-                panic!();
-            }
-        });
+                stop_rx,
 
-        Self {
-            config,
-
-            start_tx,
-            msg_rx,
-            done_rx,
-
-            ssh_client: AMOption::new(ssh_client),
-            serial_client: AMOption::new(serial_client),
-            vnc_client: AMOption::new(vnc_client),
-        }
+                ssh_client: AMOption::new(ssh_client),
+                serial_client: AMOption::new(serial_client),
+                vnc_client: AMOption::new(vnc_client),
+            },
+            ServerCtl { stop_tx },
+        )
     }
 
-    pub fn run(&self) {
-        self.start_tx.send(()).unwrap();
+    pub fn start(&self) {
+        // start script engine if in case mode
         info!(msg = "start msg handler thread");
 
         let config = self.config.clone();
@@ -201,13 +191,14 @@ impl Runner {
         let serial_client = &self.serial_client;
         let vnc_client = &self.vnc_client;
 
-        let _ssh_tty = ssh_client.map_ref(|c| c.tty()).unwrap();
-        let serial_tty = serial_client.map_ref(|c| c.tty()).unwrap();
+        let _ssh_tty = ssh_client.map_ref(|c| c.tty());
+        let serial_tty = serial_client.map_ref(|c| c.tty());
 
         loop {
             // stop on receive done signal
-            if let Ok(()) = self.done_rx.try_recv() {
+            if let Ok(tx) = self.stop_rx.try_recv() {
                 info!(msg = "runner handler thread stopped");
+                tx.send(()).unwrap();
                 break;
             }
 
@@ -220,13 +211,10 @@ impl Runner {
             info!(msg = "recv script engine request", req = ?req);
             let res = match req {
                 // common
-                MsgReq::GetConfig { key } => MsgRes::Value(
-                    config
-                        .env
-                        .get(&key)
-                        .map(|v| v.to_owned())
-                        .unwrap_or(toml::Value::String("".to_string())),
-                ),
+                MsgReq::GetConfig { key } => {
+                    let v = config.env.get(&key).map(|v| v.to_string());
+                    MsgRes::ConfigValue(v)
+                }
                 // ssh
                 MsgReq::SSHScriptRunSeperate { cmd, timeout: _ } => {
                     let client = ssh_client;
@@ -243,6 +231,7 @@ impl Runner {
                 } => {
                     let res = match console {
                         None if serial_client.is_some() && ssh_client.is_some() => {
+                            let serial_tty = serial_tty.as_ref().unwrap();
                             info!(msg = "both terminal");
                             let key = nanoid::nanoid!(6);
                             ssh_client
@@ -290,7 +279,7 @@ impl Runner {
                                 .unwrap_or(Ok((-1, "no ssh".to_string())))
                                 .map_err(|_| MsgResError::Timeout)
                         }
-                        _ => Err(MsgResError::Timeout),
+                        _ => Err(MsgResError::String("no console supported".to_string())),
                     };
                     MsgRes::ScriptRun(res)
                 }
@@ -312,7 +301,7 @@ impl Runner {
                                 .map_err(|_| MsgResError::Timeout)
                                 .unwrap();
                         }
-                        None => {}
+                        None => unimplemented!(),
                     }
                     MsgRes::Done
                 }
@@ -338,7 +327,7 @@ impl Runner {
                                 .map_err(|_| MsgResError::Timeout)
                                 .unwrap();
                         }
-                        None => {}
+                        None => unimplemented!(),
                     }
                     MsgRes::Done
                 }
@@ -425,7 +414,7 @@ impl Runner {
         }
     }
 
-    pub fn dump_log(&mut self) {
+    pub fn dump_log(&self) {
         let log_dir = Path::new(&self.config.log_dir);
 
         if self.config.console.ssh.enable {

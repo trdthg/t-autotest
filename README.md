@@ -24,7 +24,7 @@ Invoke-WebRequest -Uri "https://github.com/trdthg/t-autotest/raw/main/scripts/in
 
 ## Usage
 
-使用方法: `autotest -f <config.toml> -c <case.ext>`
+使用方法: `autotest -c|--config <config.toml> -s|--script <script.ext>`
 
 - `config.toml` 指定测试环境配置
 - `case.ext` 指定需要运行的测试脚本, 目前支持 js 语言

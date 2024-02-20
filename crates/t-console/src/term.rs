@@ -1,18 +1,39 @@
-use image::EncodableLayout;
+#[allow(unused)]
+const LF: &str = "\n";
+const CR: &str = "\r";
+const CR_LF: &str = "\r\n";
 
 pub trait Term {
-    fn get_enter() -> &'static str;
-    fn parse(bytes: &[u8]) -> String;
+    fn enter_input() -> &'static str {
+        CR
+    }
+
+    fn enter_output() -> &'static str {
+        CR_LF
+    }
+
+    fn linebreak() -> &'static str {
+        Self::enter_output()
+    }
+
+    fn parse_and_strip(bytes: &[u8]) -> String {
+        // bytes to string
+        let text = String::from_utf8_lossy(bytes);
+        // filter ESC and ANSI control character
+        let text = console::strip_ansi_codes(&text);
+        // Unicode control character shouldn't be filtered like \n, \u{7} (or BEL, or Ctrl-G)
+        // text.chars().filter(|c| !c.is_control()).collect()
+        text.to_string()
+    }
 }
+
+struct General {}
+impl Term for General {}
 
 pub struct VT100 {}
 
 impl Term for VT100 {
-    fn get_enter() -> &'static str {
-        "\n"
-    }
-
-    fn parse(bytes: &[u8]) -> String {
+    fn parse_and_strip(bytes: &[u8]) -> String {
         let mut parser = vt100::Parser::new(24, 80, 0);
         let mut res: String = String::new();
         for chunk in bytes.chunks(80 * 24) {
@@ -20,70 +41,40 @@ impl Term for VT100 {
             let contents = parser.screen().contents();
             res.push_str(contents.as_str());
         }
-        res
+        let text = unescaper::unescape(&res).unwrap();
+        let text = console::strip_ansi_codes(&text);
+        text.to_string()
     }
 }
 
 pub struct VT102 {}
 
-impl Term for VT102 {
-    fn get_enter() -> &'static str {
-        "\n"
-    }
-
-    fn parse(bytes: &[u8]) -> String {
-        // let vt_regex = Regex::new(r"\x1b\[\??([\d]+(;)?)+[lhmk]").unwrap();
-        // let text = String::from_utf8_lossy(bytes);
-        // let cleaned_text = vt_regex.replace_all(&text, "");
-        // cleaned_text.into_owned()
-        let res = strip_ansi_escapes::strip(bytes);
-        let text = String::from_utf8_lossy(res.as_bytes()).to_string();
-        text
-    }
-}
+impl Term for VT102 {}
 
 pub struct Xterm {}
 
-impl Term for Xterm {
-    fn get_enter() -> &'static str {
-        "\n"
-    }
-
-    fn parse(bytes: &[u8]) -> String {
-        // let re = Regex::new(r"\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]").unwrap();
-        // re.replace_all(&text, "").to_string()
-        let res = strip_ansi_escapes::strip(bytes);
-        let text = String::from_utf8_lossy(res.as_bytes()).to_string();
-        text
-    }
-}
+impl Term for Xterm {}
 
 #[cfg(test)]
 mod test {
-    use crate::Xterm;
-
-    use super::{Term, VT102};
+    use super::General;
+    use crate::Term;
 
     #[test]
-    fn vt102() {
-        for (src, expect) in [("\u{1b}[?2004l", ""),
-            (" \u{1b}[32m", " "),
-            (" \u{1b}[1;32mboard-image", " board-image"),
+    fn test_default_parse() {
+        for (src, expect) in [
+            ("\n", "\n"), // unicode control character
+            ("\u{7}", "\u{7}"), // same
+            ("\u{1b}", "\u{1b}"),  // ANSI escape sequence, not complete
+            ("\u{1b}[?2004l", ""), // same, but complete
+            (" \u{1b}[32m", " "), // same
+            (" \u{1b}[1;32mboard-image", " board-image"), // same
             (
                 "echo $?W-x3JmwqB4C-h6yWhGTlk\r\n\u{1b}[?2004l\r0W-x3JmwqB4C-h6yWhGTlk\r\n\u{1b}[?2004hpi@raspberrypi:~$ ",
-                "echo $?W-x3JmwqB4C-h6yWhGTlk\n0W-x3JmwqB4C-h6yWhGTlk\npi@raspberrypi:~$ "
-            )] {
-            assert_eq!(VT102::parse(src.as_bytes()), expect);
-        }
-    }
-
-    #[test]
-    fn xterm() {
-        {
-            let (src, expect) = ("Linux revyos-pioneer 6.1.61-pioneer #2023.12.19.14.55+c60b48221 SMP Tue Dec 19 15:50:57 UTC 2023 riscv64\r\n\r\nThe programs included with the Debian GNU/Linux system are free software;\r\nthe exact distribution terms for each program are described in the\r\nindividual files in /usr/share/doc/*/copyright.\r\n\r\nDebian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent\r\npermitted by applicable law.\r\nLast login: Tue Jan 30 15:27:18 2024 from 192.168.33.248\r\r\n\u{1b}]0;debian@revyos-pioneer: ~\u{7}debian@revyos-pioneer:~$ tty; echo $?msZIEloAsQCe3h6LrEBfv\r\n\r/dev/pts/2\r\n0msZIEloAsQCe3h6LrEBfv\r\n\u{1b}]0;debian@revyos-pioneer: ~\u{7}debian@revyos-pioneer:~$ \u{1b}[K\r\n\r\u{1b}]0;debian@revyos-pioneer: ~\u{7}debian@revyos-pioneer:~$ cd && rm -rf $HOME/ruyitestfolder; echo $?juSSnkmKxvVLFDiINnJ2V\r\n\r0juSSnkmKxvVLFDiINnJ2V\r\n\u{1b}]0;debian@revyos-pioneer: ~\u{7}debian@revyos-pioneer:~$ \u{1b}[K\r\n\r\u{1b}]0;debian@revyos-pioneer: ~\u{7}debian@revyos-pioneer:~$ ",
-             "Linux revyos-pioneer 6.1.61-pioneer #2023.12.19.14.55+c60b48221 SMP Tue Dec 19 15:50:57 UTC 2023 riscv64\n\nThe programs included with the Debian GNU/Linux system are free software;\nthe exact distribution terms for each program are described in the\nindividual files in /usr/share/doc/*/copyright.\n\nDebian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent\npermitted by applicable law.\nLast login: Tue Jan 30 15:27:18 2024 from 192.168.33.248\ndebian@revyos-pioneer:~$ tty; echo $?msZIEloAsQCe3h6LrEBfv\n/dev/pts/2\n0msZIEloAsQCe3h6LrEBfv\ndebian@revyos-pioneer:~$ \ndebian@revyos-pioneer:~$ cd && rm -rf $HOME/ruyitestfolder; echo $?juSSnkmKxvVLFDiINnJ2V\n0juSSnkmKxvVLFDiINnJ2V\ndebian@revyos-pioneer:~$ \ndebian@revyos-pioneer:~$ ");
-            println!("{}", Xterm::parse(src.as_bytes()));
-            assert_eq!(Xterm::parse(src.as_bytes()), expect);
+                "echo $?W-x3JmwqB4C-h6yWhGTlk\r\n\r0W-x3JmwqB4C-h6yWhGTlk\r\npi@raspberrypi:~$ "
+            )
+        ] {
+            assert_eq!(General::parse_and_strip(src.as_bytes()), expect);
         }
     }
 }

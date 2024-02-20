@@ -21,6 +21,7 @@ t-vnc     = { workspace = true }
 t-binding = { workspace = true }
 t-util    = { workspace = true }
 t-config  = { workspace = true }
+t-runner  = { workspace = true }
 
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }

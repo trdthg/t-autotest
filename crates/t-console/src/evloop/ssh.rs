@@ -87,7 +87,7 @@ where
     }
 
     pub fn dump_history(&self) -> String {
-        Tm::parse(&self.ctl.history())
+        Tm::parse_and_strip(&self.ctl.history())
     }
 
     // TODO: may blocking
@@ -138,7 +138,7 @@ where
 mod test {
     use std::{env, thread};
 
-    use crate::term::VT102;
+    use crate::Xterm;
 
     use super::*;
 
@@ -147,7 +147,7 @@ mod test {
         t_config::load_config_from_file(f).map(Some).unwrap()
     }
 
-    fn get_ssh_client() -> Option<SSHClient<VT102>> {
+    fn get_ssh_client() -> Option<SSHClient<Xterm>> {
         let c = get_config_from_file()?;
         assert!(c.console.ssh.enable);
 
