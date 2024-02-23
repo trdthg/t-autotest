@@ -14,7 +14,7 @@ pkgs.mkShell {
     SDL2.dev
 
     ### dev tool
-    rust-analyzer
+    rustup
     python310
     socat
     minicom

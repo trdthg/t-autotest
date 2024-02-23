@@ -1,19 +1,50 @@
+use crate::{term::Term, EvLoopCtl, Req, Res};
 use std::{
+    fmt::Display,
     marker::PhantomData,
     sync::mpsc,
     time::{Duration, Instant},
 };
-
-use anyhow::Result;
 use tracing::{debug, error, info};
 
-use crate::{term::Term, EvLoopCtl, Req, Res};
+#[derive(Debug)]
+pub enum ConsoleError {
+    Io(std::io::Error),
+    ConnectionBroken,
+    Timeout,
+}
+
+impl Display for ConsoleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ConsoleError::Io(e) => write!(f, "IO: {}", e),
+            ConsoleError::ConnectionBroken => write!(f, "Connection broken"),
+            ConsoleError::Timeout => write!(f, "Timeout"),
+        }
+    }
+}
+
+type Result<T> = std::result::Result<T, ConsoleError>;
 
 pub struct BufEvLoopCtl<T: Term> {
     ctl: EvLoopCtl,
     history: Vec<u8>,
     last_buffer_start: usize,
     phantom: PhantomData<T>,
+    rx: Option<mpsc::Receiver<Vec<u8>>>,
+    tx: mpsc::Sender<Vec<u8>>,
+}
+
+pub struct MsgStream {
+    inner: mpsc::Receiver<Vec<u8>>,
+}
+
+impl Iterator for MsgStream {
+    type Item = Vec<u8>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.recv().ok()
+    }
 }
 
 impl<Tm> BufEvLoopCtl<Tm>
@@ -21,12 +52,22 @@ where
     Tm: Term,
 {
     pub fn new(ctl: EvLoopCtl) -> Self {
+        let (tx, rx) = mpsc::channel();
         Self {
             ctl,
             history: Vec::new(),
             last_buffer_start: 0,
             phantom: PhantomData {},
+            tx,
+            rx: Some(rx),
         }
+    }
+
+    pub fn take_stream(&mut self) -> MsgStream {
+        let Some(rx) = self.rx.take() else {
+            panic!("already taken");
+        };
+        MsgStream { inner: rx }
     }
 
     pub fn history(&self) -> Vec<u8> {
@@ -37,17 +78,22 @@ where
         }
     }
 
-    pub fn send(&self, req: Req) -> Result<Res, mpsc::RecvError> {
+    pub fn send(&self, req: Req) -> std::result::Result<Res, mpsc::RecvError> {
         self.ctl.send(req)
     }
 
-    pub fn write(&mut self, s: &[u8]) {
-        self.ctl.send(Req::Write(s.to_vec())).unwrap();
+    pub fn write(&mut self, s: &[u8]) -> Result<()> {
+        self.ctl
+            .send(Req::Write(s.to_vec()))
+            .map_err(|_| ConsoleError::ConnectionBroken)?;
+        Ok(())
     }
 
     pub fn write_string(&mut self, s: &str) -> Result<()> {
         debug!(msg = "write_string", s = s);
-        self.ctl.send(Req::Write(s.as_bytes().to_vec())).unwrap();
+        self.ctl
+            .send(Req::Write(s.as_bytes().to_vec()))
+            .map_err(|_| ConsoleError::ConnectionBroken)?;
         Ok(())
     }
 
@@ -160,6 +206,9 @@ where
                         continue;
                     }
 
+                    // send to read time receiver
+                    let _ = self.tx.send(recv.to_vec());
+
                     // save to history
                     self.history.extend(recv);
                     buffer_len += recv.len();
@@ -198,7 +247,7 @@ where
                 }
             }
         }
-        Err(anyhow::anyhow!("timeout"))
+        Err(ConsoleError::Timeout)
     }
 }
 

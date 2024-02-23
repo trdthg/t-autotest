@@ -1,8 +1,7 @@
 use clap::Parser;
-use pipe_trait::Pipe;
 use std::{env, fs, path::Path};
 use t_config::Config;
-use t_runner::Runner;
+use t_runner::Driver;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -64,15 +63,10 @@ fn main() {
         .to_string_lossy()
         .to_string();
 
-    Runner::new_with_engine(config, ext)
+    Driver::new_with_engine(config, ext)
         .start()
         .run_script(script)
-        .stop()
-        .pipe(|s| {
-            info!(msg = "dumping logs");
-            s
-        })
-        .dump_log();
+        .stop();
 }
 
 #[cfg(test)]

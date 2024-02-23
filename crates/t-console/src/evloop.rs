@@ -5,7 +5,6 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Result;
 use image::EncodableLayout;
 use tracing::{debug, error, info};
 

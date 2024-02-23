@@ -38,7 +38,6 @@ home               = { version = "0.5.9" }
 tracing            = { version = "0.1.40" }
 tracing-test       = { version = "0.2.4" }
 tracing-subscriber = { version = "0.3.18" }
-anyhow             = { version = "1.0.76" }
 pipe-trait         = { version = "0.4.0" }
 shell-escape       = { version = "0.1.5" }
 regex              = { version = "1.10.2" }
@@ -58,7 +57,7 @@ parking_lot        = { version = "0.12.1" }
 atty               = { version = "0.2.14" }
 unescaper          = { version = "0.1.4" }
 
-rquickjs = { version = "0.4.0" }
+rquickjs = { version = "0.5.1", features = ["macro"] }
 mlua     = { version = "0.9.1", features = ["lua54", "vendored"] }
 pyo3     = { version = "0.20.0", features = ["auto-initialize"] }
 ctrlc    = { version = "3.4.2" }

@@ -1,28 +1,20 @@
+use super::text_console::BufEvLoopCtl;
 use crate::{term::Term, EvLoopCtl, Req};
-
-use anyhow::Result;
-
-use std::io;
 use std::path::Path;
-
 use std::thread::sleep;
 use std::time::Duration;
-
 use t_util::ExecutorError;
 use tracing::info;
 
-use super::text_console::BufEvLoopCtl;
-
 pub struct SerialClient<T: Term> {
-    ctl: BufEvLoopCtl<T>,
-    tty: String,
+    pub ctl: BufEvLoopCtl<T>,
+    pub tty: String,
 }
 
 #[derive(Debug)]
 pub enum SerialError {
-    ConnectError(String),
-    Read(io::Error),
-    Write(io::Error),
+    ConnectionBroken,
+    Timeout,
     Stty(ExecutorError),
 }
 
@@ -36,17 +28,14 @@ where
     }
 }
 
+type Result<T> = std::result::Result<T, SerialError>;
+
 impl<T> SerialClient<T>
 where
     T: Term,
 {
-    pub fn connect(
-        file: impl Into<String>,
-        bund_rate: u32,
-        auth: Option<(impl Into<String>, impl Into<String>)>,
-    ) -> Result<Self, SerialError> {
-        let file: String = file.into();
-        let path = Path::new(&file);
+    pub fn connect(file: &str, bund_rate: u32, auth: Option<(&str, &str)>) -> Result<Self> {
+        let path = Path::new(file);
         if !path.exists() {
             panic!("serial path not exists");
         }
@@ -58,9 +47,9 @@ where
         // .map_err(SerialError::Stty)?;
 
         // connect serial
-        let port = serialport::new(&file, bund_rate)
+        let port = serialport::new(file, bund_rate)
             .open()
-            .map_err(|e| SerialError::ConnectError(e.to_string()))
+            .map_err(|_| SerialError::ConnectionBroken)
             .unwrap();
 
         let mut res = Self {
@@ -70,18 +59,24 @@ where
 
         if let Some((username, password)) = auth {
             info!(msg = "serial try logout");
-            res.logout();
+            if let Err(_e) = res.logout() {
+                panic!("serial try logout failed");
+            };
 
             info!(msg = "serial waiting login");
-            res.wait_string_ntimes(Duration::from_secs(30), "login", 1)
-                .unwrap();
+            if let Err(e) = res
+                .ctl
+                .wait_string_ntimes(Duration::from_secs(30), "login", 1)
+            {
+                panic!("serial login wait prompt failed: {}", e);
+            };
 
             info!(msg = "serial login");
-            res.login(&username.into(), &password.into());
+            res.login(username.as_ref(), password.as_ref());
         }
 
         info!(msg = "serial get tty");
-        if let Ok(tty) = res.exec_global(Duration::from_secs(10), "tty") {
+        if let Ok(tty) = res.ctl.exec_global(Duration::from_secs(10), "tty") {
             res.tty = tty.1;
         } else {
             panic!("serial get tty failed")
@@ -94,20 +89,13 @@ where
         self.tty.to_owned()
     }
 
-    pub fn dump_history(&self) -> String {
-        T::parse_and_strip(&self.ctl.history())
-    }
-
-    pub fn write_string(&mut self, s: &str) -> Result<()> {
-        sleep(Duration::from_millis(100));
-        self.ctl.write_string(s)?;
-        Ok(())
-    }
-
-    fn logout(&mut self) {
+    fn logout(&mut self) -> Result<()> {
         // logout
-        self.ctl.write(b"\x04\n");
+        self.ctl
+            .write(b"\x04\n")
+            .map_err(|_e| SerialError::ConnectionBroken)?;
         sleep(Duration::from_millis(5000));
+        Ok(())
     }
 
     fn login(&mut self, username: &str, password: &str) {
@@ -122,20 +110,14 @@ where
         info!("{}", "try login done");
     }
 
-    pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
-        // wait for prompt show, cmd may write too fast before prompt show, which will broken regex
-        sleep(Duration::from_millis(70));
-
-        self.ctl.exec_global(timeout, cmd)
+    pub fn history(&self) -> String {
+        T::parse_and_strip(&self.ctl.history())
     }
 
-    pub fn wait_string_ntimes(
-        &mut self,
-        timeout: Duration,
-        pattern: &str,
-        repeat: usize,
-    ) -> Result<String> {
-        self.ctl.wait_string_ntimes(timeout, pattern, repeat)
+    pub fn write_string(&mut self, s: &str) -> Result<()> {
+        sleep(Duration::from_millis(100));
+        self.ctl.write_string(s).map_err(|_| SerialError::Timeout)?;
+        Ok(())
     }
 }
 
@@ -202,11 +184,11 @@ mod test {
         assert!(c.console.serial.enable);
 
         let c = c.console.serial.clone();
-
-        let auth = if c.auto_login {
-            Some((c.username.unwrap(), c.password.unwrap()))
-        } else {
-            None
+        let username = c.username.unwrap_or_default();
+        let password = c.password.unwrap_or_default();
+        let auth = match c.auto_login {
+            true => Some((username.as_str(), password.as_str())),
+            false => None,
         };
 
         SerialClient::connect(&c.serial_file, c.bund_rate, auth).unwrap()
@@ -236,7 +218,10 @@ mod test {
         (0..10).for_each(|_| {
             for cmd in cmds.iter() {
                 trace!(cmd = cmd.0);
-                let res = serial.exec_global(Duration::from_secs(1), cmd.0).unwrap();
+                let res = serial
+                    .ctl
+                    .exec_global(Duration::from_secs(1), cmd.0)
+                    .unwrap();
                 assert_eq!(res.0, 0);
                 assert_eq!(res.1, cmd.1);
             }
