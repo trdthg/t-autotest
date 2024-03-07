@@ -12,7 +12,7 @@ use std::{
 };
 use t_binding::{MsgReq, MsgRes, MsgResError};
 use t_config::{Config, Console};
-use t_console::{SSHPty, SerialPty, VNCClient, VNCEventReq, VNCEventRes};
+use t_console::{SSHPts, SerialTty, VNCClient, VNCEventReq, VNCEventRes};
 use tracing::{error, info, warn};
 
 #[derive(Clone)]
@@ -53,8 +53,8 @@ pub struct Server {
 
     stop_rx: mpsc::Receiver<mpsc::Sender<()>>,
 
-    ssh_client: AMOption<SSHPty>,
-    serial_client: AMOption<SerialPty>,
+    ssh_client: AMOption<SSHPts>,
+    serial_client: AMOption<SerialTty>,
     vnc_client: AMOption<VNCClient>,
 }
 
@@ -95,13 +95,13 @@ impl Server {
         info!(msg = "init...");
 
         let serial_client = if _serial.enable {
-            Some(SerialPty::new(_serial))
+            Some(SerialTty::new(_serial))
         } else {
             None
         };
 
         let ssh_client = if _ssh.enable {
-            Some(SSHPty::new(_ssh))
+            Some(SSHPts::new(_ssh))
         } else {
             None
         };

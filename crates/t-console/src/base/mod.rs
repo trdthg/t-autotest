@@ -1,2 +1,2 @@
 pub mod evloop;
-pub mod pty;
+pub mod tty;

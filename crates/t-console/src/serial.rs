@@ -1,12 +1,12 @@
 use crate::base::evloop::{EvLoopCtl, Req};
-use crate::base::pty::Pty;
+use crate::base::tty::Tty;
 use crate::term::Term;
 use crate::ConsoleError;
 use std::{thread::sleep, time::Duration};
 use tracing::error;
 use tracing::{debug, info};
 
-pub struct SerialPty {
+pub struct SerialTty {
     _config: t_config::ConsoleSerial,
     inner: SerialClient<crate::VT102>,
     history: String,
@@ -14,7 +14,7 @@ pub struct SerialPty {
 
 type Result<T> = std::result::Result<T, ConsoleError>;
 
-impl SerialPty {
+impl SerialTty {
     pub fn new(c: t_config::ConsoleSerial) -> Self {
         let inner = Self::connect_from_serial_config(&c);
 
@@ -48,7 +48,7 @@ impl SerialPty {
     }
 
     pub fn tty(&self) -> String {
-        self.inner.tty.clone()
+        self.inner.path.clone()
     }
 
     pub fn history(&mut self) -> String {
@@ -83,14 +83,14 @@ impl SerialPty {
     }
 
     pub fn write_string(&mut self, s: &str) -> Result<()> {
-        self.do_with_reconnect(|c| c.inner.ctl.write_string(s))?;
+        self.do_with_reconnect(|c| c.inner.tty.write_string(s))?;
         Ok(())
     }
 
     pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
         // wait for prompt show, cmd may write too fast before prompt show, which will broken regex
         sleep(Duration::from_millis(70));
-        self.do_with_reconnect(|c| c.inner.ctl.exec_global(timeout, cmd))
+        self.do_with_reconnect(|c| c.inner.tty.exec_global(timeout, cmd))
     }
 
     pub fn wait_string_ntimes(
@@ -99,13 +99,13 @@ impl SerialPty {
         pattern: &str,
         repeat: usize,
     ) -> Result<String> {
-        self.do_with_reconnect(|c| c.inner.ctl.wait_string_ntimes(timeout, pattern, repeat))
+        self.do_with_reconnect(|c| c.inner.tty.wait_string_ntimes(timeout, pattern, repeat))
     }
 }
 
-pub(crate) struct SerialClient<T: Term> {
-    pub ctl: Pty<T>,
-    pub tty: String,
+struct SerialClient<T: Term> {
+    pub tty: Tty<T>,
+    pub path: String,
 }
 
 impl<T> Drop for SerialClient<T>
@@ -114,7 +114,7 @@ where
 {
     fn drop(&mut self) {
         // try logout
-        self.ctl.send(Req::Write(vec![0x04])).unwrap();
+        self.tty.send(Req::Write(vec![0x04])).unwrap();
     }
 }
 
@@ -139,8 +139,8 @@ where
             .expect("connect to serialport failed");
 
         let mut res = Self {
-            ctl: Pty::new(EvLoopCtl::new(port)),
-            tty: "".to_string(),
+            tty: Tty::new(EvLoopCtl::new(port)),
+            path: "".to_string(),
         };
 
         if let Some((username, password)) = auth {
@@ -151,7 +151,7 @@ where
 
             info!(msg = "serial waiting login");
             if let Err(e) = res
-                .ctl
+                .tty
                 .wait_string_ntimes(Duration::from_secs(30), "login", 1)
             {
                 panic!("serial login wait prompt failed: {}", e);
@@ -161,8 +161,8 @@ where
             res.login(username.as_ref(), password.as_ref());
 
             info!(msg = "serial get tty");
-            if let Ok(tty) = res.ctl.exec_global(Duration::from_secs(10), "tty") {
-                res.tty = tty.1;
+            if let Ok(tty) = res.tty.exec_global(Duration::from_secs(10), "tty") {
+                res.path = tty.1;
             } else {
                 panic!("serial get tty failed")
             }
@@ -172,12 +172,12 @@ where
     }
 
     pub fn tty(&self) -> String {
-        self.tty.to_owned()
+        self.path.to_owned()
     }
 
     fn logout(&mut self) -> Result<()> {
         // logout
-        self.ctl
+        self.tty
             .write(b"\x04\n")
             .map_err(|_e| ConsoleError::ConnectionBroken)?;
         sleep(Duration::from_millis(5000));
@@ -197,12 +197,12 @@ where
     }
 
     pub fn history(&self) -> String {
-        T::parse_and_strip(&self.ctl.history())
+        T::parse_and_strip(&self.tty.history())
     }
 
     pub fn write_string(&mut self, s: &str) -> Result<()> {
         sleep(Duration::from_millis(100));
-        self.ctl
+        self.tty
             .write_string(s)
             .map_err(|_| ConsoleError::Timeout)?;
         Ok(())
@@ -306,7 +306,7 @@ mod test {
             for cmd in cmds.iter() {
                 trace!(cmd = cmd.0);
                 let res = serial
-                    .ctl
+                    .tty
                     .exec_global(Duration::from_secs(1), cmd.0)
                     .unwrap();
                 assert_eq!(res.0, 0);

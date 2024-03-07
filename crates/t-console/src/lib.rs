@@ -6,8 +6,8 @@ mod vnc;
 
 use std::fmt::Display;
 
-pub use serial::SerialPty;
-pub use ssh::SSHPty;
+pub use serial::SerialTty;
+pub use ssh::SSHPts;
 pub use term::*;
 pub use vnc::{Rect, VNCClient, VNCError, VNCEventReq, VNCEventRes, PNG};
 

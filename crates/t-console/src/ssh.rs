@@ -1,5 +1,5 @@
 use crate::base::evloop::EvLoopCtl;
-use crate::base::pty::Pty;
+use crate::base::tty::Tty;
 use crate::term::Term;
 use crate::ConsoleError;
 use std::net::TcpStream;
@@ -17,25 +17,25 @@ pub enum SSHAuthAuth<P: AsRef<Path>> {
     Password(String),
 }
 
-pub struct SSHPty {
+pub struct SSHPts {
     c: t_config::ConsoleSSH,
     inner: SSHClient<crate::Xterm>,
     history: String,
 }
 
-impl SSHPty {
+impl SSHPts {
     pub fn new(c: t_config::ConsoleSSH) -> Self {
         let mut inner = Self::connect_from_ssh_config(&c);
 
         debug!(msg = "ssh getting tty...");
-        let Ok((code, tty)) = inner.ctl.exec_global(Duration::from_secs(10), "tty") else {
+        let Ok((code, tty)) = inner.pts.exec_global(Duration::from_secs(10), "tty") else {
             panic!("ssh get tty failed");
         };
         if code != 0 {
             panic!("get tty failed");
         }
-        inner.tty = tty;
-        info!(msg = "ssh client tty", tty = inner.tty.trim());
+        inner.pts_file = tty;
+        info!(msg = "ssh client tty", tty = inner.pts_file.trim());
 
         Self {
             c,
@@ -81,7 +81,7 @@ impl SSHPty {
     }
 
     pub fn tty(&self) -> String {
-        self.inner.tty.clone()
+        self.inner.pts_file.clone()
     }
 
     pub fn history(&mut self) -> String {
@@ -133,14 +133,14 @@ impl SSHPty {
 
     pub fn write_string(&mut self, s: &str) -> Result<()> {
         sleep(Duration::from_millis(100));
-        self.do_with_reconnect(|c| c.inner.ctl.write_string(s))?;
+        self.do_with_reconnect(|c| c.inner.pts.write_string(s))?;
         Ok(())
     }
 
     pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
         // "echo {}\n", \n may lost if no sleep
         sleep(Duration::from_millis(100));
-        self.do_with_reconnect(|c| c.inner.ctl.exec_global(timeout, cmd))
+        self.do_with_reconnect(|c| c.inner.pts.exec_global(timeout, cmd))
     }
 
     pub fn wait_string_ntimes(
@@ -149,7 +149,7 @@ impl SSHPty {
         pattern: &str,
         repeat: usize,
     ) -> Result<String> {
-        self.do_with_reconnect(|c| c.inner.ctl.wait_string_ntimes(timeout, pattern, repeat))
+        self.do_with_reconnect(|c| c.inner.pts.wait_string_ntimes(timeout, pattern, repeat))
     }
 
     pub fn upload_file(&mut self, remote_path: impl AsRef<Path>) {
@@ -164,9 +164,9 @@ impl SSHPty {
 }
 
 struct SSHClient<T: Term> {
-    pub session: ssh2::Session,
-    pub ctl: Pty<T>,
-    pub tty: String,
+    session: ssh2::Session,
+    pts: Tty<T>,
+    pts_file: String,
 }
 
 impl<Tm> SSHClient<Tm>
@@ -209,15 +209,15 @@ where
 
         let res = Self {
             session: sess,
-            ctl: Pty::new(EvLoopCtl::new(channel)),
-            tty: "".to_string(),
+            pts: Tty::new(EvLoopCtl::new(channel)),
+            pts_file: "".to_string(),
         };
 
         Ok(res)
     }
 
     pub fn history(&self) -> String {
-        Tm::parse_and_strip(&self.ctl.history())
+        Tm::parse_and_strip(&self.pts.history())
     }
 }
 
@@ -231,9 +231,9 @@ mod test {
         t_config::load_config_from_file(f).map(Some).unwrap()
     }
 
-    fn get_ssh_client() -> Option<SSHPty> {
+    fn get_ssh_client() -> Option<SSHPts> {
         if let Some(c) = get_config_from_file() {
-            return Some(SSHPty::new(c.console.ssh));
+            return Some(SSHPts::new(c.console.ssh));
         }
         None
     }

@@ -6,7 +6,7 @@ use pyo3::{
 use std::{env, time::Duration};
 use t_binding::api;
 use t_config::{Config, ConsoleSSH};
-use t_console::SSHPty;
+use t_console::SSHPts;
 use t_runner::Driver as InnerDriver;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
@@ -174,13 +174,13 @@ impl Driver {
 
 #[pyclass]
 struct DriverSSH {
-    inner: SSHPty,
+    inner: SSHPts,
 }
 
 impl DriverSSH {
     pub fn new(c: ConsoleSSH) -> Self {
         Self {
-            inner: SSHPty::new(c),
+            inner: SSHPts::new(c),
         }
     }
 }

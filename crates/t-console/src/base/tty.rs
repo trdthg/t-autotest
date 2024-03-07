@@ -10,7 +10,7 @@ use super::evloop::{EvLoopCtl, Req, Res};
 
 type Result<T> = std::result::Result<T, ConsoleError>;
 
-pub struct Pty<T: Term> {
+pub struct Tty<T: Term> {
     ctl: EvLoopCtl,
     history: Vec<u8>,
     last_buffer_start: usize,
@@ -36,7 +36,7 @@ enum ConsumeAction<T> {
     Continue,
 }
 
-impl<Tm> Pty<Tm>
+impl<Tm> Tty<Tm>
 where
     Tm: Term,
 {
@@ -52,6 +52,7 @@ where
         }
     }
 
+    #[allow(unused)]
     pub fn take_stream(&mut self) -> MsgStream {
         let Some(rx) = self.rx.take() else {
             panic!("stream should only be taken once");
