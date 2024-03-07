@@ -939,7 +939,7 @@ dependencies = [
 
 [[package]]
 name = "pyautotest"
-version = "0.2.0-rc4"
+version = "0.3.0"
 dependencies = [
  "ctrlc",
  "pyo3",
@@ -1464,7 +1464,7 @@ dependencies = [
 
 [[package]]
 name = "t-runner"
-version = "0.2.0-rc4"
+version = "0.3.0"
 dependencies = [
  "atty",
  "clap",
