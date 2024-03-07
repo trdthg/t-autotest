@@ -29,6 +29,7 @@ pub enum MsgReq {
     WaitStringGlobal {
         console: Option<TextConsole>,
         s: String,
+        n: i32,
         timeout: Duration,
     },
     // vnc
@@ -56,5 +57,6 @@ pub enum MsgRes {
     Done,
     ConfigValue(Option<String>),
     ScriptRun(Result<(i32, String), MsgResError>),
+    Error(MsgResError),
     AssertScreen { similarity: i32, ok: bool },
 }

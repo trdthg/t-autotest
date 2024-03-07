@@ -11,10 +11,8 @@ use std::{
     time::{self, Duration},
 };
 use t_binding::{MsgReq, MsgRes, MsgResError};
-use t_config::{Config, Console, ConsoleSSHAuthType};
-use t_console::{
-    SSHAuthAuth, SSHClient, SerialClient, VNCClient, VNCEventReq, VNCEventRes, Xterm, VT102,
-};
+use t_config::{Config, Console};
+use t_console::{Serial, VNCEventReq, VNCEventRes, SSH, VNC};
 use tracing::{error, info, warn};
 
 #[derive(Clone)]
@@ -55,16 +53,16 @@ pub struct Server {
 
     stop_rx: mpsc::Receiver<mpsc::Sender<()>>,
 
-    ssh_client: AMOption<SSHClient<Xterm>>,
-    serial_client: AMOption<SerialClient<VT102>>,
-    vnc_client: AMOption<VNCClient>,
+    ssh_client: AMOption<SSH>,
+    serial_client: AMOption<Serial>,
+    vnc_client: AMOption<VNC>,
 }
 
-pub struct ServerCtl {
+pub struct ServerClient {
     stop_tx: mpsc::Sender<mpsc::Sender<()>>,
 }
 
-impl ServerCtl {
+impl ServerClient {
     pub fn stop(&self) {
         let (tx, rx) = mpsc::channel();
         if let Err(e) = self.stop_tx.send(tx) {
@@ -75,12 +73,12 @@ impl ServerCtl {
 }
 
 impl Server {
-    pub fn new(config: Config) -> (Self, ServerCtl) {
+    pub fn new(c: Config) -> (Self, ServerClient) {
         // create folder if not exists
         let folders = vec![
-            Some(config.needle_dir.clone()),
-            Some(config.log_dir.clone()),
-            config.console.vnc.screenshot_dir.clone(),
+            Some(c.needle_dir.clone()),
+            Some(c.log_dir.clone()),
+            c.console.vnc.screenshot_dir.clone(),
         ];
         folders.iter().flatten().for_each(|f| {
             if fs::metadata(f).is_err() {
@@ -92,64 +90,25 @@ impl Server {
             ssh: _ssh,
             serial: _serial,
             vnc: _vnc,
-        } = config.console.clone();
+        } = c.console.clone();
 
         info!(msg = "init...");
 
         let serial_client = if _serial.enable {
-            info!(msg = "init serial...");
-
-            let auth = if _serial.auto_login {
-                Some((
-                    _serial.username.clone().unwrap(),
-                    _serial.password.clone().unwrap(),
-                ))
-            } else {
-                None
-            };
-
-            let serial_console =
-                SerialClient::connect(_serial.serial_file.clone(), _serial.bund_rate, auth)
-                    .expect("init serial connection failed");
-            info!(msg = "init serial done");
-            Some(serial_console)
+            Some(Serial::new(_serial))
         } else {
             None
         };
 
         let ssh_client = if _ssh.enable {
-            info!(msg = "init ssh...");
-            let auth = match _ssh.auth.r#type {
-                ConsoleSSHAuthType::PrivateKey => SSHAuthAuth::PrivateKey(
-                    _ssh.auth.private_key.clone().unwrap_or(
-                        home::home_dir()
-                            .map(|mut x| {
-                                x.push(Path::new(".ssh/id_rsa"));
-                                x.display().to_string()
-                            })
-                            .unwrap(),
-                    ),
-                ),
-                ConsoleSSHAuthType::Password => {
-                    SSHAuthAuth::Password(_ssh.auth.password.clone().unwrap())
-                }
-            };
-            let ssh_client = SSHClient::connect(
-                _ssh.timeout,
-                &auth,
-                _ssh.username.clone(),
-                format!("{}:{}", _ssh.host, _ssh.port),
-            )
-            .unwrap_or_else(|_| panic!("init ssh connection failed: {:?}", auth));
-            info!(msg = "init ssh done");
-            Some(ssh_client)
+            Some(SSH::new(_ssh))
         } else {
             None
         };
 
         let vnc_client = if _vnc.enable {
             info!(msg = "init vnc...");
-            let vnc_client = VNCClient::connect(
+            let vnc_client = VNC::connect(
                 format!("{}:{}", _vnc.host, _vnc.port),
                 _vnc.password.clone(),
                 _vnc.screenshot_dir,
@@ -168,7 +127,7 @@ impl Server {
 
         (
             Self {
-                config,
+                config: c,
 
                 msg_rx,
 
@@ -178,7 +137,7 @@ impl Server {
                 serial_client: AMOption::new(serial_client),
                 vnc_client: AMOption::new(vnc_client),
             },
-            ServerCtl { stop_tx },
+            ServerClient { stop_tx },
         )
     }
 
@@ -186,10 +145,14 @@ impl Server {
         // start script engine if in case mode
         info!(msg = "start msg handler thread");
 
-        let config = self.config.clone();
-        let ssh_client = &self.ssh_client;
-        let serial_client = &self.serial_client;
-        let vnc_client = &self.vnc_client;
+        let Self {
+            config,
+            msg_rx: _,
+            stop_rx: _,
+            ssh_client,
+            serial_client,
+            vnc_client,
+        } = self;
 
         let _ssh_tty = ssh_client.map_ref(|c| c.tty());
         let serial_tty = serial_client.map_ref(|c| c.tty());
@@ -229,8 +192,8 @@ impl Server {
                     console,
                     timeout,
                 } => {
-                    let res = match console {
-                        None if serial_client.is_some() && ssh_client.is_some() => {
+                    let res = match (console, ssh_client.is_some(), serial_client.is_some()) {
+                        (None, true, true) => {
                             let serial_tty = serial_tty.as_ref().unwrap();
                             info!(msg = "both terminal");
                             let key = nanoid::nanoid!(6);
@@ -267,69 +230,56 @@ impl Server {
                             res
                         }
                         // None if ssh_client.is_some() && serial_client.is_some() => {}
-                        None | Some(t_binding::TextConsole::Serial) if serial_client.is_some() => {
-                            serial_client
-                                .map_mut(|c| c.exec_global(timeout, &cmd))
-                                .unwrap_or(Ok((1, "no serial".to_string())))
-                                .map_err(|_| MsgResError::Timeout)
-                        }
-                        None | Some(t_binding::TextConsole::SSH) if ssh_client.is_some() => {
-                            ssh_client
-                                .map_mut(|c| c.exec_global(timeout, &cmd))
-                                .unwrap_or(Ok((-1, "no ssh".to_string())))
-                                .map_err(|_| MsgResError::Timeout)
-                        }
+                        (None | Some(t_binding::TextConsole::Serial), _, true) => serial_client
+                            .map_mut(|c| c.exec_global(timeout, &cmd))
+                            .unwrap_or(Ok((1, "no serial".to_string())))
+                            .map_err(|_| MsgResError::Timeout),
+                        (None | Some(t_binding::TextConsole::SSH), true, _) => ssh_client
+                            .map_mut(|c| c.exec_global(timeout, &cmd))
+                            .unwrap_or(Ok((-1, "no ssh".to_string())))
+                            .map_err(|_| MsgResError::Timeout),
                         _ => Err(MsgResError::String("no console supported".to_string())),
                     };
                     MsgRes::ScriptRun(res)
                 }
                 MsgReq::WriteStringGlobal { console, s } => {
-                    match console {
-                        Some(t_binding::TextConsole::SSH) => {
-                            let client = ssh_client;
-                            client
-                                .map_mut(|c| c.write_string(&s))
-                                .expect("no ssh")
-                                .map_err(|_| MsgResError::Timeout)
-                                .unwrap();
-                        }
-                        Some(t_binding::TextConsole::Serial) => {
-                            let client = serial_client;
-                            client
-                                .map_mut(|c| c.write_string(&s))
-                                .expect("no serial")
-                                .map_err(|_| MsgResError::Timeout)
-                                .unwrap();
-                        }
-                        None => unimplemented!(),
+                    if let Err(e) = match (console, ssh_client.is_some(), serial_client.is_some()) {
+                        (None | Some(t_binding::TextConsole::Serial), _, true) => serial_client
+                            .map_mut(|c| c.write_string(&s))
+                            .expect("no serial")
+                            .map_err(|_| MsgResError::Timeout),
+                        (None | Some(t_binding::TextConsole::SSH), true, _) => ssh_client
+                            .map_mut(|c| c.write_string(&s))
+                            .expect("no ssh")
+                            .map_err(|_| MsgResError::Timeout),
+                        _ => Err(MsgResError::String("no console supported".to_string())),
+                    } {
+                        MsgRes::Error(e)
+                    } else {
+                        MsgRes::Done
                     }
-                    MsgRes::Done
                 }
                 MsgReq::WaitStringGlobal {
                     console,
                     s,
+                    n,
                     timeout,
                 } => {
-                    match console {
-                        Some(t_binding::TextConsole::SSH) => {
-                            let client = ssh_client;
-                            client
-                                .map_mut(|c| c.wait_string_ntimes(timeout, &s, 1))
-                                .expect("no ssh")
-                                .map_err(|_| MsgResError::Timeout)
-                                .unwrap();
-                        }
-                        Some(t_binding::TextConsole::Serial) => {
-                            let client = serial_client;
-                            client
-                                .map_mut(|c| c.wait_string_ntimes(timeout, &s, 1))
-                                .expect("no serial")
-                                .map_err(|_| MsgResError::Timeout)
-                                .unwrap();
-                        }
-                        None => unimplemented!(),
+                    if let Err(e) = match (console, ssh_client.is_some(), serial_client.is_some()) {
+                        (None | Some(t_binding::TextConsole::Serial), _, true) => serial_client
+                            .map_mut(|c| c.wait_string_ntimes(timeout, &s, n as usize))
+                            .expect("no serial")
+                            .map_err(|_| MsgResError::Timeout),
+                        (None | Some(t_binding::TextConsole::SSH), true, _) => ssh_client
+                            .map_mut(|c| c.wait_string_ntimes(timeout, &s, n as usize))
+                            .expect("no ssh")
+                            .map_err(|_| MsgResError::Timeout),
+                        _ => Err(MsgResError::String("no console supported".to_string())),
+                    } {
+                        MsgRes::Error(e)
+                    } else {
+                        MsgRes::Done
                     }
-                    MsgRes::Done
                 }
                 MsgReq::AssertScreen {
                     tag,
@@ -370,9 +320,8 @@ impl Server {
                     }
                 }
                 MsgReq::MouseMove { x, y } => {
-                    let client = vnc_client;
                     let (tx, rx) = mpsc::channel();
-                    client
+                    vnc_client
                         .map_ref(|c| c.event_tx.send((VNCEventReq::MouseMove(x, y), tx)))
                         .unwrap()
                         .unwrap();
@@ -422,14 +371,14 @@ impl Server {
             let mut log_path = PathBuf::new();
             log_path.push(log_dir);
             log_path.push("ssh_full_log.txt");
-            let history = self.ssh_client.map_ref(|c| c.dump_history()).unwrap();
+            let history = self.ssh_client.map_mut(|c| c.history()).unwrap();
             fs::write(log_path, history).unwrap();
             info!(msg = "collecting ssh log done");
         }
 
         if self.config.console.serial.enable {
             info!(msg = "collecting serialport log...");
-            let history = self.serial_client.map_ref(|c| c.dump_history()).unwrap();
+            let history = self.serial_client.map_mut(|c| c.history()).unwrap();
             let mut log_path = PathBuf::new();
             log_path.push(log_dir);
             log_path.push("serial_full_log.txt");

@@ -1,26 +1,27 @@
 use crate::engine::EngineClient;
 use crate::server::Server;
-use crate::{engine::Engine, server::ServerCtl};
+use crate::{engine::Engine, server::ServerClient};
 use std::sync::mpsc;
 use std::thread;
 use t_config::Config;
+use t_console::SSH;
 
-pub struct Runner {
-    _config: Config,
+pub struct Driver {
+    pub config: Config,
     s: Option<Server>,
     s_tx: mpsc::Sender<Server>,
     s_rx: mpsc::Receiver<Server>,
-    c: ServerCtl,
+    c: ServerClient,
     e: Option<Engine>,
     ec: Option<EngineClient>,
 }
 
-impl Runner {
+impl Driver {
     pub fn new(config: Config) -> Self {
         let (s, c) = Server::new(config.clone());
         let (tx, rx) = mpsc::channel();
         Self {
-            _config: config,
+            config,
             s: Some(s),
             s_rx: rx,
             s_tx: tx,
@@ -59,6 +60,11 @@ impl Runner {
         self
     }
 
+    pub fn reconnect(&mut self) -> &mut Self {
+        // TODO
+        self
+    }
+
     pub fn stop(&mut self) -> &mut Self {
         if let Some(c) = self.ec.as_mut() {
             c.stop();
@@ -66,6 +72,7 @@ impl Runner {
         self.c.stop();
         let server = self.s_rx.recv().unwrap();
         self.s = Some(server);
+        self.dump_log();
         self
     }
 
@@ -76,10 +83,14 @@ impl Runner {
         self
     }
 
-    pub fn dump_log(&mut self) -> &mut Self {
+    fn dump_log(&mut self) -> &mut Self {
         if let Some(s) = self.s.as_ref() {
             s.dump_log();
         }
         self
+    }
+
+    pub fn new_ssh(&mut self) -> SSH {
+        SSH::new(self.config.console.ssh.clone())
     }
 }

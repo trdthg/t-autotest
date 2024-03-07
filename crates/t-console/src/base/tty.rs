@@ -1,32 +1,62 @@
+use super::evloop::{EvLoopCtl, Req, Res};
+use crate::{term::Term, ConsoleError};
 use std::{
     marker::PhantomData,
     sync::mpsc,
     time::{Duration, Instant},
 };
-
-use anyhow::Result;
 use tracing::{debug, error, info};
 
-use crate::{term::Term, EvLoopCtl, Req, Res};
+type Result<T> = std::result::Result<T, ConsoleError>;
 
-pub struct BufEvLoopCtl<T: Term> {
+pub struct Tty<T: Term> {
     ctl: EvLoopCtl,
     history: Vec<u8>,
     last_buffer_start: usize,
     phantom: PhantomData<T>,
+    rx: Option<mpsc::Receiver<Vec<u8>>>,
+    tx: mpsc::Sender<Vec<u8>>,
 }
 
-impl<Tm> BufEvLoopCtl<Tm>
+pub struct MsgStream {
+    inner: mpsc::Receiver<Vec<u8>>,
+}
+
+impl Iterator for MsgStream {
+    type Item = Vec<u8>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.recv().ok()
+    }
+}
+
+enum ConsumeAction<T> {
+    BreakValue(T),
+    Continue,
+}
+
+impl<Tm> Tty<Tm>
 where
     Tm: Term,
 {
     pub fn new(ctl: EvLoopCtl) -> Self {
+        let (tx, rx) = mpsc::channel();
         Self {
             ctl,
             history: Vec::new(),
             last_buffer_start: 0,
             phantom: PhantomData {},
+            tx,
+            rx: Some(rx),
         }
+    }
+
+    #[allow(unused)]
+    pub fn take_stream(&mut self) -> MsgStream {
+        let Some(rx) = self.rx.take() else {
+            panic!("stream should only be taken once");
+        };
+        MsgStream { inner: rx }
     }
 
     pub fn history(&self) -> Vec<u8> {
@@ -37,17 +67,22 @@ where
         }
     }
 
-    pub fn send(&self, req: Req) -> Result<Res, mpsc::RecvError> {
+    pub fn send(&self, req: Req) -> std::result::Result<Res, mpsc::RecvError> {
         self.ctl.send(req)
     }
 
-    pub fn write(&mut self, s: &[u8]) {
-        self.ctl.send(Req::Write(s.to_vec())).unwrap();
+    pub fn write(&mut self, s: &[u8]) -> Result<()> {
+        self.ctl
+            .send(Req::Write(s.to_vec()))
+            .map_err(|_| ConsoleError::ConnectionBroken)?;
+        Ok(())
     }
 
     pub fn write_string(&mut self, s: &str) -> Result<()> {
         debug!(msg = "write_string", s = s);
-        self.ctl.send(Req::Write(s.as_bytes().to_vec())).unwrap();
+        self.ctl
+            .send(Req::Write(s.as_bytes().to_vec()))
+            .map_err(|_| ConsoleError::ConnectionBroken)?;
         Ok(())
     }
 
@@ -160,6 +195,9 @@ where
                         continue;
                     }
 
+                    // send to read time receiver
+                    let _ = self.tx.send(recv.to_vec());
+
                     // save to history
                     self.history.extend(recv);
                     buffer_len += recv.len();
@@ -190,21 +228,19 @@ where
                 }
                 Ok(t) => {
                     error!(msg = "invalid msg varient", t = ?t);
-                    panic!();
+                    panic!("invalid msg varient");
                 }
-                Err(_e) => {
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
                     error!(msg = "recv timeout");
                     break;
                 }
             }
         }
-        Err(anyhow::anyhow!("timeout"))
+        Err(ConsoleError::ConnectionBroken)
     }
-}
-
-enum ConsumeAction<T> {
-    BreakValue(T),
-    Continue,
 }
 
 fn count_substring(s: &str, substring: &str, n: usize) -> bool {

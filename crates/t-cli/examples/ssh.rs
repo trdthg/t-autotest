@@ -1,6 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
-use t_console::{SSHAuthAuth, SSHClient, Xterm};
+use t_config::{ConsoleSSH, ConsoleSSHAuth};
+use t_console::SSH;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -25,13 +26,20 @@ fn main() {
     );
 
     // Session is a wrapper around a russh client, defined down below
-    let mut ssh: SSHClient<Xterm> = SSHClient::connect(
-        None,
-        &SSHAuthAuth::PrivateKey(cli.private_key.unwrap_or(default_private_key())),
-        cli.username.unwrap_or(default_username()),
-        (cli.host, cli.port),
-    )
-    .unwrap();
+    let mut ssh = SSH::new(ConsoleSSH {
+        enable: true,
+        host: cli.host,
+        port: cli.port,
+        username: cli.username.unwrap_or_else(|| "root".to_string()),
+        auth: ConsoleSSHAuth {
+            r#type: t_config::ConsoleSSHAuthType::PrivateKey,
+            private_key: cli
+                .private_key
+                .map(|p| p.as_path().to_string_lossy().to_string()),
+            password: None,
+        },
+        timeout: None,
+    });
     info!("Connected");
 
     let command_str = &cli

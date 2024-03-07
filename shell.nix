@@ -14,8 +14,8 @@ pkgs.mkShell {
     SDL2.dev
 
     ### dev tool
-    rust-analyzer
-    python310
+    rustup
+    python311
     socat
     minicom
     quickjs

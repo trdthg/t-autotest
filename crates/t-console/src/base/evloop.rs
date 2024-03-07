@@ -5,22 +5,16 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Result;
 use image::EncodableLayout;
-use tracing::{debug, error, info};
-
-mod serial;
-mod ssh;
-mod text_console;
-
-pub use serial::*;
-pub use ssh::*;
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug)]
 pub enum Req {
     Write(Vec<u8>),
     Read,
     Dump,
+    #[allow(unused)]
+    Stop,
 }
 
 #[derive(Debug)]
@@ -39,7 +33,7 @@ impl EvLoopCtl {
         Self { req_tx }
     }
 
-    fn send(&self, req: Req) -> Result<Res, mpsc::RecvError> {
+    pub fn send(&self, req: Req) -> Result<Res, mpsc::RecvError> {
         let (tx, rx) = channel();
         if let Err(e) = self.req_tx.send((req, tx)) {
             error!("evloop receiver closed, connection may be lost: {}", e);
@@ -48,7 +42,7 @@ impl EvLoopCtl {
         rx.recv()
     }
 
-    fn send_timeout(&self, req: Req, timeout: Duration) -> Result<Res, mpsc::RecvTimeoutError> {
+    pub fn send_timeout(&self, req: Req, timeout: Duration) -> Result<Res, mpsc::RecvTimeoutError> {
         let (tx, rx) = channel();
         if let Err(e) = self.req_tx.send((req, tx)) {
             error!("evloop receiver closed, connection may be lost: {}", e);
@@ -114,7 +108,9 @@ where
                         self.history.extend(received);
                     }
                 }
-                Err(e) if e.kind() == io::ErrorKind::TimedOut => {}
+                Err(e) if e.kind() == io::ErrorKind::TimedOut => {
+                    // ignore timeout
+                }
                 Err(e) => {
                     error!(msg = "connection may be broken", reason = ?e);
                     break;
@@ -124,17 +120,23 @@ where
             // handle user read, write request
             match self.read_rx.try_recv() {
                 Ok((req, tx)) => {
+                    if matches!(req, Req::Stop) {
+                        break 'out;
+                    }
                     let Ok(res) = self.handle_req(req, true) else {
                         info!("stopped while blocking");
                         break 'out;
                     };
                     if let Err(e) = tx.send(res) {
-                        info!("evloop stopped while sending response: {}", e);
-                        break;
+                        warn!("req sender side closed before recv response: {}", e);
+                        continue;
                     }
                 }
-                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Empty) => {
+                    // ignore empty
+                }
                 Err(mpsc::TryRecvError::Disconnected) => {
+                    // sender closed, evloop should stop here
                     break;
                 }
             }
@@ -144,6 +146,10 @@ where
     // block until receive new buffer, try receive only once
     fn handle_req(&mut self, req: Req, blocking: bool) -> Result<Res, ()> {
         match req {
+            Req::Stop => {
+                // should be handled before
+                Ok(Res::Done)
+            }
             Req::Write(msg) => {
                 if let Err(e) = self.conn.write_all(msg.as_bytes()) {
                     error!(msg = "write failed, connection may be broken", reason = ?e);

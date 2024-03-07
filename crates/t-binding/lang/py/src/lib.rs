@@ -3,14 +3,16 @@ use pyo3::{
     exceptions::{self, PyException, PyTypeError},
     prelude::*,
 };
-use std::env;
+use std::{env, time::Duration};
 use t_binding::api;
-use t_config::Config;
-use t_runner::Runner;
+use t_config::{Config, ConsoleSSH};
+use t_console::SSH;
+use t_runner::Driver as InnerDriver;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
 pyo3::create_exception!(defaultmodule, StringError, PyException);
+pyo3::create_exception!(defaultmodule, AssertError, PyException);
 pyo3::create_exception!(defaultmodule, TimeoutError, PyException);
 pyo3::create_exception!(defaultmodule, UnexpectedError, PyException);
 
@@ -51,30 +53,31 @@ fn init_logger() {
 
 #[pyclass]
 struct Driver {
-    runner: Runner,
+    inner: InnerDriver,
 }
 
 #[pymethods]
 impl Driver {
     #[new]
     fn __init__(config: String) -> PyResult<Self> {
-        let mut runner = Runner::new(
-            Config::from_toml_str(&config).map_err(|e| StringError::new_err(e.to_string()))?,
-        );
+        let config =
+            Config::from_toml_str(&config).map_err(|e| StringError::new_err(e.to_string()))?;
+        let mut runner = InnerDriver::new(config.clone());
         runner.start();
-        Ok(Self { runner })
+        Ok(Self { inner: runner })
+    }
+
+    // ssh
+    fn new_ssh(&self) -> DriverSSH {
+        DriverSSH::new(self.inner.config.console.ssh.clone())
     }
 
     fn stop(&mut self) {
-        self.runner.stop();
-    }
-
-    fn dump_log(&mut self) {
-        self.runner.dump_log();
+        self.inner.stop();
     }
 
     fn run_script(&mut self, script: String) {
-        self.runner.run_script(script);
+        self.inner.run_script(script);
     }
 
     /// Returns the sum of two numbers.
@@ -106,6 +109,10 @@ impl Driver {
 
     fn write_string(&self, s: String) {
         api::write_string(s);
+    }
+
+    fn wait_string_ntimes(&self, s: String, n: i32, timeout: i32) {
+        api::wait_string_ntimes(s, n, timeout)
     }
 
     // ssh
@@ -166,6 +173,37 @@ impl Driver {
 
     fn mouse_hide(&self) {
         api::vnc_mouse_hide();
+    }
+}
+
+#[pyclass]
+struct DriverSSH {
+    inner: SSH,
+}
+
+impl DriverSSH {
+    pub fn new(c: ConsoleSSH) -> Self {
+        Self { inner: SSH::new(c) }
+    }
+}
+
+#[pymethods]
+impl DriverSSH {
+    fn get_tty(&self) -> String {
+        self.inner.tty()
+    }
+
+    fn assert_script_run(&mut self, cmd: String, timeout: u64) -> PyResult<String> {
+        let Ok(v) = self.inner.exec_global(Duration::from_millis(timeout), &cmd) else {
+            return Err(TimeoutError::new_err("assert script run timeout"));
+        };
+        if v.0 != 0 {
+            return Err(AssertError::new_err(format!(
+                "return code should be 0, but got {}",
+                v.0
+            )));
+        }
+        Ok(v.1)
     }
 }
 

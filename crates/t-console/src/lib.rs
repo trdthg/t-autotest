@@ -1,10 +1,30 @@
-mod evloop;
+mod base;
+mod serial;
+mod ssh;
 mod term;
 mod vnc;
 
-pub use evloop::*;
+use std::fmt::Display;
+
+pub use serial::Serial;
+pub use ssh::SSH;
 pub use term::*;
-pub use vnc::{Rect, VNCClient, VNCError, VNCEventReq, VNCEventRes, PNG};
+pub use vnc::{Rect, VNCError, VNCEventReq, VNCEventRes, PNG, VNC};
+
+#[derive(Debug)]
+pub enum ConsoleError {
+    ConnectionBroken,
+    Timeout,
+}
+
+impl Display for ConsoleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ConsoleError::ConnectionBroken => write!(f, "Connection broken"),
+            ConsoleError::Timeout => write!(f, "Timeout"),
+        }
+    }
+}
 
 // magic string, used for regex extract in ssh or serial output
 #[allow(dead_code)]
