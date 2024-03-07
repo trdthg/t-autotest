@@ -59,7 +59,7 @@ unescaper          = { version = "0.1.4" }
 
 rquickjs = { version = "0.5.1", features = ["macro"] }
 mlua     = { version = "0.9.1", features = ["lua54", "vendored"] }
-pyo3     = { version = "0.20.0", features = ["auto-initialize"] }
+pyo3     = { version = "0.20.0", features = ["auto-initialize", "abi3-py37"] }
 ctrlc    = { version = "3.4.2" }
 
 [profile.dev]

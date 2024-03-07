@@ -21,6 +21,7 @@ crate-type = ["cdylib"]
 [dependencies]
 t-binding = { workspace = true }
 t-config  = { workspace = true }
+t-console  = { workspace = true }
 t-cli     = { workspace = true }
 t-runner  = { workspace = true }
 

@@ -1,32 +1,16 @@
-use crate::{term::Term, EvLoopCtl, Req, Res};
+use crate::{term::Term, ConsoleError};
 use std::{
-    fmt::Display,
     marker::PhantomData,
     sync::mpsc,
     time::{Duration, Instant},
 };
 use tracing::{debug, error, info};
 
-#[derive(Debug)]
-pub enum ConsoleError {
-    Io(std::io::Error),
-    ConnectionBroken,
-    Timeout,
-}
-
-impl Display for ConsoleError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            ConsoleError::Io(e) => write!(f, "IO: {}", e),
-            ConsoleError::ConnectionBroken => write!(f, "Connection broken"),
-            ConsoleError::Timeout => write!(f, "Timeout"),
-        }
-    }
-}
+use super::evloop::{EvLoopCtl, Req, Res};
 
 type Result<T> = std::result::Result<T, ConsoleError>;
 
-pub struct BufEvLoopCtl<T: Term> {
+pub struct Pty<T: Term> {
     ctl: EvLoopCtl,
     history: Vec<u8>,
     last_buffer_start: usize,
@@ -47,7 +31,12 @@ impl Iterator for MsgStream {
     }
 }
 
-impl<Tm> BufEvLoopCtl<Tm>
+enum ConsumeAction<T> {
+    BreakValue(T),
+    Continue,
+}
+
+impl<Tm> Pty<Tm>
 where
     Tm: Term,
 {
@@ -65,7 +54,7 @@ where
 
     pub fn take_stream(&mut self) -> MsgStream {
         let Some(rx) = self.rx.take() else {
-            panic!("already taken");
+            panic!("stream should only be taken once");
         };
         MsgStream { inner: rx }
     }
@@ -239,21 +228,19 @@ where
                 }
                 Ok(t) => {
                     error!(msg = "invalid msg varient", t = ?t);
-                    panic!();
+                    panic!("invalid msg varient");
                 }
-                Err(_e) => {
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
                     error!(msg = "recv timeout");
                     break;
                 }
             }
         }
-        Err(ConsoleError::Timeout)
+        Err(ConsoleError::ConnectionBroken)
     }
-}
-
-enum ConsumeAction<T> {
-    BreakValue(T),
-    Continue,
 }
 
 fn count_substring(s: &str, substring: &str, n: usize) -> bool {

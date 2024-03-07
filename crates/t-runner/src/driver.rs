@@ -1,10 +1,10 @@
 use crate::engine::EngineClient;
 use crate::server::Server;
-use crate::ssh::SSHClient;
 use crate::{engine::Engine, server::ServerClient};
 use std::sync::mpsc;
 use std::thread;
 use t_config::Config;
+use t_console::SSHPty;
 
 pub struct Driver {
     pub config: Config,
@@ -60,6 +60,11 @@ impl Driver {
         self
     }
 
+    pub fn reconnect(&mut self) -> &mut Self {
+        // TODO
+        self
+    }
+
     pub fn stop(&mut self) -> &mut Self {
         if let Some(c) = self.ec.as_mut() {
             c.stop();
@@ -85,7 +90,7 @@ impl Driver {
         self
     }
 
-    pub fn new_ssh(&mut self) -> SSHClient {
-        SSHClient::new(self.config.console.ssh.clone())
+    pub fn new_ssh(&mut self) -> SSHPty {
+        SSHPty::new(self.config.console.ssh.clone())
     }
 }

@@ -15,7 +15,7 @@ pkgs.mkShell {
 
     ### dev tool
     rustup
-    python310
+    python311
     socat
     minicom
     quickjs

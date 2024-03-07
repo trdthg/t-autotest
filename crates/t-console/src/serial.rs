@@ -1,21 +1,111 @@
-use super::text_console::BufEvLoopCtl;
-use crate::{term::Term, EvLoopCtl, Req};
-use std::path::Path;
-use std::thread::sleep;
-use std::time::Duration;
-use t_util::ExecutorError;
-use tracing::info;
+use crate::base::evloop::{EvLoopCtl, Req};
+use crate::base::pty::Pty;
+use crate::term::Term;
+use crate::ConsoleError;
+use std::{thread::sleep, time::Duration};
+use tracing::error;
+use tracing::{debug, info};
 
-pub struct SerialClient<T: Term> {
-    pub ctl: BufEvLoopCtl<T>,
-    pub tty: String,
+pub struct SerialPty {
+    _config: t_config::ConsoleSerial,
+    inner: SerialClient<crate::VT102>,
+    history: String,
 }
 
-#[derive(Debug)]
-pub enum SerialError {
-    ConnectionBroken,
-    Timeout,
-    Stty(ExecutorError),
+type Result<T> = std::result::Result<T, ConsoleError>;
+
+impl SerialPty {
+    pub fn new(c: t_config::ConsoleSerial) -> Self {
+        let inner = Self::connect_from_serial_config(&c);
+
+        Self {
+            _config: c,
+            inner,
+            history: String::new(),
+        }
+    }
+
+    pub fn reconnect(&mut self) {
+        self.history.push_str(self.inner.history().as_str());
+        self.inner = Self::connect_from_serial_config(&self._config)
+    }
+
+    fn connect_from_serial_config(c: &t_config::ConsoleSerial) -> SerialClient<crate::VT102> {
+        if !c.enable {
+            panic!("serial is disabled in config");
+        }
+        info!(msg = "init ssh...");
+        let username = c.username.clone().unwrap_or_default();
+        let password = c.password.clone().unwrap_or_default();
+        let auth = match c.auto_login {
+            true => Some((username.as_str(), password.as_str())),
+            false => None,
+        };
+        let ssh_client = SerialClient::connect(&c.serial_file, c.bund_rate, auth)
+            .unwrap_or_else(|_| panic!("init ssh connection failed: {:?}", auth));
+        info!(msg = "init ssh done");
+        ssh_client
+    }
+
+    pub fn tty(&self) -> String {
+        self.inner.tty.clone()
+    }
+
+    pub fn history(&mut self) -> String {
+        self.history.push_str(self.inner.history().as_str());
+        self.inner.history()
+    }
+
+    fn do_with_reconnect<T>(
+        &mut self,
+        f: impl Fn(&mut Self) -> std::result::Result<T, crate::ConsoleError>,
+    ) -> Result<T> {
+        let mut retry = 3;
+        loop {
+            retry -= 1;
+            if retry == 0 {
+                return Err(ConsoleError::Timeout);
+            }
+
+            match f(self) {
+                Ok(v) => return Ok(v),
+                Err(e) => match e {
+                    crate::ConsoleError::ConnectionBroken => {
+                        self.reconnect();
+                        continue;
+                    }
+                    _ => {
+                        return Err(ConsoleError::Timeout);
+                    }
+                },
+            }
+        }
+    }
+
+    pub fn write_string(&mut self, s: &str) -> Result<()> {
+        self.do_with_reconnect(|c| c.inner.ctl.write_string(s))?;
+        Ok(())
+    }
+
+    pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
+        // wait for prompt show, cmd may write too fast before prompt show, which will broken regex
+        sleep(Duration::from_millis(70));
+        self.do_with_reconnect(|c| c.inner.ctl.exec_global(timeout, cmd))
+    }
+
+    pub fn wait_string_ntimes(
+        &mut self,
+        timeout: Duration,
+        pattern: &str,
+        repeat: usize,
+    ) -> Result<String> {
+        self.do_with_reconnect(|c| c.inner.ctl.wait_string_ntimes(timeout, pattern, repeat))
+    }
+}
+
+pub(crate) struct SerialClient<T: Term> {
+    pub ctl: Pty<T>,
+    pub tty: String,
 }
 
 impl<T> Drop for SerialClient<T>
@@ -28,32 +118,28 @@ where
     }
 }
 
-type Result<T> = std::result::Result<T, SerialError>;
-
 impl<T> SerialClient<T>
 where
     T: Term,
 {
     pub fn connect(file: &str, bund_rate: u32, auth: Option<(&str, &str)>) -> Result<Self> {
-        let path = Path::new(file);
-        if !path.exists() {
-            panic!("serial path not exists");
-        }
-
         // init tty
         // t_util::execute_shell(
         //     format!("stty -F {} {} -echo -icrnl -onlcr -icanon", file, bund_rate).as_str(),
         // )
-        // .map_err(SerialError::Stty)?;
+        // .map_err(ConsoleError::Stty)?;
 
         // connect serial
         let port = serialport::new(file, bund_rate)
             .open()
-            .map_err(|_| SerialError::ConnectionBroken)
-            .unwrap();
+            .map_err(|e| {
+                error!("{}", e);
+                ConsoleError::ConnectionBroken
+            })
+            .expect("connect to serialport failed");
 
         let mut res = Self {
-            ctl: BufEvLoopCtl::new(EvLoopCtl::new(port)),
+            ctl: Pty::new(EvLoopCtl::new(port)),
             tty: "".to_string(),
         };
 
@@ -73,13 +159,13 @@ where
 
             info!(msg = "serial login");
             res.login(username.as_ref(), password.as_ref());
-        }
 
-        info!(msg = "serial get tty");
-        if let Ok(tty) = res.ctl.exec_global(Duration::from_secs(10), "tty") {
-            res.tty = tty.1;
-        } else {
-            panic!("serial get tty failed")
+            info!(msg = "serial get tty");
+            if let Ok(tty) = res.ctl.exec_global(Duration::from_secs(10), "tty") {
+                res.tty = tty.1;
+            } else {
+                panic!("serial get tty failed")
+            }
         }
 
         Ok(res)
@@ -93,7 +179,7 @@ where
         // logout
         self.ctl
             .write(b"\x04\n")
-            .map_err(|_e| SerialError::ConnectionBroken)?;
+            .map_err(|_e| ConsoleError::ConnectionBroken)?;
         sleep(Duration::from_millis(5000));
         Ok(())
     }
@@ -116,7 +202,9 @@ where
 
     pub fn write_string(&mut self, s: &str) -> Result<()> {
         sleep(Duration::from_millis(100));
-        self.ctl.write_string(s).map_err(|_| SerialError::Timeout)?;
+        self.ctl
+            .write_string(s)
+            .map_err(|_| ConsoleError::Timeout)?;
         Ok(())
     }
 }
@@ -126,16 +214,15 @@ mod test {
     use t_config::Config;
     use tracing::trace;
 
-    use crate::{
-        term::{Term, VT102},
-        SerialClient,
-    };
+    use crate::term::{Term, VT102};
     use std::{
         env,
         io::{ErrorKind, Read},
         thread::sleep,
         time::Duration,
     };
+
+    use super::SerialClient;
 
     #[test]
     fn test_serial_boot() {

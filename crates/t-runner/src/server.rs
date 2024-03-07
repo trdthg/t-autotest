@@ -1,4 +1,4 @@
-use crate::{needle::NeedleManager, serial::SerialClient, ssh::SSHClient};
+use crate::needle::NeedleManager;
 use parking_lot::Mutex;
 use std::{
     fs::{self},
@@ -12,7 +12,7 @@ use std::{
 };
 use t_binding::{MsgReq, MsgRes, MsgResError};
 use t_config::{Config, Console};
-use t_console::{VNCClient, VNCEventReq, VNCEventRes};
+use t_console::{SSHPty, SerialPty, VNCClient, VNCEventReq, VNCEventRes};
 use tracing::{error, info, warn};
 
 #[derive(Clone)]
@@ -53,8 +53,8 @@ pub struct Server {
 
     stop_rx: mpsc::Receiver<mpsc::Sender<()>>,
 
-    ssh_client: AMOption<SSHClient>,
-    serial_client: AMOption<SerialClient>,
+    ssh_client: AMOption<SSHPty>,
+    serial_client: AMOption<SerialPty>,
     vnc_client: AMOption<VNCClient>,
 }
 
@@ -95,13 +95,13 @@ impl Server {
         info!(msg = "init...");
 
         let serial_client = if _serial.enable {
-            Some(SerialClient::new(_serial))
+            Some(SerialPty::new(_serial))
         } else {
             None
         };
 
         let ssh_client = if _ssh.enable {
-            Some(SSHClient::new(_ssh))
+            Some(SSHPty::new(_ssh))
         } else {
             None
         };

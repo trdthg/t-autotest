@@ -1,14 +1,9 @@
 mod driver;
 mod engine;
 mod needle;
-mod serial;
 mod server;
-mod ssh;
-
-use std::fmt::Display;
-
 pub use driver::Driver;
-pub use ssh::SSHClient;
+use std::fmt::Display;
 
 pub fn add(left: usize, right: usize) -> usize {
     left + right

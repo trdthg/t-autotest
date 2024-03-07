@@ -946,6 +946,7 @@ dependencies = [
  "t-binding",
  "t-cli",
  "t-config",
+ "t-console",
  "t-runner",
  "tracing",
  "tracing-subscriber",

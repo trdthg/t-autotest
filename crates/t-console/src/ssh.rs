@@ -1,16 +1,29 @@
-use std::{io, path::Path, thread::sleep, time::Duration};
-
+use crate::base::evloop::EvLoopCtl;
+use crate::base::pty::Pty;
+use crate::term::Term;
+use crate::ConsoleError;
+use std::net::TcpStream;
+use std::net::ToSocketAddrs;
+use std::path::Path;
+use std::thread::sleep;
+use std::time::Duration;
 use tracing::{debug, info};
 
-use crate::InteractError;
+type Result<T> = std::result::Result<T, ConsoleError>;
 
-pub struct SSHClient {
+#[derive(Debug)]
+pub enum SSHAuthAuth<P: AsRef<Path>> {
+    PrivateKey(P),
+    Password(String),
+}
+
+pub struct SSHPty {
     c: t_config::ConsoleSSH,
-    inner: t_console::SSHClient<t_console::Xterm>,
+    inner: SSHClient<crate::Xterm>,
     history: String,
 }
 
-impl SSHClient {
+impl SSHPty {
     pub fn new(c: t_config::ConsoleSSH) -> Self {
         let mut inner = Self::connect_from_ssh_config(&c);
 
@@ -36,13 +49,13 @@ impl SSHClient {
         self.inner = Self::connect_from_ssh_config(&self.c)
     }
 
-    fn connect_from_ssh_config(c: &t_config::ConsoleSSH) -> t_console::SSHClient<t_console::Xterm> {
+    fn connect_from_ssh_config(c: &t_config::ConsoleSSH) -> SSHClient<crate::Xterm> {
         if !c.enable {
             panic!("ssh is disabled in config");
         }
         info!(msg = "init ssh...");
         let auth = match c.auth.r#type {
-            t_config::ConsoleSSHAuthType::PrivateKey => t_console::SSHAuthAuth::PrivateKey(
+            t_config::ConsoleSSHAuthType::PrivateKey => SSHAuthAuth::PrivateKey(
                 c.auth.private_key.clone().unwrap_or(
                     home::home_dir()
                         .map(|mut x| {
@@ -53,10 +66,10 @@ impl SSHClient {
                 ),
             ),
             t_config::ConsoleSSHAuthType::Password => {
-                t_console::SSHAuthAuth::Password(c.auth.password.clone().unwrap())
+                SSHAuthAuth::Password(c.auth.password.clone().unwrap())
             }
         };
-        let ssh_client = t_console::SSHClient::connect(
+        let ssh_client = SSHClient::connect(
             c.timeout,
             &auth,
             c.username.clone(),
@@ -77,7 +90,10 @@ impl SSHClient {
     }
 
     // TODO: may blocking
-    pub fn exec_seperate(&mut self, command: &str) -> Result<(i32, String), io::Error> {
+    pub fn exec_seperate(
+        &mut self,
+        command: &str,
+    ) -> std::result::Result<(i32, String), std::io::Error> {
         use std::io::Read;
         let mut exec_ch = self.inner.session.channel_session().unwrap();
 
@@ -92,13 +108,39 @@ impl SSHClient {
         Ok((code.parse::<i32>().unwrap(), buffer))
     }
 
-    pub fn write_string(&mut self, s: &str) -> Result<(), InteractError> {
+    fn do_with_reconnect<T>(&mut self, f: impl Fn(&mut Self) -> Result<T>) -> Result<T> {
+        let mut retry = 3;
+        loop {
+            retry -= 1;
+            if retry == 0 {
+                return Err(ConsoleError::ConnectionBroken);
+            }
+
+            match f(self) {
+                Ok(v) => return Ok(v),
+                Err(e) => match e {
+                    ConsoleError::ConnectionBroken => {
+                        self.reconnect();
+                        continue;
+                    }
+                    _ => {
+                        return Err(ConsoleError::Timeout);
+                    }
+                },
+            }
+        }
+    }
+
+    pub fn write_string(&mut self, s: &str) -> Result<()> {
         sleep(Duration::from_millis(100));
-        self.inner
-            .ctl
-            .write_string(s)
-            .map_err(|_| InteractError::Timeout)?;
+        self.do_with_reconnect(|c| c.inner.ctl.write_string(s))?;
         Ok(())
+    }
+
+    pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
+        // "echo {}\n", \n may lost if no sleep
+        sleep(Duration::from_millis(100));
+        self.do_with_reconnect(|c| c.inner.ctl.exec_global(timeout, cmd))
     }
 
     pub fn wait_string_ntimes(
@@ -106,24 +148,8 @@ impl SSHClient {
         timeout: Duration,
         pattern: &str,
         repeat: usize,
-    ) -> Result<String, InteractError> {
-        self.inner
-            .ctl
-            .wait_string_ntimes(timeout, pattern, repeat)
-            .map_err(|_| InteractError::Timeout)
-    }
-
-    pub fn exec_global(
-        &mut self,
-        timeout: Duration,
-        cmd: &str,
-    ) -> Result<(i32, String), InteractError> {
-        // "echo {}\n", \n may lost if no sleep
-        sleep(Duration::from_millis(100));
-        self.inner
-            .ctl
-            .exec_global(timeout, cmd)
-            .map_err(|_| InteractError::Timeout)
+    ) -> Result<String> {
+        self.do_with_reconnect(|c| c.inner.ctl.wait_string_ntimes(timeout, pattern, repeat))
     }
 
     pub fn upload_file(&mut self, remote_path: impl AsRef<Path>) {
@@ -137,6 +163,64 @@ impl SSHClient {
     }
 }
 
+struct SSHClient<T: Term> {
+    pub session: ssh2::Session,
+    pub ctl: Pty<T>,
+    pub tty: String,
+}
+
+impl<Tm> SSHClient<Tm>
+where
+    Tm: Term,
+{
+    pub fn connect<P: AsRef<Path>, A: ToSocketAddrs>(
+        timeout: Option<Duration>,
+        auth: &SSHAuthAuth<P>,
+        user: impl Into<String>,
+        addrs: A,
+    ) -> std::result::Result<Self, std::io::Error> {
+        let tcp = TcpStream::connect(addrs)?;
+        let mut sess = ssh2::Session::new()?;
+        sess.set_tcp_stream(tcp);
+        sess.handshake()?;
+
+        // never disconnect auto
+        sess.set_timeout(timeout.map(|x| x.as_millis() as u32).unwrap_or(5000));
+
+        match auth {
+            SSHAuthAuth::PrivateKey(private_key) => {
+                sess.userauth_pubkey_file(&user.into(), None, private_key.as_ref(), None)?;
+            }
+            SSHAuthAuth::Password(password) => {
+                sess.userauth_password(&user.into(), password.as_str())?;
+            }
+        }
+        assert!(sess.authenticated());
+        debug!(msg = "ssh auth success");
+
+        // build shell channel
+        let mut channel = sess.channel_session()?;
+        channel
+            .request_pty("xterm", None, Some((80, 24, 0, 0)))
+            .unwrap();
+        channel.shell().unwrap();
+
+        sleep(Duration::from_secs(3));
+
+        let res = Self {
+            session: sess,
+            ctl: Pty::new(EvLoopCtl::new(channel)),
+            tty: "".to_string(),
+        };
+
+        Ok(res)
+    }
+
+    pub fn history(&self) -> String {
+        Tm::parse_and_strip(&self.ctl.history())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -147,9 +231,9 @@ mod test {
         t_config::load_config_from_file(f).map(Some).unwrap()
     }
 
-    fn get_ssh_client() -> Option<SSHClient> {
+    fn get_ssh_client() -> Option<SSHPty> {
         if let Some(c) = get_config_from_file() {
-            return Some(SSHClient::new(c.console.ssh));
+            return Some(SSHPty::new(c.console.ssh));
         }
         None
     }
