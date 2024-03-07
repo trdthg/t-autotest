@@ -16,16 +16,6 @@ class Driver:
         stop the runner
         """
 
-    def dump_log(self):
-        """
-        dump log to log_dir defined in toml config, must stop runner before dump log
-        """
-
-    def run_script(self, script: str):
-        """
-        use engine to run script, should only be used in driver with language engine
-        """
-
     def sleep(self, miles: int):
         """
         sleep for miles, you can use this function to simulate a long running script

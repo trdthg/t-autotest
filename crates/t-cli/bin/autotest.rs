@@ -56,7 +56,6 @@ fn main() {
         }
     }
 
-    let script = fs::read_to_string(cli.script.as_str()).expect("script not exists");
     let ext = Path::new(cli.script.as_str())
         .extension()
         .unwrap()
@@ -65,7 +64,7 @@ fn main() {
 
     Driver::new_with_engine(config, ext)
         .start()
-        .run_script(script)
+        .run_file(cli.script)
         .stop();
 }
 

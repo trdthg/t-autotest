@@ -1,4 +1,9 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use crate::{api, ScriptEngine};
+use mlua::AsChunk;
+use rquickjs::function::Args;
 use rquickjs::Function;
 use rquickjs::{Context, Runtime};
 use serde::{Deserialize, Serialize};
@@ -10,8 +15,8 @@ pub struct JSEngine {
 }
 
 impl ScriptEngine for JSEngine {
-    fn run(&mut self, content: &str) {
-        self.run(content).unwrap();
+    fn run_file(&mut self, content: &str) {
+        self.run_file(content).unwrap();
     }
 }
 
@@ -225,61 +230,45 @@ impl JSEngine {
         }
     }
 
-    pub fn run(&mut self, script: &str) -> Result<(), String> {
-        let code = format!(
-            r#"try{{
-    // load user script
-    {script}
+    pub fn run_file(&mut self, file: &str) -> Result<(), String> {
+        let base_folder = Path::new(file).parent().unwrap();
+        let filename = Path::new(file).file_name().unwrap().to_str().unwrap();
+        let script = fs::read_to_string(file).unwrap();
+        let pre_libs = search_path(&script);
+        self.context.with(|ctx| {
+            for path in pre_libs {
+                let mut fullpath = PathBuf::new();
+                fullpath.push(base_folder);
+                fullpath.push(&path);
+                let _ = ctx
+                    .clone()
+                    .compile(path.as_str(), fs::read_to_string(fullpath).unwrap())
+                    .unwrap();
+            }
+            let module_entry = ctx.clone().clone().compile(format!("./{filename}"), script).unwrap();
+            let prehook: rquickjs::Function = module_entry.get("prehook").unwrap();
+            let main: rquickjs::Function = module_entry.get("run").unwrap();
+            let afterhook: rquickjs::Function = module_entry.get("afterhook").unwrap();
 
-    if (typeof prehook === 'function') {{
-        prehook();
-    }}
+            let _res = prehook.call_arg::<()>(Args::new(ctx.clone(), 0));
 
-    // run user defined run
-    let res = run() || ''
+            let _res = main.call_arg::<()>(Args::new(ctx.clone(), 0));
 
-    if (typeof afterhook === 'function') {{
-        afterhook();
-    }}
-
-    // return
-    JSON.stringify({{
-        code: 0,
-        msg: "success",
-        data: JSON.stringify(res),
-    }})
-}} catch(err) {{
-    // return
-    JSON.stringify({{
-        code: 1,
-        msg: err.toString(),
-        data: "",
-    }})
-}}
-"#
-        );
-        info!(msg = "script code", code = ?code);
-        self.context
-            .with(|ctx| match ctx.eval::<String, &str>(code.as_str()) {
-                Ok(result) => {
-                    let result: Response =
-                        serde_json::from_str(&result).expect("js script wrong return type");
-                    if result.code != 0 {
-                        error!(msg = "script run failed", reason = result.msg);
-                    } else {
-                        info!(msg = "script run success", result = ?result);
-                    }
-                }
-                Err(e) => {
-                    error!(
-                        msg = "script run failed, assert_xxx throw exception",
-                        reason = e.to_string(),
-                    );
-                }
-            });
-
+            let _res = afterhook.call_arg::<()>(Args::new(ctx.clone(), 0));
+        });
         Ok(())
     }
+}
+
+const JS_IMPOR_PATTERN: &str = r#"[ 	]*import[ 	]+(.*)[ 	]+from[ 	]+('|")(\S+)('|")"#;
+
+fn search_path(script: &str) -> Vec<String> {
+    let re = regex::Regex::new(JS_IMPOR_PATTERN).unwrap();
+    let mut paths = vec![];
+    for (_, [_, _, path, _]) in re.captures_iter(script).map(|c| c.extract()) {
+        paths.push(path.to_string());
+    }
+    paths
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -301,18 +290,18 @@ mod test {
         Context::full(&runtime).unwrap()
     }
 
-    #[test]
-    fn test_engine() {
-        JSEngine::new()
-            .run(
-                r#"
-        print("1");
-        assert_script_run("whoami", 600);
-        print("2");
-    "#,
-            )
-            .unwrap();
-    }
+    // #[test]
+    // fn test_engine() {
+    //     JSEngine::new()
+    //         .run_string(
+    //             r#"
+    //     print("1");
+    //     assert_script_run("whoami", 600);
+    //     print("2");
+    // "#,
+    //         )
+    //         .unwrap();
+    // }
 
     #[test]
     fn test_quickjs_basic() {

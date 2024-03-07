@@ -76,9 +76,9 @@ impl Driver {
         self
     }
 
-    pub fn run_script(&mut self, script: String) -> &mut Self {
+    pub fn run_file(&mut self, script: String) -> &mut Self {
         if let Some(c) = self.ec.as_mut() {
-            c.run(script.as_str());
+            c.run_file(script.as_str());
         }
         self
     }

@@ -1391,6 +1391,7 @@ version = "0.1.0"
 dependencies = [
  "mlua",
  "pyo3",
+ "regex",
  "rquickjs",
  "serde",
  "serde_json",

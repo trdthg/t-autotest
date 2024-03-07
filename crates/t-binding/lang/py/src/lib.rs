@@ -76,10 +76,6 @@ impl Driver {
         self.inner.stop();
     }
 
-    fn run_script(&mut self, script: String) {
-        self.inner.run_script(script);
-    }
-
     /// Returns the sum of two numbers.
     #[staticmethod]
     fn hello() {

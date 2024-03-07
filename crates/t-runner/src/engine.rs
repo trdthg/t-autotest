@@ -4,7 +4,7 @@ use t_binding::{JSEngine, LuaEngine, ScriptEngine};
 
 pub enum Msg {
     Stop(mpsc::Sender<()>),
-    Script(String),
+    ScriptFile(String),
 }
 
 pub struct EngineClient {
@@ -17,8 +17,10 @@ impl EngineClient {
         rx.recv().unwrap();
     }
 
-    pub fn run(&self, script: &str) {
-        self.msg_tx.send(Msg::Script(script.to_string())).unwrap();
+    pub fn run_file(&self, script: &str) {
+        self.msg_tx
+            .send(Msg::ScriptFile(script.to_string()))
+            .unwrap();
     }
 }
 
@@ -52,19 +54,19 @@ impl Engine {
                     tx.send(()).unwrap();
                     break;
                 }
-                Msg::Script(script) => {
-                    self.run(&script);
+                Msg::ScriptFile(file) => {
+                    self.run_file(&file);
                 }
             }
         }
     }
 
-    fn run(&mut self, script: &str) {
+    fn run_file(&mut self, file: &str) {
         let mut e: Box<dyn ScriptEngine> = match self.ext.as_str() {
             "js" => Box::new(JSEngine::new()),
             "lua" => Box::new(LuaEngine::new()),
             _ => unimplemented!(),
         };
-        e.run(script);
+        e.run_file(file);
     }
 }
