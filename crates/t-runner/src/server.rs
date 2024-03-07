@@ -243,52 +243,43 @@ impl Server {
                     MsgRes::ScriptRun(res)
                 }
                 MsgReq::WriteStringGlobal { console, s } => {
-                    match console {
-                        Some(t_binding::TextConsole::SSH) => {
-                            let client = ssh_client;
-                            client
-                                .map_mut(|c| c.write_string(&s))
-                                .expect("no ssh")
-                                .map_err(|_| MsgResError::Timeout)
-                                .unwrap();
-                        }
-                        Some(t_binding::TextConsole::Serial) => {
-                            let client = serial_client;
-                            client
-                                .map_mut(|c| c.write_string(&s))
-                                .expect("no serial")
-                                .map_err(|_| MsgResError::Timeout)
-                                .unwrap();
-                        }
-                        None => unimplemented!(),
+                    if let Err(e) = match (console, ssh_client.is_some(), serial_client.is_some()) {
+                        (None | Some(t_binding::TextConsole::Serial), _, true) => serial_client
+                            .map_mut(|c| c.write_string(&s))
+                            .expect("no serial")
+                            .map_err(|_| MsgResError::Timeout),
+                        (None | Some(t_binding::TextConsole::SSH), true, _) => ssh_client
+                            .map_mut(|c| c.write_string(&s))
+                            .expect("no ssh")
+                            .map_err(|_| MsgResError::Timeout),
+                        _ => Err(MsgResError::String("no console supported".to_string())),
+                    } {
+                        MsgRes::Error(e)
+                    } else {
+                        MsgRes::Done
                     }
-                    MsgRes::Done
                 }
                 MsgReq::WaitStringGlobal {
                     console,
                     s,
+                    n,
                     timeout,
                 } => {
-                    match console {
-                        Some(t_binding::TextConsole::SSH) => {
-                            let client = ssh_client;
-                            client
-                                .map_mut(|c| c.wait_string_ntimes(timeout, &s, 1))
-                                .expect("no ssh")
-                                .map_err(|_| MsgResError::Timeout)
-                                .unwrap();
-                        }
-                        Some(t_binding::TextConsole::Serial) => {
-                            let client = serial_client;
-                            client
-                                .map_mut(|c| c.wait_string_ntimes(timeout, &s, 1))
-                                .expect("no serial")
-                                .map_err(|_| MsgResError::Timeout)
-                                .unwrap();
-                        }
-                        None => unimplemented!(),
+                    if let Err(e) = match (console, ssh_client.is_some(), serial_client.is_some()) {
+                        (None | Some(t_binding::TextConsole::Serial), _, true) => serial_client
+                            .map_mut(|c| c.wait_string_ntimes(timeout, &s, n as usize))
+                            .expect("no serial")
+                            .map_err(|_| MsgResError::Timeout),
+                        (None | Some(t_binding::TextConsole::SSH), true, _) => ssh_client
+                            .map_mut(|c| c.wait_string_ntimes(timeout, &s, n as usize))
+                            .expect("no ssh")
+                            .map_err(|_| MsgResError::Timeout),
+                        _ => Err(MsgResError::String("no console supported".to_string())),
+                    } {
+                        MsgRes::Error(e)
+                    } else {
+                        MsgRes::Done
                     }
-                    MsgRes::Done
                 }
                 MsgReq::AssertScreen {
                     tag,

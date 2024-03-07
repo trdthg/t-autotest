@@ -111,6 +111,10 @@ impl Driver {
         api::write_string(s);
     }
 
+    fn wait_string_ntimes(&self, s: String, n: i32, timeout: i32) {
+        api::wait_string_ntimes(s, n, timeout)
+    }
+
     // ssh
     fn ssh_assert_script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
         api::ssh_assert_script_run_global(cmd, timeout).ok_or(

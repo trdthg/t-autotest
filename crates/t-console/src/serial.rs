@@ -42,7 +42,7 @@ impl SerialTty {
             false => None,
         };
         let ssh_client = SerialClient::connect(&c.serial_file, c.bund_rate, auth)
-            .unwrap_or_else(|_| panic!("init ssh connection failed: {:?}", auth));
+            .unwrap_or_else(|_| panic!("init serial connection failed: {:?}", auth));
         info!(msg = "init ssh done");
         ssh_client
     }

@@ -86,6 +86,18 @@ pub fn write_string(s: String) {
     }
 }
 
+pub fn wait_string_ntimes(s: String, n: i32, timeout: i32) {
+    match req(MsgReq::WaitStringGlobal {
+        console: None,
+        s,
+        n,
+        timeout: Duration::from_secs(timeout as u64),
+    }) {
+        MsgRes::Done => {}
+        _ => panic!("wrong msg type"),
+    }
+}
+
 pub fn ssh_assert_script_run_seperate(cmd: String, timeout: i32) -> Option<String> {
     match req(MsgReq::SSHScriptRunSeperate {
         cmd,

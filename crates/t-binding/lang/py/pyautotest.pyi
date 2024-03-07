@@ -4,6 +4,7 @@ class Driver:
 
     :param toml_str: toml config string
     """
+
     def __init__(self, toml_str: str) -> Driver: ...
     def start(self):
         """
@@ -48,6 +49,11 @@ class Driver:
     def write_string(self, s: str):
         """
         write string to console
+        """
+
+    def wait_string_ntimes(self, s: str, n: int, timeout: int):
+        """
+        wait pattern in console output show n times
         """
 
     def ssh_assert_script_run_global(self, cmd: str, timeout: int) -> str:
