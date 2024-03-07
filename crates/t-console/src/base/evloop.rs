@@ -13,6 +13,7 @@ pub enum Req {
     Write(Vec<u8>),
     Read,
     Dump,
+    #[allow(unused)]
     Stop,
 }
 
@@ -119,6 +120,9 @@ where
             // handle user read, write request
             match self.read_rx.try_recv() {
                 Ok((req, tx)) => {
+                    if matches!(req, Req::Stop) {
+                        break 'out;
+                    }
                     let Ok(res) = self.handle_req(req, true) else {
                         info!("stopped while blocking");
                         break 'out;
@@ -143,7 +147,7 @@ where
     fn handle_req(&mut self, req: Req, blocking: bool) -> Result<Res, ()> {
         match req {
             Req::Stop => {
-                // TODO: stop loop
+                // should be handled before
                 Ok(Res::Done)
             }
             Req::Write(msg) => {

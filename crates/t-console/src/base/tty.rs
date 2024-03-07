@@ -1,3 +1,4 @@
+use super::evloop::{EvLoopCtl, Req, Res};
 use crate::{term::Term, ConsoleError};
 use std::{
     marker::PhantomData,
@@ -5,8 +6,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tracing::{debug, error, info};
-
-use super::evloop::{EvLoopCtl, Req, Res};
 
 type Result<T> = std::result::Result<T, ConsoleError>;
 

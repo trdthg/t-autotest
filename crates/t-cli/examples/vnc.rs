@@ -1,5 +1,5 @@
 use clap::Parser;
-use t_console::VNCClient;
+use t_console::VNC;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -39,5 +39,5 @@ fn main() {
         cli.password
     );
 
-    VNCClient::connect(format!("{}:{}", cli.host, cli.port), cli.password, None).unwrap();
+    VNC::connect(format!("{}:{}", cli.host, cli.port), cli.password, None).unwrap();
 }

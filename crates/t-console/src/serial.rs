@@ -3,10 +3,9 @@ use crate::base::tty::Tty;
 use crate::term::Term;
 use crate::ConsoleError;
 use std::{thread::sleep, time::Duration};
-use tracing::error;
-use tracing::{debug, info};
+use tracing::{error, info};
 
-pub struct SerialTty {
+pub struct Serial {
     _config: t_config::ConsoleSerial,
     inner: SerialClient<crate::VT102>,
     history: String,
@@ -14,7 +13,7 @@ pub struct SerialTty {
 
 type Result<T> = std::result::Result<T, ConsoleError>;
 
-impl SerialTty {
+impl Serial {
     pub fn new(c: t_config::ConsoleSerial) -> Self {
         let inner = Self::connect_from_serial_config(&c);
 
@@ -171,6 +170,7 @@ where
         Ok(res)
     }
 
+    #[allow(unused)]
     pub fn tty(&self) -> String {
         self.path.to_owned()
     }

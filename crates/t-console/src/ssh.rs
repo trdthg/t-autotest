@@ -17,13 +17,13 @@ pub enum SSHAuthAuth<P: AsRef<Path>> {
     Password(String),
 }
 
-pub struct SSHPts {
+pub struct SSH {
     c: t_config::ConsoleSSH,
     inner: SSHClient<crate::Xterm>,
     history: String,
 }
 
-impl SSHPts {
+impl SSH {
     pub fn new(c: t_config::ConsoleSSH) -> Self {
         let mut inner = Self::connect_from_ssh_config(&c);
 
@@ -231,9 +231,9 @@ mod test {
         t_config::load_config_from_file(f).map(Some).unwrap()
     }
 
-    fn get_ssh_client() -> Option<SSHPts> {
+    fn get_ssh_client() -> Option<SSH> {
         if let Some(c) = get_config_from_file() {
-            return Some(SSHPts::new(c.console.ssh));
+            return Some(SSH::new(c.console.ssh));
         }
         None
     }

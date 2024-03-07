@@ -12,7 +12,7 @@ use std::{
 };
 use t_binding::{MsgReq, MsgRes, MsgResError};
 use t_config::{Config, Console};
-use t_console::{SSHPts, SerialTty, VNCClient, VNCEventReq, VNCEventRes};
+use t_console::{Serial, VNCEventReq, VNCEventRes, SSH, VNC};
 use tracing::{error, info, warn};
 
 #[derive(Clone)]
@@ -53,9 +53,9 @@ pub struct Server {
 
     stop_rx: mpsc::Receiver<mpsc::Sender<()>>,
 
-    ssh_client: AMOption<SSHPts>,
-    serial_client: AMOption<SerialTty>,
-    vnc_client: AMOption<VNCClient>,
+    ssh_client: AMOption<SSH>,
+    serial_client: AMOption<Serial>,
+    vnc_client: AMOption<VNC>,
 }
 
 pub struct ServerClient {
@@ -95,20 +95,20 @@ impl Server {
         info!(msg = "init...");
 
         let serial_client = if _serial.enable {
-            Some(SerialTty::new(_serial))
+            Some(Serial::new(_serial))
         } else {
             None
         };
 
         let ssh_client = if _ssh.enable {
-            Some(SSHPts::new(_ssh))
+            Some(SSH::new(_ssh))
         } else {
             None
         };
 
         let vnc_client = if _vnc.enable {
             info!(msg = "init vnc...");
-            let vnc_client = VNCClient::connect(
+            let vnc_client = VNC::connect(
                 format!("{}:{}", _vnc.host, _vnc.port),
                 _vnc.password.clone(),
                 _vnc.screenshot_dir,

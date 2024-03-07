@@ -35,7 +35,7 @@ pub enum VNCEventRes {
     Screen(PNG),
 }
 
-pub struct VNCClient {
+pub struct VNC {
     pub event_tx: Sender<(VNCEventReq, Sender<VNCEventRes>)>,
     pub stop_tx: Sender<()>,
     // pub screenshot_dir: Option<PathBuf>,
@@ -56,7 +56,7 @@ impl Display for VNCError {
     }
 }
 
-impl VNCClient {
+impl VNC {
     pub fn connect<A: Into<String>>(
         addrs: A,
         password: Option<String>,

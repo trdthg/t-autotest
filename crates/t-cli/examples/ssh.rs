@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 use t_config::{ConsoleSSH, ConsoleSSHAuth};
-use t_console::SSHPts;
+use t_console::SSH;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -26,7 +26,7 @@ fn main() {
     );
 
     // Session is a wrapper around a russh client, defined down below
-    let mut ssh = SSHPts::new(ConsoleSSH {
+    let mut ssh = SSH::new(ConsoleSSH {
         enable: true,
         host: cli.host,
         port: cli.port,

@@ -4,7 +4,7 @@ use crate::{engine::Engine, server::ServerClient};
 use std::sync::mpsc;
 use std::thread;
 use t_config::Config;
-use t_console::SSHPts;
+use t_console::SSH;
 
 pub struct Driver {
     pub config: Config,
@@ -90,7 +90,7 @@ impl Driver {
         self
     }
 
-    pub fn new_ssh(&mut self) -> SSHPts {
-        SSHPts::new(self.config.console.ssh.clone())
+    pub fn new_ssh(&mut self) -> SSH {
+        SSH::new(self.config.console.ssh.clone())
     }
 }
