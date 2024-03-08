@@ -2,12 +2,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::{api, ScriptEngine};
-use mlua::AsChunk;
 use rquickjs::function::Args;
 use rquickjs::Function;
 use rquickjs::{Context, Runtime};
 use serde::{Deserialize, Serialize};
-use tracing::{error, info, Level};
+use tracing::{error, Level};
 
 pub struct JSEngine {
     _runtime: rquickjs::Runtime,
@@ -243,19 +242,44 @@ impl JSEngine {
                 let _ = ctx
                     .clone()
                     .compile(path.as_str(), fs::read_to_string(fullpath).unwrap())
-                    .unwrap();
+                    .map_err(|e| {
+                        format!("lib file: [{}] compile failed: [{}]", path.as_str(), e)
+                    })?;
             }
-            let module_entry = ctx.clone().clone().compile(format!("./{filename}"), script).unwrap();
-            let prehook: rquickjs::Function = module_entry.get("prehook").unwrap();
-            let main: rquickjs::Function = module_entry.get("run").unwrap();
-            let afterhook: rquickjs::Function = module_entry.get("afterhook").unwrap();
+            let module_entry = ctx
+                .clone()
+                .compile(format!("./{filename}"), script)
+                .map_err(|e| format!("entry file compile failed: [{}]", e))?;
 
-            let _res = prehook.call_arg::<()>(Args::new(ctx.clone(), 0));
+            let Ok(main) = module_entry
+                .get("main")
+                .unwrap_or_else(|_| module_entry.get::<&str, Function>("run"))
+            else {
+                return Err(r#"function "main" or "run" must exists"#.to_string());
+            };
 
-            let _res = main.call_arg::<()>(Args::new(ctx.clone(), 0));
+            // try run prehook, return if run failed
+            if let Ok(prehook) = module_entry.get::<&str, Function>("prehook") {
+                if let Err(e) = prehook.call_arg::<()>(Args::new(ctx.clone(), 0)) {
+                    let msg = format!("prehook run failed: {}", e);
+                    error!(msg);
+                    return Err(msg);
+                }
+            }
 
-            let _res = afterhook.call_arg::<()>(Args::new(ctx.clone(), 0));
-        });
+            // continue if failed
+            if let Err(e) = main.call_arg::<()>(Args::new(ctx.clone(), 0)) {
+                error!("main run failed: {}", e)
+            }
+
+            // try run afterhook
+            if let Ok(afterhook) = module_entry.get::<&str, Function>("afterhook") {
+                if let Err(e) = afterhook.call_arg::<()>(Args::new(ctx.clone(), 0)) {
+                    error!("afterhook run failed: {}", e);
+                }
+            }
+            Ok(())
+        })?;
         Ok(())
     }
 }
@@ -281,7 +305,6 @@ struct Response {
 #[cfg(test)]
 mod test {
 
-    use super::JSEngine;
     use rquickjs::{function::Args, Context, Runtime};
 
     fn get_context() -> rquickjs::Context {
@@ -289,19 +312,6 @@ mod test {
 
         Context::full(&runtime).unwrap()
     }
-
-    // #[test]
-    // fn test_engine() {
-    //     JSEngine::new()
-    //         .run_string(
-    //             r#"
-    //     print("1");
-    //     assert_script_run("whoami", 600);
-    //     print("2");
-    // "#,
-    //         )
-    //         .unwrap();
-    // }
 
     #[test]
     fn test_quickjs_basic() {
