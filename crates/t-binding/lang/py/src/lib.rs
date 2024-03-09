@@ -28,6 +28,18 @@ fn pyautotest(py: Python, m: &PyModule) -> PyResult<()> {
 }
 
 fn init_logger() {
+    let log_level = match env::var("RUST_LOG") {
+        Ok(l) => match l.as_str() {
+            "trace" => Level::TRACE,
+            "debug" => Level::DEBUG,
+            "warn" => Level::WARN,
+            "error" => Level::ERROR,
+            "info" => Level::INFO,
+            _ => return,
+        },
+        _ => return,
+    };
+
     let format = tracing_subscriber::fmt::format()
         .without_time()
         .with_target(false)
@@ -36,16 +48,7 @@ fn init_logger() {
         .compact();
 
     let subscriber = FmtSubscriber::builder()
-        .with_max_level(match env::var("RUST_LOG") {
-            Ok(l) => match l.as_str() {
-                "trace" => Level::TRACE,
-                "debug" => Level::DEBUG,
-                "warn" => Level::WARN,
-                "error" => Level::ERROR,
-                _ => Level::INFO,
-            },
-            _ => Level::INFO,
-        })
+        .with_max_level(log_level)
         .event_format(format)
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
@@ -62,13 +65,14 @@ impl Driver {
     fn __init__(config: String) -> PyResult<Self> {
         let config =
             Config::from_toml_str(&config).map_err(|e| StringError::new_err(e.to_string()))?;
-        let mut runner = InnerDriver::new(config.clone());
+        let mut runner = InnerDriver::new(config.clone())
+            .map_err(|e| StringError::new_err(format!("driver init failed, reason: [{}]", e)))?;
         runner.start();
         Ok(Self { inner: runner })
     }
 
     // ssh
-    fn new_ssh(&self) -> DriverSSH {
+    fn new_ssh(&self) -> PyResult<DriverSSH> {
         DriverSSH::new(self.inner.config.console.ssh.clone())
     }
 
@@ -178,8 +182,10 @@ struct DriverSSH {
 }
 
 impl DriverSSH {
-    pub fn new(c: ConsoleSSH) -> Self {
-        Self { inner: SSH::new(c) }
+    pub fn new(c: ConsoleSSH) -> PyResult<Self> {
+        Ok(Self {
+            inner: SSH::new(c).map_err(|e| StringError::new_err(e.to_string()))?,
+        })
     }
 }
 

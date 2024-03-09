@@ -14,25 +14,31 @@ pub struct Serial {
 type Result<T> = std::result::Result<T, ConsoleError>;
 
 impl Serial {
-    pub fn new(c: t_config::ConsoleSerial) -> Self {
-        let inner = Self::connect_from_serial_config(&c);
+    pub fn new(c: t_config::ConsoleSerial) -> Result<Self> {
+        let inner = Self::connect_from_serial_config(&c)?;
 
-        Self {
+        Ok(Self {
             _config: c,
             inner,
             history: String::new(),
+        })
+    }
+
+    pub fn stop(&self) {
+        if let Err(_) = self.inner.tty.send(Req::Stop) {
+            error!("serial evloop stopped failed");
         }
     }
 
-    pub fn reconnect(&mut self) {
+    pub fn reconnect(&mut self) -> Result<()> {
         self.history.push_str(self.inner.history().as_str());
-        self.inner = Self::connect_from_serial_config(&self._config)
+        self.inner = Self::connect_from_serial_config(&self._config)?;
+        Ok(())
     }
 
-    fn connect_from_serial_config(c: &t_config::ConsoleSerial) -> SerialClient<crate::VT102> {
-        if !c.enable {
-            panic!("serial is disabled in config");
-        }
+    fn connect_from_serial_config(
+        c: &t_config::ConsoleSerial,
+    ) -> Result<SerialClient<crate::VT102>> {
         info!(msg = "init ssh...");
         let username = c.username.clone().unwrap_or_default();
         let password = c.password.clone().unwrap_or_default();
@@ -40,10 +46,8 @@ impl Serial {
             true => Some((username.as_str(), password.as_str())),
             false => None,
         };
-        let ssh_client = SerialClient::connect(&c.serial_file, c.bund_rate, auth)
-            .unwrap_or_else(|_| panic!("init serial connection failed: {:?}", auth));
-        info!(msg = "init ssh done");
-        ssh_client
+        let ssh_client = SerialClient::connect(&c.serial_file, c.bund_rate, auth)?;
+        Ok(ssh_client)
     }
 
     pub fn tty(&self) -> String {
@@ -69,8 +73,8 @@ impl Serial {
             match f(self) {
                 Ok(v) => return Ok(v),
                 Err(e) => match e {
-                    crate::ConsoleError::ConnectionBroken => {
-                        self.reconnect();
+                    crate::ConsoleError::ConnectionBroken(_) => {
+                        let _ = self.reconnect();
                         continue;
                     }
                     _ => {
@@ -107,16 +111,6 @@ struct SerialClient<T: Term> {
     pub path: String,
 }
 
-impl<T> Drop for SerialClient<T>
-where
-    T: Term,
-{
-    fn drop(&mut self) {
-        // try logout
-        self.tty.send(Req::Write(vec![0x04])).unwrap();
-    }
-}
-
 impl<T> SerialClient<T>
 where
     T: Term,
@@ -129,13 +123,10 @@ where
         // .map_err(ConsoleError::Stty)?;
 
         // connect serial
-        let port = serialport::new(file, bund_rate)
-            .open()
-            .map_err(|e| {
-                error!("{}", e);
-                ConsoleError::ConnectionBroken
-            })
-            .expect("connect to serialport failed");
+        let port = serialport::new(file, bund_rate).open().map_err(|e| {
+            error!("{}", e);
+            ConsoleError::ConnectionBroken(format!("serialport open failed, {}", e))
+        })?;
 
         let mut res = Self {
             tty: Tty::new(EvLoopCtl::new(port)),
@@ -144,27 +135,28 @@ where
 
         if let Some((username, password)) = auth {
             info!(msg = "serial try logout");
-            if let Err(_e) = res.logout() {
-                panic!("serial try logout failed");
-            };
+            res.logout()
+                .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))?;
 
             info!(msg = "serial waiting login");
-            if let Err(e) = res
-                .tty
+            res.tty
                 .wait_string_ntimes(Duration::from_secs(30), "login", 1)
-            {
-                panic!("serial login wait prompt failed: {}", e);
-            };
+                .map_err(|e| {
+                    ConsoleError::ConnectionBroken(format!(
+                        "serial login wait prompt failed: {}",
+                        e
+                    ))
+                })?;
 
             info!(msg = "serial login");
             res.login(username.as_ref(), password.as_ref());
 
             info!(msg = "serial get tty");
-            if let Ok(tty) = res.tty.exec_global(Duration::from_secs(10), "tty") {
-                res.path = tty.1;
-            } else {
-                panic!("serial get tty failed")
-            }
+            let tty = res
+                .tty
+                .exec_global(Duration::from_secs(10), "tty")
+                .map_err(|_| ConsoleError::ConnectionBroken("serial get tty failed".to_string()))?;
+            res.path = tty.1;
         }
 
         Ok(res)
@@ -179,7 +171,7 @@ where
         // logout
         self.tty
             .write(b"\x04\n")
-            .map_err(|_e| ConsoleError::ConnectionBroken)?;
+            .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))?;
         sleep(Duration::from_millis(5000));
         Ok(())
     }

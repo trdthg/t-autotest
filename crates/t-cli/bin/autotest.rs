@@ -2,7 +2,7 @@ use clap::Parser;
 use std::{env, fs, path::Path};
 use t_config::Config;
 use t_runner::Driver;
-use tracing::{info, Level};
+use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 #[derive(clap::Parser, Debug)]
@@ -62,10 +62,14 @@ fn main() {
         .to_string_lossy()
         .to_string();
 
-    Driver::new_with_engine(config, ext)
-        .start()
-        .run_file(cli.script)
-        .stop();
+    match Driver::new_with_engine(config, ext) {
+        Ok(mut d) => {
+            d.start().run_file(cli.script).stop();
+        }
+        Err(e) => {
+            error!(msg = "Driver init failed", reason = ?e)
+        }
+    }
 }
 
 #[cfg(test)]
