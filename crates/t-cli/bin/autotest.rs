@@ -2,7 +2,7 @@ use clap::Parser;
 use std::{env, fs, path::Path};
 use t_config::Config;
 use t_runner::Driver;
-use tracing::{info, Level};
+use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 #[derive(clap::Parser, Debug)]
@@ -56,17 +56,20 @@ fn main() {
         }
     }
 
-    let script = fs::read_to_string(cli.script.as_str()).expect("script not exists");
     let ext = Path::new(cli.script.as_str())
         .extension()
         .unwrap()
         .to_string_lossy()
         .to_string();
 
-    Driver::new_with_engine(config, ext)
-        .start()
-        .run_script(script)
-        .stop();
+    match Driver::new_with_engine(config, ext) {
+        Ok(mut d) => {
+            d.start().run_file(cli.script).stop();
+        }
+        Err(e) => {
+            error!(msg = "Driver init failed", reason = ?e)
+        }
+    }
 }
 
 #[cfg(test)]

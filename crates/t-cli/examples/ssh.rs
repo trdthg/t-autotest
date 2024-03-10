@@ -26,7 +26,7 @@ fn main() {
     );
 
     // Session is a wrapper around a russh client, defined down below
-    let mut ssh = SSH::new(ConsoleSSH {
+    match SSH::new(ConsoleSSH {
         enable: true,
         host: cli.host,
         port: cli.port,
@@ -39,20 +39,23 @@ fn main() {
             password: None,
         },
         timeout: None,
-    });
-    info!("Connected");
+    }) {
+        Ok(mut ssh) => {
+            info!("Connected");
 
-    let command_str = &cli
-        .command
-        .iter()
-        .map(|x| x.as_ref()) // arguments are escaped manually since the SSH protocol doesn't support quoting
-        .collect::<Vec<_>>()
-        .join(";");
-    let code = ssh.exec_seperate(command_str).unwrap();
-    println!("Exitcode: {:?}", code);
-
-    let code = ssh.exec_seperate(command_str).unwrap();
-    println!("Exitcode: {:?}", code);
+            let command_str = &cli
+                .command
+                .iter()
+                .map(|x| x.as_ref()) // arguments are escaped manually since the SSH protocol doesn't support quoting
+                .collect::<Vec<_>>()
+                .join(";");
+            let code = ssh.exec_seperate(command_str).unwrap();
+            println!("Exitcode: {:?}", code);
+        }
+        Err(e) => {
+            println!("connect failed: {:?}", e.to_string());
+        }
+    }
 }
 
 fn default_host() -> String {
@@ -70,7 +73,7 @@ fn default_private_key() -> PathBuf {
             path.push("id_rsa");
             path
         }
-        None => panic!("no home directory, can set default private key path"),
+        None => panic!("Unable to get your home dir by env HOME"),
     }
 }
 

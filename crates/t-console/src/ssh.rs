@@ -1,4 +1,5 @@
 use crate::base::evloop::EvLoopCtl;
+use crate::base::evloop::Req;
 use crate::base::tty::Tty;
 use crate::term::Term;
 use crate::ConsoleError;
@@ -7,6 +8,7 @@ use std::net::ToSocketAddrs;
 use std::path::Path;
 use std::thread::sleep;
 use std::time::Duration;
+use tracing::error;
 use tracing::{debug, info};
 
 type Result<T> = std::result::Result<T, ConsoleError>;
@@ -24,35 +26,44 @@ pub struct SSH {
 }
 
 impl SSH {
-    pub fn new(c: t_config::ConsoleSSH) -> Self {
-        let mut inner = Self::connect_from_ssh_config(&c);
+    pub fn new(c: t_config::ConsoleSSH) -> Result<Self> {
+        let mut inner = Self::connect_from_ssh_config(&c)?;
 
         debug!(msg = "ssh getting tty...");
-        let Ok((code, tty)) = inner.pts.exec_global(Duration::from_secs(10), "tty") else {
-            panic!("ssh get tty failed");
-        };
+        let (code, tty) = inner
+            .pts
+            .exec_global(Duration::from_secs(10), "tty")
+            .map_err(|e| ConsoleError::ConnectionBroken(format!("ssh get tty failed, {}", e)))?;
+
         if code != 0 {
-            panic!("get tty failed");
+            return Err(ConsoleError::ConnectionBroken(
+                "run tty command failed".to_string(),
+            ));
         }
+
         inner.pts_file = tty;
         info!(msg = "ssh client tty", tty = inner.pts_file.trim());
 
-        Self {
+        Ok(Self {
             c,
             inner,
             history: "".to_string(),
+        })
+    }
+
+    pub fn stop(&self) {
+        if self.inner.pts.send(Req::Stop).is_err() {
+            error!("ssh evloop stopped failed");
         }
     }
 
-    pub fn reconnect(&mut self) {
+    pub fn reconnect(&mut self) -> Result<()> {
         self.history.push_str(self.inner.history().as_str());
-        self.inner = Self::connect_from_ssh_config(&self.c)
+        self.inner = Self::connect_from_ssh_config(&self.c)?;
+        Ok(())
     }
 
-    fn connect_from_ssh_config(c: &t_config::ConsoleSSH) -> SSHClient<crate::Xterm> {
-        if !c.enable {
-            panic!("ssh is disabled in config");
-        }
+    fn connect_from_ssh_config(c: &t_config::ConsoleSSH) -> Result<SSHClient<crate::Xterm>> {
         info!(msg = "init ssh...");
         let auth = match c.auth.r#type {
             t_config::ConsoleSSHAuthType::PrivateKey => SSHAuthAuth::PrivateKey(
@@ -69,15 +80,13 @@ impl SSH {
                 SSHAuthAuth::Password(c.auth.password.clone().unwrap())
             }
         };
-        let ssh_client = SSHClient::connect(
+        SSHClient::connect(
             c.timeout,
             &auth,
             c.username.clone(),
             format!("{}:{}", c.host, c.port),
         )
-        .unwrap_or_else(|_| panic!("init ssh connection failed: {:?}", auth));
-        info!(msg = "init ssh done");
-        ssh_client
+        .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))
     }
 
     pub fn tty(&self) -> String {
@@ -113,19 +122,19 @@ impl SSH {
         loop {
             retry -= 1;
             if retry == 0 {
-                return Err(ConsoleError::ConnectionBroken);
+                return Err(ConsoleError::ConnectionBroken(
+                    "reconnect exceed max time".to_string(),
+                ));
             }
 
             match f(self) {
                 Ok(v) => return Ok(v),
                 Err(e) => match e {
-                    ConsoleError::ConnectionBroken => {
-                        self.reconnect();
+                    ConsoleError::ConnectionBroken(_) => {
+                        let _ = self.reconnect();
                         continue;
                     }
-                    _ => {
-                        return Err(ConsoleError::Timeout);
-                    }
+                    _ => return Err(ConsoleError::Timeout),
                 },
             }
         }
@@ -233,7 +242,7 @@ mod test {
 
     fn get_ssh_client() -> Option<SSH> {
         if let Some(c) = get_config_from_file() {
-            return Some(SSH::new(c.console.ssh));
+            return SSH::new(c.console.ssh).ok();
         }
         None
     }

@@ -10,24 +10,14 @@ use tracing::{debug, error, info};
 type Result<T> = std::result::Result<T, ConsoleError>;
 
 pub struct Tty<T: Term> {
+    // interface for communicate with tty file
     ctl: EvLoopCtl,
+    // store all tty output bytes
     history: Vec<u8>,
+    // used by regex search history start
     last_buffer_start: usize,
+    // Term decide how to decode output bytes
     phantom: PhantomData<T>,
-    rx: Option<mpsc::Receiver<Vec<u8>>>,
-    tx: mpsc::Sender<Vec<u8>>,
-}
-
-pub struct MsgStream {
-    inner: mpsc::Receiver<Vec<u8>>,
-}
-
-impl Iterator for MsgStream {
-    type Item = Vec<u8>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.recv().ok()
-    }
 }
 
 enum ConsumeAction<T> {
@@ -40,23 +30,12 @@ where
     Tm: Term,
 {
     pub fn new(ctl: EvLoopCtl) -> Self {
-        let (tx, rx) = mpsc::channel();
         Self {
             ctl,
             history: Vec::new(),
             last_buffer_start: 0,
             phantom: PhantomData {},
-            tx,
-            rx: Some(rx),
         }
-    }
-
-    #[allow(unused)]
-    pub fn take_stream(&mut self) -> MsgStream {
-        let Some(rx) = self.rx.take() else {
-            panic!("stream should only be taken once");
-        };
-        MsgStream { inner: rx }
     }
 
     pub fn history(&self) -> Vec<u8> {
@@ -74,7 +53,7 @@ where
     pub fn write(&mut self, s: &[u8]) -> Result<()> {
         self.ctl
             .send(Req::Write(s.to_vec()))
-            .map_err(|_| ConsoleError::ConnectionBroken)?;
+            .map_err(|_| ConsoleError::ConnectionBroken("io loop closed unexpected".to_string()))?;
         Ok(())
     }
 
@@ -82,7 +61,7 @@ where
         debug!(msg = "write_string", s = s);
         self.ctl
             .send(Req::Write(s.as_bytes().to_vec()))
-            .map_err(|_| ConsoleError::ConnectionBroken)?;
+            .map_err(|_| ConsoleError::ConnectionBroken("io loop closed unexpected".to_string()))?;
         Ok(())
     }
 
@@ -92,17 +71,21 @@ where
         pattern: &str,
         repeat: usize,
     ) -> Result<String> {
-        self.comsume_buffer_and_map(timeout, |buffer| {
-            let buffer_str = Tm::parse_and_strip(buffer);
-            let res = count_substring(&buffer_str, pattern, repeat);
-            info!(
-                msg = "wait_string_ntimes",
-                pattern = pattern,
-                repeat = repeat,
-                res = res,
-                buffer = buffer_str,
-            );
-            res.then_some(buffer_str)
+        self.comsume_buffer_and_map(timeout, |buffer, new| {
+            {
+                let buffer_str = Tm::parse_and_strip(buffer);
+                let new_str = Tm::parse_and_strip(new);
+                let res = count_substring(&buffer_str, pattern, repeat);
+                info!(
+                    msg = "wait_string_ntimes",
+                    pattern = pattern,
+                    repeat = repeat,
+                    res = res,
+                    new_buffer = new_str,
+                );
+                res.then_some(buffer_str)
+            }
+            .map_or(ConsumeAction::Continue, ConsumeAction::BreakValue)
         })
     }
 
@@ -117,19 +100,19 @@ where
         let match_left = &format!("{nanoid}{}{}", Tm::linebreak(), Tm::enter_input());
         let match_right = &format!("{nanoid}{}", Tm::linebreak());
 
-        self.comsume_buffer_and_map_inner(timeout, |buffer, _new| {
+        self.comsume_buffer_and_map(timeout, |buffer, new| {
             // find target pattern from buffer
-            let parsed_str = Tm::parse_and_strip(buffer);
+            let buffer_str = Tm::parse_and_strip(buffer);
+            let new_str = Tm::parse_and_strip(new);
             info!(
                 msg = "recv string",
                 nanoid = nanoid,
                 buffer_len = buffer.len(),
-                parsed_str_len = parsed_str.len(),
-                parsed_str = parsed_str,
+                new_buffer = new_str,
             );
 
             let Ok(catched_output) =
-                t_util::assert_capture_between(&parsed_str, match_left, match_right)
+                t_util::assert_capture_between(&buffer_str, match_left, match_right)
             else {
                 return ConsumeAction::BreakValue((1, "invalid consume regex".to_string()));
             };
@@ -162,17 +145,7 @@ where
         })
     }
 
-    pub fn comsume_buffer_and_map<T>(
-        &mut self,
-        timeout: Duration,
-        f: impl Fn(&[u8]) -> Option<T>,
-    ) -> Result<T> {
-        self.comsume_buffer_and_map_inner(timeout, |bytes, _new| {
-            f(bytes).map_or(ConsumeAction::Continue, |v| ConsumeAction::BreakValue(v))
-        })
-    }
-
-    fn comsume_buffer_and_map_inner<T>(
+    fn comsume_buffer_and_map<T>(
         &mut self,
         timeout: Duration,
         f: impl Fn(&[u8], &[u8]) -> ConsumeAction<T>,
@@ -188,15 +161,12 @@ where
             }
 
             // read buffer
-            let res = self.ctl.send_timeout(Req::Read, timeout);
+            let res = self.ctl.send(Req::Read(Some(timeout)));
             match res {
                 Ok(Res::Value(ref recv)) => {
                     if recv.is_empty() {
                         continue;
                     }
-
-                    // send to read time receiver
-                    let _ = self.tx.send(recv.to_vec());
 
                     // save to history
                     self.history.extend(recv);
@@ -230,16 +200,15 @@ where
                     error!(msg = "invalid msg varient", t = ?t);
                     panic!("invalid msg varient");
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    continue;
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    error!(msg = "recv timeout");
+                Err(_) => {
+                    error!(msg = "recv failed");
                     break;
                 }
             }
         }
-        Err(ConsoleError::ConnectionBroken)
+        Err(ConsoleError::ConnectionBroken(
+            "handle req timeout".to_string(),
+        ))
     }
 }
 

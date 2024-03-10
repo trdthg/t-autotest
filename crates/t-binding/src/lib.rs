@@ -11,7 +11,7 @@ pub use msg::{MsgReq, MsgRes, MsgResError, TextConsole};
 pub enum EngineError {}
 
 pub trait ScriptEngine {
-    fn run(&mut self, content: &str);
+    fn run_file(&mut self, content: &str);
 }
 
 type GlobalSharedSender = Option<RwLock<Sender<(MsgReq, Sender<MsgRes>)>>>;

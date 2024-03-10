@@ -2,7 +2,7 @@ use std::{
     io::{self, Read, Write},
     sync::mpsc::{self, channel, Receiver, Sender},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use image::EncodableLayout;
@@ -11,9 +11,8 @@ use tracing::{debug, error, info, warn};
 #[derive(Debug)]
 pub enum Req {
     Write(Vec<u8>),
-    Read,
+    Read(Option<Duration>),
     Dump,
-    #[allow(unused)]
     Stop,
 }
 
@@ -41,33 +40,14 @@ impl EvLoopCtl {
         }
         rx.recv()
     }
-
-    pub fn send_timeout(&self, req: Req, timeout: Duration) -> Result<Res, mpsc::RecvTimeoutError> {
-        let (tx, rx) = channel();
-        if let Err(e) = self.req_tx.send((req, tx)) {
-            error!("evloop receiver closed, connection may be lost: {}", e);
-            return Err(mpsc::RecvTimeoutError::Disconnected);
-        }
-        rx.recv_timeout(timeout)
-    }
 }
 
 struct EventLoop<T> {
     conn: T,
-    read_rx: Receiver<(Req, Sender<Res>)>,
-    stop_tx: Sender<()>,
-    stop_rx: Receiver<()>,
+    req_rx: Receiver<(Req, Sender<Res>)>,
     history: Vec<u8>,
     last_read_index: usize,
     buffer: Vec<u8>,
-}
-
-impl<T> Drop for EventLoop<T> {
-    fn drop(&mut self) {
-        if let Err(e) = self.stop_tx.send(()) {
-            error!("evloop may already been dropped: {}", e);
-        }
-    }
 }
 
 impl<T> EventLoop<T>
@@ -75,31 +55,25 @@ where
     T: Read + Write + Send + 'static,
 {
     pub fn spawn(conn: T) -> Sender<(Req, Sender<Res>)> {
-        let (write_tx, read_rx) = mpsc::channel();
-        let (stop_tx, stop_rx) = mpsc::channel();
+        let (req_tx, req_rx) = mpsc::channel();
 
         thread::spawn(move || {
             Self {
                 conn,
-                read_rx,
-                stop_tx,
-                stop_rx,
+                req_rx,
                 history: Vec::new(),
                 last_read_index: 0,
                 buffer: vec![0u8; 4096],
             }
             .pool();
         });
-        write_tx
+        req_tx
     }
 
     fn pool(&mut self) {
+        let min_interval = Duration::from_millis(1000);
+        let mut next_round = Instant::now() + min_interval;
         'out: loop {
-            // handle stop
-            if let Ok(()) = self.stop_rx.try_recv() {
-                break;
-            }
-
             // handle serial output
             match self.conn.read(&mut self.buffer) {
                 Ok(n) => {
@@ -117,13 +91,21 @@ where
                 }
             }
 
+            // don't return too fast
+            if Instant::now() < next_round {
+                continue;
+            }
+            next_round = Instant::now() + min_interval;
+
             // handle user read, write request
-            match self.read_rx.try_recv() {
+            match self.req_rx.try_recv() {
                 Ok((req, tx)) => {
+                    // handle stop
                     if matches!(req, Req::Stop) {
+                        let _ = tx.send(Res::Done);
                         break 'out;
                     }
-                    let Ok(res) = self.handle_req(req, true) else {
+                    let Ok(res) = self.handle_req(req) else {
                         info!("stopped while blocking");
                         break 'out;
                     };
@@ -144,7 +126,7 @@ where
     }
 
     // block until receive new buffer, try receive only once
-    fn handle_req(&mut self, req: Req, blocking: bool) -> Result<Res, ()> {
+    fn handle_req(&mut self, req: Req) -> Result<Res, ()> {
         match req {
             Req::Stop => {
                 // should be handled before
@@ -161,7 +143,7 @@ where
                 debug!(msg = "write done");
                 Ok(Res::Done)
             }
-            Req::Read => self.read_buffer(blocking).map(Res::Value),
+            Req::Read(t) => self.read_buffer(t).map(Res::Value),
             Req::Dump => Ok(Res::Value(self.history.clone())),
         }
     }
@@ -175,21 +157,21 @@ where
         Some(res.to_vec())
     }
 
-    fn read_buffer(&mut self, blocking: bool) -> Result<Vec<u8>, ()> {
+    fn read_buffer(&mut self, timeout: Option<Duration>) -> Result<Vec<u8>, ()> {
         if let Some(res) = self.consume_buffer() {
             return Ok(res);
         }
-        if !blocking {
-            return Ok(Vec::new());
-        }
+
+        let deadline = timeout.map(|t| Instant::now() + t);
 
         // block until receive new buffer
         debug!(msg = "blocking... try read");
         loop {
-            // handle stop
-            if let Ok(()) = self.stop_rx.try_recv() {
-                // stop?
-                return Err(());
+            // handle max timeout
+            if let Some(deadline) = deadline {
+                if Instant::now() > deadline {
+                    break;
+                }
             }
 
             // handle serial output
@@ -201,5 +183,6 @@ where
                 }
             }
         }
+        Ok(Vec::new())
     }
 }

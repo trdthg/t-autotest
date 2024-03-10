@@ -1,8 +1,6 @@
 mod config;
-
-use std::{env, error::Error, fmt::Display, fs, io, path::Path};
-
 pub use config::*;
+use std::{env, error::Error, fmt::Display, fs, io, path::Path};
 
 #[derive(Debug)]
 pub enum ConfigError {

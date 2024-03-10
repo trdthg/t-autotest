@@ -3,7 +3,7 @@ use parking_lot::Mutex;
 use std::{
     fs::{self},
     ops::Add,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         mpsc::{self, Receiver, Sender},
         Arc,
@@ -12,7 +12,7 @@ use std::{
 };
 use t_binding::{MsgReq, MsgRes, MsgResError};
 use t_config::{Config, Console};
-use t_console::{Serial, VNCEventReq, VNCEventRes, SSH, VNC};
+use t_console::{ConsoleError, Serial, VNCEventReq, VNCEventRes, SSH, VNC};
 use tracing::{error, info, warn};
 
 #[derive(Clone)]
@@ -73,7 +73,7 @@ impl ServerClient {
 }
 
 impl Server {
-    pub fn new(c: Config) -> (Self, ServerClient) {
+    pub fn new(c: Config) -> Result<(Self, ServerClient), ConsoleError> {
         // create folder if not exists
         let folders = vec![
             Some(c.needle_dir.clone()),
@@ -95,13 +95,13 @@ impl Server {
         info!(msg = "init...");
 
         let serial_client = if _serial.enable {
-            Some(Serial::new(_serial))
+            Some(Serial::new(_serial)?)
         } else {
             None
         };
 
         let ssh_client = if _ssh.enable {
-            Some(SSH::new(_ssh))
+            Some(SSH::new(_ssh)?)
         } else {
             None
         };
@@ -113,7 +113,7 @@ impl Server {
                 _vnc.password.clone(),
                 _vnc.screenshot_dir,
             )
-            .expect("init vnc connection failed");
+            .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))?;
             info!(msg = "init vnc done");
             Some(vnc_client)
         } else {
@@ -125,7 +125,7 @@ impl Server {
 
         let (stop_tx, stop_rx) = mpsc::channel();
 
-        (
+        Ok((
             Self {
                 config: c,
 
@@ -138,7 +138,7 @@ impl Server {
                 vnc_client: AMOption::new(vnc_client),
             },
             ServerClient { stop_tx },
-        )
+        ))
     }
 
     pub fn start(&self) {
@@ -195,7 +195,6 @@ impl Server {
                     let res = match (console, ssh_client.is_some(), serial_client.is_some()) {
                         (None, true, true) => {
                             let serial_tty = serial_tty.as_ref().unwrap();
-                            info!(msg = "both terminal");
                             let key = nanoid::nanoid!(6);
                             ssh_client
                                 .map_mut(|c| {
@@ -361,28 +360,31 @@ impl Server {
                 break;
             }
         }
+        info!(msg = "Runner loop stopped")
+    }
+
+    pub fn stop(&self) {
+        self.ssh_client.map_mut(|c| c.stop());
+        self.serial_client.map_mut(|s| s.stop());
     }
 
     pub fn dump_log(&self) {
-        let log_dir = Path::new(&self.config.log_dir);
+        let mut log_path = PathBuf::new();
+        log_path.push(&self.config.log_dir);
 
         if self.config.console.ssh.enable {
-            info!(msg = "collecting ssh log...");
-            let mut log_path = PathBuf::new();
-            log_path.push(log_dir);
-            log_path.push("ssh_full_log.txt");
             let history = self.ssh_client.map_mut(|c| c.history()).unwrap();
-            fs::write(log_path, history).unwrap();
+            log_path.push("ssh_full_log.txt");
+            fs::write(&log_path, history).unwrap();
+            log_path.pop();
             info!(msg = "collecting ssh log done");
         }
 
         if self.config.console.serial.enable {
-            info!(msg = "collecting serialport log...");
             let history = self.serial_client.map_mut(|c| c.history()).unwrap();
-            let mut log_path = PathBuf::new();
-            log_path.push(log_dir);
             log_path.push("serial_full_log.txt");
-            fs::write(log_path, history).unwrap();
+            fs::write(&log_path, history).unwrap();
+            log_path.pop();
             info!(msg = "collecting serialport log done");
         }
     }

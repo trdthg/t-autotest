@@ -1,10 +1,11 @@
 use crate::engine::EngineClient;
 use crate::server::Server;
 use crate::{engine::Engine, server::ServerClient};
+use std::fmt::Display;
 use std::sync::mpsc;
 use std::thread;
 use t_config::Config;
-use t_console::SSH;
+use t_console::{ConsoleError, SSH};
 
 pub struct Driver {
     pub config: Config,
@@ -16,11 +17,27 @@ pub struct Driver {
     ec: Option<EngineClient>,
 }
 
+#[derive(Debug)]
+pub enum DriverError {
+    ConsoleError(ConsoleError),
+}
+
+// impl Error for DriverError {};
+impl Display for DriverError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DriverError::ConsoleError(e) => write!(f, "console error, {}", e),
+        }
+    }
+}
+
+type Result<T> = std::result::Result<T, DriverError>;
+
 impl Driver {
-    pub fn new(config: Config) -> Self {
-        let (s, c) = Server::new(config.clone());
+    pub fn new(config: Config) -> Result<Self> {
+        let (s, c) = Server::new(config.clone()).map_err(DriverError::ConsoleError)?;
         let (tx, rx) = mpsc::channel();
-        Self {
+        Ok(Self {
             config,
             s: Some(s),
             s_rx: rx,
@@ -28,15 +45,15 @@ impl Driver {
             c,
             e: None,
             ec: None,
-        }
+        })
     }
 
-    pub fn new_with_engine(config: Config, ext: String) -> Self {
-        let mut res = Self::new(config);
+    pub fn new_with_engine(config: Config, ext: String) -> Result<Self> {
+        let mut res = Self::new(config)?;
         let (engine, enginec) = Engine::new(ext.as_str());
         res.e = Some(engine);
         res.ec = Some(enginec);
-        res
+        Ok(res)
     }
 
     pub fn start(&mut self) -> &mut Self {
@@ -66,31 +83,28 @@ impl Driver {
     }
 
     pub fn stop(&mut self) -> &mut Self {
+        // stop script engine if exists
         if let Some(c) = self.ec.as_mut() {
             c.stop();
         }
+        // stop api handle loop
         self.c.stop();
+
         let server = self.s_rx.recv().unwrap();
-        self.s = Some(server);
-        self.dump_log();
+        server.dump_log();
+        server.stop();
+
         self
     }
 
-    pub fn run_script(&mut self, script: String) -> &mut Self {
+    pub fn run_file(&mut self, script: String) -> &mut Self {
         if let Some(c) = self.ec.as_mut() {
-            c.run(script.as_str());
+            c.run_file(script.as_str());
         }
         self
     }
 
-    fn dump_log(&mut self) -> &mut Self {
-        if let Some(s) = self.s.as_ref() {
-            s.dump_log();
-        }
-        self
-    }
-
-    pub fn new_ssh(&mut self) -> SSH {
-        SSH::new(self.config.console.ssh.clone())
+    pub fn new_ssh(&mut self) -> Result<SSH> {
+        SSH::new(self.config.console.ssh.clone()).map_err(DriverError::ConsoleError)
     }
 }

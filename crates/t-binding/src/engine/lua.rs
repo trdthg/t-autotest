@@ -3,7 +3,7 @@ use crate::ScriptEngine;
 pub struct LuaEngine {}
 
 impl ScriptEngine for LuaEngine {
-    fn run(&mut self, _content: &str) {
+    fn run_file(&mut self, _content: &str) {
         unimplemented!()
     }
 }

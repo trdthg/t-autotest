@@ -13,14 +13,14 @@ pub use vnc::{Rect, VNCError, VNCEventReq, VNCEventRes, PNG, VNC};
 
 #[derive(Debug)]
 pub enum ConsoleError {
-    ConnectionBroken,
+    ConnectionBroken(String),
     Timeout,
 }
 
 impl Display for ConsoleError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            ConsoleError::ConnectionBroken => write!(f, "Connection broken"),
+            ConsoleError::ConnectionBroken(r) => write!(f, "Connection broken, [{}]", r),
             ConsoleError::Timeout => write!(f, "Timeout"),
         }
     }

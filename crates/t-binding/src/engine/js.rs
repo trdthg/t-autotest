@@ -1,8 +1,12 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use crate::{api, ScriptEngine};
+use rquickjs::function::Args;
 use rquickjs::Function;
 use rquickjs::{Context, Runtime};
 use serde::{Deserialize, Serialize};
-use tracing::{error, info, Level};
+use tracing::{error, Level};
 
 pub struct JSEngine {
     _runtime: rquickjs::Runtime,
@@ -10,8 +14,8 @@ pub struct JSEngine {
 }
 
 impl ScriptEngine for JSEngine {
-    fn run(&mut self, content: &str) {
-        self.run(content).unwrap();
+    fn run_file(&mut self, content: &str) {
+        self.run_file(content).unwrap();
     }
 }
 
@@ -225,61 +229,70 @@ impl JSEngine {
         }
     }
 
-    pub fn run(&mut self, script: &str) -> Result<(), String> {
-        let code = format!(
-            r#"try{{
-    // load user script
-    {script}
+    pub fn run_file(&mut self, file: &str) -> Result<(), String> {
+        let base_folder = Path::new(file).parent().unwrap();
+        let filename = Path::new(file).file_name().unwrap().to_str().unwrap();
+        let script = fs::read_to_string(file).unwrap();
+        let pre_libs = search_path(&script);
+        self.context.with(|ctx| {
+            for path in pre_libs {
+                let mut fullpath = PathBuf::new();
+                fullpath.push(base_folder);
+                fullpath.push(&path);
+                let _ = ctx
+                    .clone()
+                    .compile(path.as_str(), fs::read_to_string(fullpath).unwrap())
+                    .map_err(|e| {
+                        format!("lib file: [{}] compile failed: [{}]", path.as_str(), e)
+                    })?;
+            }
+            let module_entry = ctx
+                .clone()
+                .compile(format!("./{filename}"), script)
+                .map_err(|e| format!("entry file compile failed: [{}]", e))?;
 
-    if (typeof prehook === 'function') {{
-        prehook();
-    }}
+            let Ok(main) = module_entry
+                .get("main")
+                .unwrap_or_else(|_| module_entry.get::<&str, Function>("run"))
+            else {
+                return Err(r#"function "main" or "run" must exists"#.to_string());
+            };
 
-    // run user defined run
-    let res = run() || ''
-
-    if (typeof afterhook === 'function') {{
-        afterhook();
-    }}
-
-    // return
-    JSON.stringify({{
-        code: 0,
-        msg: "success",
-        data: JSON.stringify(res),
-    }})
-}} catch(err) {{
-    // return
-    JSON.stringify({{
-        code: 1,
-        msg: err.toString(),
-        data: "",
-    }})
-}}
-"#
-        );
-        info!(msg = "script code", code = ?code);
-        self.context
-            .with(|ctx| match ctx.eval::<String, &str>(code.as_str()) {
-                Ok(result) => {
-                    let result: Response =
-                        serde_json::from_str(&result).expect("js script wrong return type");
-                    if result.code != 0 {
-                        error!(msg = "script run failed", reason = result.msg);
-                    } else {
-                        info!(msg = "script run success", result = ?result);
-                    }
+            // try run prehook, return if run failed
+            if let Ok(prehook) = module_entry.get::<&str, Function>("prehook") {
+                if let Err(e) = prehook.call_arg::<()>(Args::new(ctx.clone(), 0)) {
+                    let msg = format!("prehook run failed: {}", e);
+                    error!(msg);
+                    return Err(msg);
                 }
-                Err(e) => {
-                    error!(
-                        msg = "script run failed, assert_xxx throw exception",
-                        reason = e.to_string(),
-                    );
-                }
-            });
+            }
 
+            // continue if failed
+            if let Err(e) = main.call_arg::<()>(Args::new(ctx.clone(), 0)) {
+                error!("main run failed: {}", e)
+            }
+
+            // try run afterhook
+            if let Ok(afterhook) = module_entry.get::<&str, Function>("afterhook") {
+                if let Err(e) = afterhook.call_arg::<()>(Args::new(ctx.clone(), 0)) {
+                    error!("afterhook run failed: {}", e);
+                }
+            }
+            Ok(())
+        })?;
         Ok(())
     }
+}
+
+const JS_IMPOR_PATTERN: &str = r#"[ 	]*import[ 	]+(.*)[ 	]+from[ 	]+('|")(\S+)('|")"#;
+
+fn search_path(script: &str) -> Vec<String> {
+    let re = regex::Regex::new(JS_IMPOR_PATTERN).unwrap();
+    let mut paths = vec![];
+    for (_, [_, _, path, _]) in re.captures_iter(script).map(|c| c.extract()) {
+        paths.push(path.to_string());
+    }
+    paths
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -292,26 +305,12 @@ struct Response {
 #[cfg(test)]
 mod test {
 
-    use super::JSEngine;
     use rquickjs::{function::Args, Context, Runtime};
 
     fn get_context() -> rquickjs::Context {
         let runtime = Runtime::new().unwrap();
 
         Context::full(&runtime).unwrap()
-    }
-
-    #[test]
-    fn test_engine() {
-        JSEngine::new()
-            .run(
-                r#"
-        print("1");
-        assert_script_run("whoami", 600);
-        print("2");
-    "#,
-            )
-            .unwrap();
     }
 
     #[test]
