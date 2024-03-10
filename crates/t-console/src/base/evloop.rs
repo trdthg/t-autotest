@@ -71,7 +71,7 @@ where
     }
 
     fn pool(&mut self) {
-        let min_interval = Duration::from_millis(10);
+        let min_interval = Duration::from_millis(1000);
         let mut next_round = Instant::now() + min_interval;
         'out: loop {
             // handle serial output

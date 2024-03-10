@@ -52,7 +52,7 @@ impl SSH {
     }
 
     pub fn stop(&self) {
-        if let Err(_) = self.inner.pts.send(Req::Stop) {
+        if self.inner.pts.send(Req::Stop).is_err() {
             error!("ssh evloop stopped failed");
         }
     }

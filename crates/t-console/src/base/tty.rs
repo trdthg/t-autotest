@@ -85,7 +85,7 @@ where
                 );
                 res.then_some(buffer_str)
             }
-            .map_or(ConsumeAction::Continue, |v| ConsumeAction::BreakValue(v))
+            .map_or(ConsumeAction::Continue, ConsumeAction::BreakValue)
         })
     }
 

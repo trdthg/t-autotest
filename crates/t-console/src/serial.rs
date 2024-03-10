@@ -25,7 +25,7 @@ impl Serial {
     }
 
     pub fn stop(&self) {
-        if let Err(_) = self.inner.tty.send(Req::Stop) {
+        if self.inner.tty.send(Req::Stop).is_err() {
             error!("serial evloop stopped failed");
         }
     }
