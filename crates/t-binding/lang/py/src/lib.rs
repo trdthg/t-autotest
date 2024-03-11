@@ -4,17 +4,29 @@ use pyo3::{
     prelude::*,
 };
 use std::{env, time::Duration};
-use t_binding::api;
+use t_binding::{api, ApiError};
 use t_config::{Config, ConsoleSSH};
 use t_console::SSH;
 use t_runner::Driver as InnerDriver;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
-pyo3::create_exception!(defaultmodule, StringError, PyException);
-pyo3::create_exception!(defaultmodule, AssertError, PyException);
-pyo3::create_exception!(defaultmodule, TimeoutError, PyException);
-pyo3::create_exception!(defaultmodule, UnexpectedError, PyException);
+pyo3::create_exception!(defaultmodule, DriverException, PyException);
+pyo3::create_exception!(defaultmodule, AssertException, PyException);
+pyo3::create_exception!(defaultmodule, TimeoutException, PyException);
+
+fn into_pyerr(e: ApiError) -> PyErr {
+    match e {
+        ApiError::ServerStopped => {
+            DriverException::new_err("server stopped, maybe needle not found")
+        }
+        ApiError::ServerInvalidResponse => {
+            DriverException::new_err("server return invalid response, please open an issue")
+        }
+        ApiError::Timeout => TimeoutException::new_err("timeout"),
+        ApiError::AssertFailed => AssertException::new_err("assert failed"),
+    }
+}
 
 /// Entrypoint, A Python module implemented in Rust.
 #[pymodule]
@@ -64,9 +76,10 @@ impl Driver {
     #[new]
     fn __init__(config: String) -> PyResult<Self> {
         let config =
-            Config::from_toml_str(&config).map_err(|e| StringError::new_err(e.to_string()))?;
-        let mut runner = InnerDriver::new(config.clone())
-            .map_err(|e| StringError::new_err(format!("driver init failed, reason: [{}]", e)))?;
+            Config::from_toml_str(&config).map_err(|e| DriverException::new_err(e.to_string()))?;
+        let mut runner = InnerDriver::new(config.clone()).map_err(|e| {
+            DriverException::new_err(format!("driver init failed, reason: [{}]", e))
+        })?;
         runner.start();
         Ok(Self { inner: runner })
     }
@@ -80,68 +93,60 @@ impl Driver {
         self.inner.stop();
     }
 
-    /// Returns the sum of two numbers.
-    #[staticmethod]
-    fn hello() {
-        println!("hello");
-    }
-
     fn sleep(&self, miles: i32) {
         api::sleep(miles as u64);
     }
 
-    fn get_env(&self, key: String) -> Option<String> {
-        api::get_env(key)
+    fn get_env(&self, key: String) -> PyResult<Option<String>> {
+        api::get_env(key).map_err(into_pyerr)
     }
 
     fn assert_script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
-        api::assert_script_run_global(cmd, timeout).ok_or(exceptions::PyAssertionError::new_err(
-            "return code should be 0",
-        ))
+        api::assert_script_run_global(cmd, timeout).map_err(into_pyerr)
     }
 
     fn script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
-        match api::script_run_global(cmd, timeout) {
-            None => Err(TimeoutError::new_err("wait output timeout")),
-            Some(v) => Ok(v),
-        }
+        api::script_run_global(cmd, timeout)
+            .map(|v| v.1)
+            .map_err(into_pyerr)
     }
 
-    fn write_string(&self, s: String) {
-        api::write_string(s);
+    fn write_string(&self, s: String) -> PyResult<()> {
+        api::write_string(s).map_err(into_pyerr)
     }
 
-    fn wait_string_ntimes(&self, s: String, n: i32, timeout: i32) {
-        api::wait_string_ntimes(s, n, timeout)
+    fn wait_string_ntimes(&self, s: String, n: i32, timeout: i32) -> PyResult<()> {
+        api::wait_string_ntimes(s, n, timeout).map_err(into_pyerr)
     }
 
     // ssh
     fn ssh_assert_script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
-        api::ssh_assert_script_run_global(cmd, timeout).ok_or(
-            exceptions::PyAssertionError::new_err("return code should be 0, or timeout"),
-        )
+        api::ssh_assert_script_run_global(cmd, timeout).map_err(into_pyerr)
     }
 
     fn ssh_script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
         api::ssh_script_run_global(cmd, timeout)
-            .ok_or(exceptions::PyAssertionError::new_err("timeout"))
+            .map(|v| v.1)
+            .map_err(into_pyerr)
     }
 
     fn ssh_write_string(&self, s: String) {
         api::ssh_write_string(s);
     }
 
-    fn ssh_assert_script_run_seperate(&self, cmd: String, timeout: i32) -> Option<String> {
-        api::ssh_assert_script_run_seperate(cmd, timeout)
+    fn ssh_assert_script_run_seperate(&self, cmd: String, timeout: i32) -> PyResult<String> {
+        api::ssh_assert_script_run_seperate(cmd, timeout).map_err(into_pyerr)
     }
 
     // serial
-    fn serial_assert_script_run_global(&self, cmd: String, timeout: i32) -> Option<String> {
-        api::serial_assert_script_run_global(cmd, timeout)
+    fn serial_assert_script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
+        api::serial_assert_script_run_global(cmd, timeout).map_err(into_pyerr)
     }
 
-    fn serial_script_run_global(&self, cmd: String, timeout: i32) -> Option<String> {
+    fn serial_script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
         api::serial_script_run_global(cmd, timeout)
+            .map(|v| v.1)
+            .map_err(into_pyerr)
     }
 
     fn serial_write_string(&self, s: String) {
@@ -150,29 +155,23 @@ impl Driver {
 
     // vnc
     fn assert_screen(&self, tag: String, timeout: i32) -> PyResult<()> {
-        if !api::vnc_check_screen(tag, timeout) {
-            Err(exceptions::PyAssertionError::new_err(
-                "return code should be 0",
-            ))
-        } else {
-            Ok(())
-        }
+        api::vnc_assert_screen(tag, timeout).map_err(into_pyerr)
     }
 
-    fn check_screen(&self, tag: String, timeout: i32) -> bool {
-        api::vnc_check_screen(tag, timeout)
+    fn check_screen(&self, tag: String, timeout: i32) -> PyResult<bool> {
+        api::vnc_check_screen(tag, timeout).map_err(into_pyerr)
     }
 
-    fn mouse_click(&self) {
-        api::vnc_mouse_click();
+    fn mouse_click(&self) -> PyResult<()> {
+        api::vnc_mouse_click().map_err(into_pyerr)
     }
 
-    fn mouse_move(&self, x: i32, y: i32) {
-        api::vnc_mouse_move(x as u16, y as u16);
+    fn mouse_move(&self, x: i32, y: i32) -> PyResult<()> {
+        api::vnc_mouse_move(x as u16, y as u16).map_err(into_pyerr)
     }
 
-    fn mouse_hide(&self) {
-        api::vnc_mouse_hide();
+    fn mouse_hide(&self) -> PyResult<()> {
+        api::vnc_mouse_hide().map_err(into_pyerr)
     }
 }
 
@@ -184,7 +183,7 @@ struct DriverSSH {
 impl DriverSSH {
     pub fn new(c: ConsoleSSH) -> PyResult<Self> {
         Ok(Self {
-            inner: SSH::new(c).map_err(|e| StringError::new_err(e.to_string()))?,
+            inner: SSH::new(c).map_err(|e| DriverException::new_err(e.to_string()))?,
         })
     }
 }
@@ -197,10 +196,10 @@ impl DriverSSH {
 
     fn assert_script_run(&mut self, cmd: String, timeout: u64) -> PyResult<String> {
         let Ok(v) = self.inner.exec_global(Duration::from_millis(timeout), &cmd) else {
-            return Err(TimeoutError::new_err("assert script run timeout"));
+            return Err(TimeoutException::new_err("assert script run timeout"));
         };
         if v.0 != 0 {
-            return Err(AssertError::new_err(format!(
+            return Err(AssertException::new_err(format!(
                 "return code should be 0, but got {}",
                 v.0
             )));

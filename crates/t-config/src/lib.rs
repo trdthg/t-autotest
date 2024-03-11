@@ -1,6 +1,6 @@
 mod config;
 pub use config::*;
-use std::{env, error::Error, fmt::Display, fs, io, path::Path};
+use std::{error::Error, fmt::Display, fs, io, path::Path};
 
 #[derive(Debug)]
 pub enum ConfigError {
@@ -20,8 +20,6 @@ impl Display for ConfigError {
 }
 
 pub fn load_config_from_file(f: impl AsRef<Path>) -> Result<Config, ConfigError> {
-    println!("{:?}", f.as_ref().display());
-    println!("{:?}", env::current_dir().unwrap());
     let f = fs::read_to_string(f).map_err(ConfigError::ConfigFileNotFound)?;
     toml::from_str::<Config>(f.as_str()).map_err(ConfigError::DeserializeFailed)
 }

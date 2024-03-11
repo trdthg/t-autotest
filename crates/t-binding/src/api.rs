@@ -1,3 +1,4 @@
+use super::error::{ApiError, Result};
 use crate::{
     get_global_sender,
     msg::{MsgResError, TextConsole},
@@ -6,28 +7,7 @@ use crate::{
 use std::{sync::mpsc, time::Duration};
 use tracing::{error, info, trace, Level};
 
-pub fn print(level: tracing::Level, msg: String) {
-    match level {
-        Level::ERROR => info!(msg = "api print", level = ?level, msg = msg),
-        Level::WARN => info!(msg = "api print", level = ?level, msg = msg),
-        Level::INFO => info!(msg = "api print", level = ?level, msg = msg),
-        Level::DEBUG => info!(msg = "api print", level = ?level, msg = msg),
-        Level::TRACE => info!(msg = "api print", level = ?level, msg = msg),
-    }
-}
-
-pub fn get_env(key: String) -> Option<String> {
-    match req(MsgReq::GetConfig { key }) {
-        MsgRes::ConfigValue(res) => res,
-        _ => panic!("wrong msg type"),
-    }
-}
-
-pub fn sleep(millis: u64) {
-    std::thread::sleep(Duration::from_millis(millis));
-}
-
-pub fn req(req: MsgReq) -> MsgRes {
+fn req(req: MsgReq) -> Result<MsgRes> {
     let msg_tx = get_global_sender();
 
     trace!(msg = "sending req");
@@ -41,186 +21,188 @@ pub fn req(req: MsgReq) -> MsgRes {
 
     trace!(msg = "received res");
     match res {
-        Ok(res) => res,
-        Err(e) => {
-            error!(msg = "main runner loop tx closed", reason = ?e);
-            panic!();
+        Ok(res) => Ok(res),
+        Err(_) => {
+            error!(msg = "req failed, server already stopped");
+            Err(ApiError::ServerStopped)
         }
     }
 }
 
-pub fn assert_script_run_global(cmd: String, timeout: i32) -> Option<String> {
+fn _script_run(cmd: String, console: Option<TextConsole>, timeout: i32) -> Result<(i32, String)> {
     match req(MsgReq::ScriptRunGlobal {
         cmd,
-        console: None,
+        console,
         timeout: Duration::from_millis(timeout as u64),
-    }) {
+    })? {
+        MsgRes::ScriptRun(Ok(res)) => Ok(res),
+        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => Err(ApiError::Timeout),
+        _ => Err(ApiError::ServerInvalidResponse),
+    }
+}
+
+fn _assert_script_run(cmd: String, console: Option<TextConsole>, timeout: i32) -> Result<String> {
+    match req(MsgReq::ScriptRunGlobal {
+        cmd,
+        console,
+        timeout: Duration::from_millis(timeout as u64),
+    })? {
         MsgRes::ScriptRun(Ok(res)) => {
             if res.0 == 0 {
-                Some(res.1)
+                Ok(res.1)
             } else {
-                None
+                Err(ApiError::AssertFailed)
             }
         }
-        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => None,
-        _ => panic!("wrong msg type"),
+        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => Err(ApiError::Timeout),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
 }
 
-pub fn script_run_global(cmd: String, timeout: i32) -> Option<String> {
-    match req(MsgReq::ScriptRunGlobal {
-        cmd,
-        console: None,
-        timeout: Duration::from_millis(timeout as u64),
-    }) {
-        MsgRes::ScriptRun(Ok(res)) => Some(res.1),
-        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => None,
-        _ => panic!("wrong msg type"),
+fn _write_string(s: String, console: Option<TextConsole>) -> Result<()> {
+    match req(MsgReq::WriteStringGlobal { s, console })? {
+        MsgRes::Done => Ok(()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
 }
 
-pub fn write_string(s: String) {
-    match req(MsgReq::WriteStringGlobal { s, console: None }) {
-        MsgRes::Done => {}
-        _ => panic!("wrong msg type"),
-    }
-}
-
-pub fn wait_string_ntimes(s: String, n: i32, timeout: i32) {
+fn _wait_string_ntimes(
+    console: Option<TextConsole>,
+    s: String,
+    n: i32,
+    timeout: i32,
+) -> Result<()> {
     match req(MsgReq::WaitStringGlobal {
-        console: None,
+        console,
         s,
         n,
         timeout: Duration::from_secs(timeout as u64),
-    }) {
-        MsgRes::Done => {}
-        _ => panic!("wrong msg type"),
+    })? {
+        MsgRes::Done => Ok(()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
 }
 
-pub fn ssh_assert_script_run_seperate(cmd: String, timeout: i32) -> Option<String> {
+// general
+pub fn print(level: tracing::Level, msg: String) {
+    match level {
+        Level::ERROR => info!(msg = "api print", level = ?level, msg = msg),
+        Level::WARN => info!(msg = "api print", level = ?level, msg = msg),
+        Level::INFO => info!(msg = "api print", level = ?level, msg = msg),
+        Level::DEBUG => info!(msg = "api print", level = ?level, msg = msg),
+        Level::TRACE => info!(msg = "api print", level = ?level, msg = msg),
+    }
+}
+
+pub fn sleep(millis: u64) {
+    std::thread::sleep(Duration::from_millis(millis));
+}
+
+pub fn get_env(key: String) -> Result<Option<String>> {
+    match req(MsgReq::GetConfig { key })? {
+        MsgRes::ConfigValue(res) => Ok(res),
+        _ => Err(ApiError::ServerInvalidResponse),
+    }
+}
+
+// default
+pub fn script_run_global(cmd: String, timeout: i32) -> Result<(i32, String)> {
+    _script_run(cmd, None, timeout)
+}
+
+pub fn assert_script_run_global(cmd: String, timeout: i32) -> Result<String> {
+    _assert_script_run(cmd, None, timeout)
+}
+
+pub fn write_string(s: String) -> Result<()> {
+    _write_string(s, None)
+}
+
+pub fn wait_string_ntimes(s: String, n: i32, timeout: i32) -> Result<()> {
+    _wait_string_ntimes(None, s, n, timeout)
+}
+
+// serial
+pub fn serial_script_run_global(cmd: String, timeout: i32) -> Result<(i32, String)> {
+    _script_run(cmd, Some(TextConsole::Serial), timeout)
+}
+
+pub fn serial_assert_script_run_global(cmd: String, timeout: i32) -> Result<String> {
+    _assert_script_run(cmd, Some(TextConsole::Serial), timeout)
+}
+
+pub fn serial_write_string(s: String) -> Result<()> {
+    _write_string(s, Some(TextConsole::Serial))
+}
+
+// ssh
+pub fn ssh_assert_script_run_seperate(cmd: String, timeout: i32) -> Result<String> {
     match req(MsgReq::SSHScriptRunSeperate {
         cmd,
         timeout: Duration::from_millis(timeout as u64),
-    }) {
+    })? {
         MsgRes::ScriptRun(Ok(res)) => {
             if res.0 == 0 {
-                Some(res.1)
+                Ok(res.1)
             } else {
-                None
+                Err(ApiError::AssertFailed)
             }
         }
-        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => None,
-        _ => panic!("wrong msg type"),
+        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => Err(ApiError::Timeout),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
 }
 
-pub fn ssh_assert_script_run_global(cmd: String, timeout: i32) -> Option<String> {
-    match req(MsgReq::ScriptRunGlobal {
-        cmd,
-        console: Some(TextConsole::SSH),
-        timeout: Duration::from_millis(timeout as u64),
-    }) {
-        MsgRes::ScriptRun(Ok(res)) => {
-            if res.0 == 0 {
-                Some(res.1)
-            } else {
-                None
-            }
-        }
-        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => None,
-        _ => panic!("wrong msg type"),
-    }
+pub fn ssh_script_run_global(cmd: String, timeout: i32) -> Result<(i32, String)> {
+    _script_run(cmd, Some(TextConsole::SSH), timeout)
 }
 
-pub fn ssh_script_run_global(cmd: String, timeout: i32) -> Option<String> {
-    match req(MsgReq::ScriptRunGlobal {
-        cmd,
-        console: Some(TextConsole::SSH),
-        timeout: Duration::from_millis(timeout as u64),
-    }) {
-        MsgRes::ScriptRun(Ok(res)) => Some(res.1),
-        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => None,
-        _ => panic!("wrong msg type"),
-    }
+pub fn ssh_assert_script_run_global(cmd: String, timeout: i32) -> Result<String> {
+    _assert_script_run(cmd, Some(TextConsole::SSH), timeout)
 }
 
-pub fn ssh_write_string(s: String) {
-    match req(MsgReq::WriteStringGlobal {
-        s,
-        console: Some(TextConsole::SSH),
-    }) {
-        MsgRes::Done => {}
-        _ => panic!("wrong msg type"),
-    }
+pub fn ssh_write_string(s: String) -> Result<()> {
+    _write_string(s, Some(TextConsole::SSH))
 }
 
-pub fn serial_script_run_global(cmd: String, timeout: i32) -> Option<String> {
-    match req(MsgReq::ScriptRunGlobal {
-        cmd,
-        console: Some(TextConsole::Serial),
-        timeout: Duration::from_millis(timeout as u64),
-    }) {
-        MsgRes::ScriptRun(Ok(res)) => Some(res.1),
-        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => None,
-        _ => panic!("wrong msg type"),
-    }
-}
-
-pub fn serial_assert_script_run_global(cmd: String, timeout: i32) -> Option<String> {
-    match req(MsgReq::ScriptRunGlobal {
-        cmd,
-        console: Some(TextConsole::Serial),
-        timeout: Duration::from_millis(timeout as u64),
-    }) {
-        MsgRes::ScriptRun(Ok(res)) => {
-            if res.0 == 0 {
-                Some(res.1)
-            } else {
-                None
-            }
-        }
-        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => None,
-        _ => panic!("wrong msg type"),
-    }
-}
-
-pub fn serial_write_string(s: String) {
-    match req(MsgReq::WriteStringGlobal {
-        s,
-        console: Some(TextConsole::Serial),
-    }) {
-        MsgRes::Done => {}
-        _ => panic!("wrong msg type"),
-    }
-}
-
-pub fn vnc_check_screen(tag: String, timeout: i32) -> bool {
-    let res = match req(MsgReq::AssertScreen {
+// vnc
+pub fn vnc_check_screen(tag: String, timeout: i32) -> Result<bool> {
+    match req(MsgReq::AssertScreen {
         tag: tag.clone(),
         threshold: 1,
         timeout: Duration::from_millis(timeout as u64),
-    }) {
-        MsgRes::AssertScreen { similarity: 0, ok } => ok,
-        _ => panic!("wrong msg type"), // timeout
-    };
-    info!(
-        msg = "vnc_check_screen",
-        api = "assert_screen",
-        result = res,
-        tag = tag
-    );
-    res
+    })? {
+        MsgRes::AssertScreen { similarity: 0, ok } => Ok(ok),
+        _ => Err(ApiError::ServerInvalidResponse),
+    }
 }
 
-pub fn vnc_mouse_move(x: u16, y: u16) {
-    assert!(matches!(req(MsgReq::MouseMove { x, y }), MsgRes::Done));
+pub fn vnc_assert_screen(tag: String, timeout: i32) -> Result<()> {
+    let res = vnc_check_screen(tag, timeout)?;
+    if res {
+        Ok(())
+    } else {
+        Err(ApiError::AssertFailed)
+    }
 }
 
-pub fn vnc_mouse_hide() {
-    assert!(matches!(req(MsgReq::MouseHide), MsgRes::Done));
+pub fn vnc_mouse_move(x: u16, y: u16) -> Result<()> {
+    if matches!(req(MsgReq::MouseMove { x, y })?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
 }
 
-pub fn vnc_mouse_click() {
-    assert!(matches!(req(MsgReq::MouseClick), MsgRes::Done));
+pub fn vnc_mouse_hide() -> Result<()> {
+    if matches!(req(MsgReq::MouseHide)?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
+}
+
+pub fn vnc_mouse_click() -> Result<()> {
+    if matches!(req(MsgReq::MouseClick)?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
 }

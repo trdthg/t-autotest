@@ -2,7 +2,7 @@ use std::{
     error::Error,
     fmt::Display,
     io,
-    net::TcpStream,
+    net::{SocketAddr, TcpStream},
     ops::Add,
     path::PathBuf,
     sync::mpsc::{self, channel, Receiver, Sender},
@@ -57,14 +57,13 @@ impl Display for VNCError {
 }
 
 impl VNC {
-    pub fn connect<A: Into<String>>(
-        addrs: A,
+    pub fn connect(
+        addr: SocketAddr,
         password: Option<String>,
         screenshot_dir: Option<String>,
     ) -> Result<Self, VNCError> {
         let stream =
-            TcpStream::connect_timeout(&addrs.into().parse().unwrap(), Duration::from_secs(3))
-                .map_err(VNCError::Io)?;
+            TcpStream::connect_timeout(&addr, Duration::from_secs(3)).map_err(VNCError::Io)?;
 
         let mut vnc = t_vnc::Client::from_tcp_stream(stream, false, |methods| {
             for method in methods {
@@ -153,6 +152,12 @@ impl VNC {
 
         Ok(Self { event_tx, stop_tx })
     }
+
+    pub fn stop(&self) {
+        if self.stop_tx.send(()).is_err() {
+            error!("vnc stopped failed")
+        }
+    }
 }
 
 struct VncClientInner {
@@ -184,9 +189,9 @@ impl VncClientInner {
             const FRAME_MS: u64 = 1000 / 60;
             let start = std::time::Instant::now();
 
-            trace!(msg = "waiting new events");
+            trace!(msg = "vnc waiting new events");
             for event in vnc.poll_iter() {
-                info!(msg = "receive new event");
+                debug!(msg = "vnc receive new event");
                 use t_vnc::client::Event;
                 match event {
                     Event::Disconnected(None) => {
@@ -215,12 +220,12 @@ impl VncClientInner {
                         });
                     }
                     Event::EndOfFrame => {
-                        info!(msg = "Event::EndOfFrame");
+                        info!(msg = "vnc event Event::EndOfFrame");
                         self.stable_screen = self.unstable_screen.clone();
                         if self.screenshot
                             && self.screenshot_tx.send(self.stable_screen.clone()).is_err()
                         {
-                            info!(msg = "vnc inner client stopped");
+                            info!(msg = "vnc client stopped");
                             break;
                         }
                     }

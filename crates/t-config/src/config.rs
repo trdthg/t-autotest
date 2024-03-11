@@ -6,7 +6,6 @@ pub struct Config {
     pub machine: String,
     pub arch: String,
     pub os: String,
-    pub log_dir: String,
     pub needle_dir: String,
     pub console: Console,
     pub env: HashMap<String, toml::Value>,
@@ -33,6 +32,7 @@ pub struct ConsoleSSH {
     pub username: String,
     pub auth: ConsoleSSHAuth,
     pub timeout: Option<Duration>,
+    pub log_file: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -56,6 +56,7 @@ pub struct ConsoleSerial {
     pub auto_login: bool,
     pub username: Option<String>,
     pub password: Option<String>,
+    pub log_file: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]

@@ -39,14 +39,14 @@ impl Serial {
     fn connect_from_serial_config(
         c: &t_config::ConsoleSerial,
     ) -> Result<SerialClient<crate::VT102>> {
-        info!(msg = "init ssh...");
         let username = c.username.clone().unwrap_or_default();
         let password = c.password.clone().unwrap_or_default();
         let auth = match c.auto_login {
             true => Some((username.as_str(), password.as_str())),
             false => None,
         };
-        let ssh_client = SerialClient::connect(&c.serial_file, c.bund_rate, auth)?;
+        let ssh_client =
+            SerialClient::connect(&c.serial_file, c.bund_rate, auth, c.log_file.clone())?;
         Ok(ssh_client)
     }
 
@@ -115,7 +115,12 @@ impl<T> SerialClient<T>
 where
     T: Term,
 {
-    pub fn connect(file: &str, bund_rate: u32, auth: Option<(&str, &str)>) -> Result<Self> {
+    pub fn connect(
+        file: &str,
+        bund_rate: u32,
+        auth: Option<(&str, &str)>,
+        log_file: Option<String>,
+    ) -> Result<Self> {
         // init tty
         // t_util::execute_shell(
         //     format!("stty -F {} {} -echo -icrnl -onlcr -icanon", file, bund_rate).as_str(),
@@ -129,7 +134,7 @@ where
         })?;
 
         let mut res = Self {
-            tty: Tty::new(EvLoopCtl::new(port)),
+            tty: Tty::new(EvLoopCtl::new(port, log_file)),
             path: "".to_string(),
         };
 
@@ -270,7 +275,7 @@ mod test {
             false => None,
         };
 
-        SerialClient::connect(&c.serial_file, c.bund_rate, auth).unwrap()
+        SerialClient::connect(&c.serial_file, c.bund_rate, auth, None).unwrap()
     }
 
     #[test]

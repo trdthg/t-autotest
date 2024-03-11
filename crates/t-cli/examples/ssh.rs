@@ -39,6 +39,7 @@ fn main() {
             password: None,
         },
         timeout: None,
+        log_file: None,
     }) {
         Ok(mut ssh) => {
             info!("Connected");

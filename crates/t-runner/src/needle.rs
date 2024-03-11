@@ -12,29 +12,29 @@ impl NeedleManager {
         Self { dir: dir.into() }
     }
 
-    pub fn load_by_tag(&self, tag: &str) -> (NeedleConfig, PNG) {
+    pub fn load_by_tag(&self, tag: &str) -> Option<(NeedleConfig, PNG)> {
         let needle_png = self.load_file_by_tag(tag);
-        let json_file = File::open(self.dir.join(format!("{tag}.json"))).unwrap();
-        let json: NeedleConfig = serde_json::from_reader(BufReader::new(json_file)).unwrap();
-        (json, needle_png)
+        let json_file = File::open(self.dir.join(format!("{tag}.json"))).ok()?;
+        let json: NeedleConfig = serde_json::from_reader(BufReader::new(json_file)).ok()?;
+        Some((json, needle_png?))
     }
 
-    pub fn load_file_by_tag(&self, tag: &str) -> PNG {
-        println!("{}", self.dir.join(format!("{tag}.png")).display());
-        let needle_file = File::open(self.dir.join(format!("{tag}.png"))).unwrap();
-        let needle_png = image::load(BufReader::new(needle_file), image::ImageFormat::Png).unwrap();
-
-        needle_png.into_rgb8()
+    pub fn load_file_by_tag(&self, tag: &str) -> Option<PNG> {
+        let needle_file = File::open(self.dir.join(format!("{tag}.png"))).ok()?;
+        let needle_png = image::load(BufReader::new(needle_file), image::ImageFormat::Png).ok()?;
+        Some(needle_png.into_rgb8())
     }
 
-    pub fn cmp_by_tag(&self, s: &PNG, tag: &str) -> bool {
-        let (needle_cfg, needle_png) = self.load_by_tag(tag);
+    pub fn cmp_by_tag(&self, s: &PNG, tag: &str) -> Option<bool> {
+        let Some((needle_cfg, needle_png)) = self.load_by_tag(tag) else {
+            return None;
+        };
         for area in needle_cfg.area.iter() {
             if !cmp_image_rect(&needle_png, s, &area.into()) {
-                return false;
+                return Some(false);
             }
         }
-        true
+        Some(true)
     }
 }
 
@@ -45,7 +45,7 @@ pub fn cmp_image_full(img1: &PNG, img2: &PNG) -> bool {
         return false;
     }
 
-    // 比较每个像素的RGB值
+    // 比较每个像素的 RGB 值
     for (pixel1, pixel2) in img1.pixels().zip(img2.pixels()) {
         let rgb1 = pixel1;
         let rgb2 = pixel2;
@@ -62,7 +62,7 @@ pub fn cmp_image_rect(img1: &PNG, img2: &PNG, rect: &Rect) -> bool {
         return false;
     }
 
-    // 比较每个像素的RGB值
+    // 比较每个像素的 RGB 值
     for x in rect.left..rect.left + rect.width {
         for y in rect.top..rect.top + rect.height {
             if img1.get_pixel(x as u32, y as u32) != img2.get_pixel(x as u32, y as u32) {
@@ -190,7 +190,7 @@ mod test {
     #[test]
     fn get_needle() {
         let needle = init_needle_manager();
-        let (cfg, png) = needle.load_by_tag("output");
+        let (cfg, png) = needle.load_by_tag("output").unwrap();
 
         assert_eq!(
             cfg,
@@ -216,7 +216,7 @@ mod test {
         };
         assert!(cmp_image_rect(&png, &png, &rect));
 
-        let png2 = needle.load_file_by_tag("output2");
+        let png2 = needle.load_file_by_tag("output2").unwrap();
         assert!(!cmp_image_rect(&png, &png2, &rect));
     }
 }

@@ -91,7 +91,6 @@ impl Driver {
         self.c.stop();
 
         let server = self.s_rx.recv().unwrap();
-        server.dump_log();
         server.stop();
 
         self

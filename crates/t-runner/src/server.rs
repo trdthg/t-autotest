@@ -1,9 +1,6 @@
 use crate::needle::NeedleManager;
 use parking_lot::Mutex;
 use std::{
-    fs::{self},
-    ops::Add,
-    path::PathBuf,
     sync::{
         mpsc::{self, Receiver, Sender},
         Arc,
@@ -65,34 +62,23 @@ pub struct ServerClient {
 impl ServerClient {
     pub fn stop(&self) {
         let (tx, rx) = mpsc::channel();
-        if let Err(e) = self.stop_tx.send(tx) {
-            error!(msg = "script engine sender closed", reason = ?e);
+        if self.stop_tx.send(tx).is_err() {
+            error!(msg = "server stopped failed");
+            return;
         }
-        rx.recv().unwrap();
+        if rx.recv().is_err() {
+            error!(msg = "script stopped unexpected");
+        }
     }
 }
 
 impl Server {
     pub fn new(c: Config) -> Result<(Self, ServerClient), ConsoleError> {
-        // create folder if not exists
-        let folders = vec![
-            Some(c.needle_dir.clone()),
-            Some(c.log_dir.clone()),
-            c.console.vnc.screenshot_dir.clone(),
-        ];
-        folders.iter().flatten().for_each(|f| {
-            if fs::metadata(f).is_err() {
-                fs::create_dir_all(f).unwrap();
-            }
-        });
-
         let Console {
             ssh: _ssh,
             serial: _serial,
             vnc: _vnc,
         } = c.console.clone();
-
-        info!(msg = "init...");
 
         let serial_client = if _serial.enable {
             Some(Serial::new(_serial)?)
@@ -107,13 +93,13 @@ impl Server {
         };
 
         let vnc_client = if _vnc.enable {
-            info!(msg = "init vnc...");
-            let vnc_client = VNC::connect(
-                format!("{}:{}", _vnc.host, _vnc.port),
-                _vnc.password.clone(),
-                _vnc.screenshot_dir,
-            )
-            .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))?;
+            let addr = format!("{}:{}", _vnc.host, _vnc.port)
+                .parse()
+                .map_err(|e| {
+                    ConsoleError::ConnectionBroken(format!("vnc addr is not valid, {}", e))
+                })?;
+            let vnc_client = VNC::connect(addr, _vnc.password.clone(), _vnc.screenshot_dir)
+                .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))?;
             info!(msg = "init vnc done");
             Some(vnc_client)
         } else {
@@ -286,8 +272,8 @@ impl Server {
                     timeout,
                 } => {
                     let nmg = NeedleManager::new(&config.needle_dir);
-                    let res = {
-                        let deadline = time::Instant::now().add(timeout);
+                    let res: Result<bool, MsgResError> = {
+                        let deadline = time::Instant::now() + timeout;
                         loop {
                             let (tx, rx) = mpsc::channel();
 
@@ -298,7 +284,10 @@ impl Server {
 
                             match rx.recv_timeout(deadline - time::Instant::now()) {
                                 Ok(VNCEventRes::Screen(s)) => {
-                                    let res = nmg.cmp_by_tag(&s, &tag);
+                                    let Some(res) = nmg.cmp_by_tag(&s, &tag) else {
+                                        error!(msg = "Needle file not found", tag = tag);
+                                        break Ok(false);
+                                    };
                                     if !res {
                                         warn!(msg = "match failed", tag = tag);
                                         continue;
@@ -366,27 +355,7 @@ impl Server {
     pub fn stop(&self) {
         self.ssh_client.map_mut(|c| c.stop());
         self.serial_client.map_mut(|s| s.stop());
-    }
-
-    pub fn dump_log(&self) {
-        let mut log_path = PathBuf::new();
-        log_path.push(&self.config.log_dir);
-
-        if self.config.console.ssh.enable {
-            let history = self.ssh_client.map_mut(|c| c.history()).unwrap();
-            log_path.push("ssh_full_log.txt");
-            fs::write(&log_path, history).unwrap();
-            log_path.pop();
-            info!(msg = "collecting ssh log done");
-        }
-
-        if self.config.console.serial.enable {
-            let history = self.serial_client.map_mut(|c| c.history()).unwrap();
-            log_path.push("serial_full_log.txt");
-            fs::write(&log_path, history).unwrap();
-            log_path.pop();
-            info!(msg = "collecting serialport log done");
-        }
+        self.vnc_client.map_mut(|s| s.stop());
     }
 }
 
