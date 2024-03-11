@@ -85,6 +85,7 @@ impl SSH {
             &auth,
             c.username.clone(),
             format!("{}:{}", c.host, c.port),
+            c.log_file.clone(),
         )
         .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))
     }
@@ -187,6 +188,7 @@ where
         auth: &SSHAuthAuth<P>,
         user: impl Into<String>,
         addrs: A,
+        log_file: Option<String>,
     ) -> std::result::Result<Self, std::io::Error> {
         let tcp = TcpStream::connect(addrs)?;
         let mut sess = ssh2::Session::new()?;
@@ -218,7 +220,7 @@ where
 
         let res = Self {
             session: sess,
-            pts: Tty::new(EvLoopCtl::new(channel)),
+            pts: Tty::new(EvLoopCtl::new(channel, log_file)),
             pts_file: "".to_string(),
         };
 

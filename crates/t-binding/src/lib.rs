@@ -1,11 +1,13 @@
 pub mod api;
 mod engine;
+mod error;
 mod msg;
 
 use std::sync::{mpsc::Sender, RwLock};
 use tracing::error;
 
 pub use engine::{JSEngine, LuaEngine};
+pub use error::{ApiError, Result};
 pub use msg::{MsgReq, MsgRes, MsgResError, TextConsole};
 
 pub enum EngineError {}

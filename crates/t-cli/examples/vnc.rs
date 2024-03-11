@@ -39,5 +39,10 @@ fn main() {
         cli.password
     );
 
-    VNC::connect(format!("{}:{}", cli.host, cli.port), cli.password, None).unwrap();
+    VNC::connect(
+        format!("{}:{}", cli.host, cli.port).parse().unwrap(),
+        cli.password,
+        None,
+    )
+    .unwrap();
 }

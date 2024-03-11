@@ -46,19 +46,10 @@ pub struct RectContainer<P> {
     pub data: Vec<P>,
 }
 
-impl<P: Clone + Sized> RectContainer<P> {
+impl<P: Clone + Sized + Default> RectContainer<P> {
     pub fn new(rect: Rect) -> Self {
         let cap = rect.width as usize * rect.height as usize;
-        let mut data = Vec::with_capacity(cap);
-
-        unsafe {
-            let size_of_element = std::mem::size_of::<u32>();
-            let buffer_ptr = data.as_mut_ptr();
-            std::ptr::write_bytes(buffer_ptr, 0, cap * size_of_element);
-            data.set_len(cap);
-        }
-
-        unsafe { data.set_len(rect.width as usize * rect.height as usize) };
+        let data = vec![P::default(); cap];
         Self { rect, data }
     }
 
