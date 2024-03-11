@@ -2,6 +2,10 @@ let
   pkgs = import (fetchTarball https://nixos.org/channels/nixos-unstable/nixexprs.tar.xz) { };
   prepareVenvIfNotExists = ''
     # create .venv if not exists
+    version_output=$(.venv/bin/python --version 2>&1)
+    if [ $? -ne 0 ]; then
+      rm -rf .venv
+    fi
     if [ ! -d .venv ]; then
       python3 -m venv .venv
     fi
