@@ -33,4 +33,3 @@ image              = { workspace = true }
 png                = { workspace = true }
 parking_lot        = { workspace = true }
 nanoid             = { workspace = true }
-atty               = { workspace = true }

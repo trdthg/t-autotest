@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::{env, fs, path::Path};
+use std::{env, fs, io::IsTerminal, path::Path};
 use t_config::Config;
 use t_runner::Driver;
 use tracing::{error, info, Level};
@@ -22,7 +22,7 @@ fn main() {
         .without_time()
         .with_target(false)
         .with_level(true)
-        .with_ansi(atty::is(atty::Stream::Stdout))
+        .with_ansi(std::io::stdout().is_terminal())
         .with_source_location(true)
         .compact();
 

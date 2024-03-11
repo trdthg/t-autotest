@@ -17,6 +17,7 @@ username         = ""
 auth.type        = "PrivateKey"
 auth.password    = ""
 auth.private_key = ""
+log_file         = "ssh.log"
 
 [console.serial]
 enable     = false
@@ -25,6 +26,7 @@ auto_login = false
 # password    = "password"
 serial_file = "/dev/ttyUSB0"
 bund_rate   = 115200
+log_file    = "serial.log"
 
 [console.vnc]
 enable   = false
