@@ -1,5 +1,3 @@
-pub mod recorder;
-
 use clap::{Parser, Subcommand};
 use std::{env, fs, io::IsTerminal, path::Path};
 use t_config::Config;
@@ -65,7 +63,7 @@ fn main() {
             env,
         } => {
             let mut config: Config =
-                toml::from_str(fs::read_to_string(&config).unwrap().as_str()).unwrap();
+                toml::from_str(fs::read_to_string(config).unwrap().as_str()).unwrap();
             info!(msg = "current config", config = ?config);
 
             for e in env {

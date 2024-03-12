@@ -1,15 +1,6 @@
-use std::{fmt::Display, sync::mpsc};
+use std::fmt::Display;
 
-use t_config::Config;
 use t_console::ConsoleError;
-
-use crate::Server;
-
-pub struct Driver {
-    pub config: Config,
-    server: Server,
-    server_stop_tx: mpsc::Sender<()>,
-}
 
 #[derive(Debug)]
 pub enum DriverError {

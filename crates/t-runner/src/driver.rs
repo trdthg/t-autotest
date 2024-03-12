@@ -24,7 +24,7 @@ impl Driver {
     pub fn new(config: Config) -> Result<Self> {
         let mut builder = ServerBuilder::new(config.clone());
 
-        let ref _vnc = config.console.vnc;
+        let _vnc = &config.console.vnc;
         if _vnc.enable {
             if let Some(ref dir) = _vnc.screenshot_dir {
                 let (screenshot_tx, screenshot_rx) = mpsc::channel();

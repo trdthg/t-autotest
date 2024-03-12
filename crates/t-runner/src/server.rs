@@ -151,7 +151,7 @@ impl Server {
 
         loop {
             // stop on receive done signal
-            if let Ok(_) = self.stop_rx.try_recv() {
+            if self.stop_rx.try_recv().is_ok() {
                 info!(msg = "runner handler thread stopped");
                 break;
             }
