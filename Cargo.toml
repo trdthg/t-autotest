@@ -23,7 +23,6 @@ documentation = "https://github.com/trdthg/t-autotest"
 
 [workspace.dependencies]
 # Crates
-t-cli     = { path = "./crates/t-cli" }
 t-runner  = { path = "./crates/t-runner" }
 t-console = { path = "./crates/t-console" }
 t-vnc     = { path = "./crates/t-vnc" }

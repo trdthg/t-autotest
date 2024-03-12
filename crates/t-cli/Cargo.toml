@@ -1,5 +1,5 @@
 [package]
-name                    = "t-cli"
+name                    = "autotest"
 version                 = "0.1.0"
 description.workspace   = true
 authors.workspace       = true
@@ -10,10 +10,6 @@ homepage.workspace      = true
 documentation.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[[bin]]
-name = "autotest"
-path = "bin/autotest.rs"
 
 [dependencies]
 t-console = { workspace = true }
@@ -38,3 +34,5 @@ image              = { workspace = true }
 png                = { workspace = true }
 parking_lot        = { workspace = true }
 nanoid             = { workspace = true }
+eframe             = { version = "0.26.2" }
+egui_extras        = { version = "0.26.2", features = ["default", "all_loaders"] }

@@ -4,10 +4,9 @@ use std::{
     io,
     net::{SocketAddr, TcpStream},
     ops::Add,
-    path::PathBuf,
     sync::mpsc::{self, channel, Receiver, Sender},
     thread,
-    time::{self, Duration, UNIX_EPOCH},
+    time::Duration,
 };
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
@@ -24,7 +23,7 @@ pub enum VNCEventReq {
     MoveDown,
     MoveUp,
     MouseHide,
-    Dump,
+    TakeScreenShot,
 }
 
 pub type PNG = ImageBuffer<image::Rgb<u8>, Vec<u8>>;
@@ -38,7 +37,6 @@ pub enum VNCEventRes {
 pub struct VNC {
     pub event_tx: Sender<(VNCEventReq, Sender<VNCEventRes>)>,
     pub stop_tx: Sender<()>,
-    // pub screenshot_dir: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -57,15 +55,11 @@ impl Display for VNCError {
 }
 
 impl VNC {
-    pub fn connect(
-        addr: SocketAddr,
-        password: Option<String>,
-        screenshot_dir: Option<String>,
-    ) -> Result<Self, VNCError> {
+    fn _connect(addr: SocketAddr, password: Option<String>) -> Result<t_vnc::Client, VNCError> {
         let stream =
             TcpStream::connect_timeout(&addr, Duration::from_secs(3)).map_err(VNCError::Io)?;
 
-        let mut vnc = t_vnc::Client::from_tcp_stream(stream, false, |methods| {
+        let vnc = t_vnc::Client::from_tcp_stream(stream, false, |methods| {
             for method in methods {
                 match method {
                     t_vnc::client::AuthMethod::None => {
@@ -95,60 +89,38 @@ impl VNC {
             None
         })
         .map_err(VNCError::VNCError)?;
+        Ok(vnc)
+    }
 
-        vnc.format();
-
+    pub fn connect(
+        addr: SocketAddr,
+        password: Option<String>,
+        screenshot_tx: Option<Sender<RectContainer<[u8; 3]>>>,
+    ) -> Result<Self, VNCError> {
+        let mut vnc = VNC::_connect(addr, password)?;
         let size = vnc.size();
         let pixel_format = vnc.format();
 
         let (event_tx, event_rx) = mpsc::channel();
         let (stop_tx, stop_rx) = channel();
-        let (screenshot_tx, screenshot_rx) = channel();
-
-        let mut inner = VncClientInner {
-            width: size.0,
-            height: size.1,
-            mouse_x: size.0,
-            mouse_y: size.1,
-            pixel_format,
-            unstable_screen: RectContainer::new((0, 0, size.0, size.1).into()),
-            stable_screen: RectContainer::new((0, 0, size.0, size.1).into()),
-
-            event_rx,
-            stop_rx,
-            screenshot_tx,
-
-            screenshot: screenshot_dir.is_some(),
-        };
 
         thread::spawn(move || {
-            inner.pool(&mut vnc);
+            VncClientInner {
+                width: size.0,
+                height: size.1,
+                mouse_x: size.0,
+                mouse_y: size.1,
+                pixel_format,
+                unstable_screen: RectContainer::new((0, 0, size.0, size.1).into()),
+                stable_screen: RectContainer::new((0, 0, size.0, size.1).into()),
+
+                event_rx,
+                stop_rx,
+
+                screenshot_tx,
+            }
+            .pool(&mut vnc);
         });
-
-        if let Some(dir) = screenshot_dir {
-            let path: PathBuf = PathBuf::from(dir);
-            thread::spawn(move || {
-                let mut path = path;
-                while let Ok(screen) = screenshot_rx.recv() {
-                    let p = ImageBuffer::from(screen);
-
-                    let image_name = format!(
-                        "output-{}.png",
-                        time::SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs(),
-                    );
-                    path.push(&image_name);
-                    p.save(&path).unwrap();
-                    path.pop();
-
-                    path.push("latest.png");
-                    p.save(&path).unwrap();
-                    path.pop();
-                }
-            });
-        }
 
         Ok(Self { event_tx, stop_tx })
     }
@@ -172,9 +144,7 @@ struct VncClientInner {
 
     event_rx: Receiver<(VNCEventReq, Sender<VNCEventRes>)>,
     stop_rx: Receiver<()>,
-    screenshot_tx: Sender<RectContainer<[u8; 3]>>,
-
-    screenshot: bool,
+    screenshot_tx: Option<Sender<RectContainer<[u8; 3]>>>,
 }
 
 impl VncClientInner {
@@ -222,11 +192,11 @@ impl VncClientInner {
                     Event::EndOfFrame => {
                         info!(msg = "vnc event Event::EndOfFrame");
                         self.stable_screen = self.unstable_screen.clone();
-                        if self.screenshot
-                            && self.screenshot_tx.send(self.stable_screen.clone()).is_err()
-                        {
-                            info!(msg = "vnc client stopped");
-                            break;
+                        if let Some(ref tx) = self.screenshot_tx {
+                            if tx.send(self.stable_screen.clone()).is_err() {
+                                self.screenshot_tx = None;
+                                info!(msg = "vnc client stopped");
+                            }
                         }
                     }
                     Event::Clipboard(ref _text) => {}
@@ -249,36 +219,52 @@ impl VncClientInner {
                     VNCEventReq::SendKey(_) => unimplemented!(),
                     VNCEventReq::MouseMove(x, y) => {
                         debug!(msg = "mouse move", x = x, y = y);
-                        vnc.send_pointer_event(mouse_buttons_mask, x, y).unwrap();
+                        if vnc.send_pointer_event(mouse_buttons_mask, x, y).is_err() {
+                            break;
+                        };
                         self.mouse_x = x;
                         self.mouse_y = y;
                         VNCEventRes::Done
                     }
                     VNCEventReq::MoveDown => {
                         let mouse_button = mouse_buttons_mask | mouse_button_left;
-                        vnc.send_pointer_event(mouse_button, self.mouse_x, self.mouse_y)
-                            .unwrap();
+                        if vnc
+                            .send_pointer_event(mouse_button, self.mouse_x, self.mouse_y)
+                            .is_err()
+                        {
+                            break;
+                        };
                         VNCEventRes::Done
                     }
                     VNCEventReq::MoveUp => {
                         let mouse_button = mouse_buttons_mask & !mouse_button_left;
-                        vnc.send_pointer_event(mouse_button, self.mouse_x, self.mouse_y)
-                            .unwrap();
+                        if vnc
+                            .send_pointer_event(mouse_button, self.mouse_x, self.mouse_y)
+                            .is_err()
+                        {
+                            break;
+                        };
                         VNCEventRes::Done
                     }
-                    VNCEventReq::Dump => {
+                    VNCEventReq::TakeScreenShot => {
                         let screen = self.dump_screen();
                         VNCEventRes::Screen(screen)
                     }
                     VNCEventReq::MouseHide => {
-                        vnc.send_pointer_event(mouse_button_left, self.width, self.height)
-                            .unwrap();
+                        if vnc
+                            .send_pointer_event(mouse_button_left, self.width, self.height)
+                            .is_err()
+                        {
+                            break;
+                        };
                         self.mouse_x = self.width;
                         self.mouse_y = self.height;
                         VNCEventRes::Done
                     }
                 };
-                tx.send(res).unwrap();
+                if tx.send(res).is_err() {
+                    break;
+                };
             }
 
             vnc.request_update((&self.unstable_screen.rect).into(), true)
