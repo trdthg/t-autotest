@@ -3,12 +3,16 @@ use pyo3::{
     exceptions::{self, PyException, PyTypeError},
     prelude::*,
 };
-use std::{env, time::Duration};
+use std::{
+    env,
+    sync::mpsc::{Receiver, Sender},
+    time::Duration,
+};
 use t_binding::{api, ApiError};
 use t_config::{Config, ConsoleSSH};
 use t_console::SSH;
-use t_runner::Driver as InnerDriver;
-use tracing::Level;
+use t_runner::{Driver as InnerDriver, Server};
+use tracing::{error, Level};
 use tracing_subscriber::FmtSubscriber;
 
 pyo3::create_exception!(defaultmodule, DriverException, PyException);
@@ -68,7 +72,8 @@ fn init_logger() {
 
 #[pyclass]
 struct Driver {
-    inner: InnerDriver,
+    config: Config,
+    driver: InnerDriver,
 }
 
 #[pymethods]
@@ -77,20 +82,20 @@ impl Driver {
     fn __init__(config: String) -> PyResult<Self> {
         let config =
             Config::from_toml_str(&config).map_err(|e| DriverException::new_err(e.to_string()))?;
-        let mut runner = InnerDriver::new(config.clone()).map_err(|e| {
+        let mut driver = InnerDriver::new(config.clone()).map_err(|e| {
             DriverException::new_err(format!("driver init failed, reason: [{}]", e))
         })?;
-        runner.start();
-        Ok(Self { inner: runner })
+        driver.start();
+        Ok(Self { driver, config })
     }
 
     // ssh
     fn new_ssh(&self) -> PyResult<DriverSSH> {
-        DriverSSH::new(self.inner.config.console.ssh.clone())
+        DriverSSH::new(self.config.console.ssh.clone())
     }
 
     fn stop(&mut self) {
-        self.inner.stop();
+        self.driver.stop();
     }
 
     fn sleep(&self, miles: i32) {

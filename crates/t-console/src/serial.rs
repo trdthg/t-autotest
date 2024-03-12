@@ -209,7 +209,6 @@ where
 #[cfg(test)]
 mod test {
     use t_config::Config;
-    use tracing::trace;
 
     use crate::term::{Term, VT102};
     use std::{
@@ -279,7 +278,6 @@ mod test {
     }
 
     #[test]
-    #[tracing_test::traced_test]
     fn test_exec_global() {
         let c = get_config_from_file();
         if c.is_none() {
@@ -301,7 +299,6 @@ mod test {
 
         (0..10).for_each(|_| {
             for cmd in cmds.iter() {
-                trace!(cmd = cmd.0);
                 let res = serial
                     .tty
                     .exec_global(Duration::from_secs(1), cmd.0)

@@ -1,5 +1,5 @@
 [package]
-name                    = "t-cli"
+name                    = "autotest"
 version                 = "0.1.0"
 description.workspace   = true
 authors.workspace       = true
@@ -10,10 +10,6 @@ homepage.workspace      = true
 documentation.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[[bin]]
-name = "autotest"
-path = "bin/autotest.rs"
 
 [dependencies]
 t-console = { workspace = true }
@@ -26,10 +22,7 @@ t-runner  = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap               = { workspace = true }
-dotenv             = { workspace = true }
 home               = { workspace = true }
-pipe-trait         = { workspace = true }
-shell-escape       = { workspace = true }
 serde              = { workspace = true }
 serde_json         = { workspace = true }
 toml               = { workspace = true }

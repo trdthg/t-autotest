@@ -6,7 +6,7 @@ mod msg;
 use std::sync::{mpsc::Sender, RwLock};
 use tracing::error;
 
-pub use engine::{JSEngine, LuaEngine};
+pub use engine::JSEngine;
 pub use error::{ApiError, Result};
 pub use msg::{MsgReq, MsgRes, MsgResError, TextConsole};
 

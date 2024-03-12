@@ -1,3 +1,5 @@
+use crate::engine::Engine;
+use crate::engine::EngineClient;
 use crate::error::DriverError;
 use crate::server::Server;
 use crate::ServerBuilder;
@@ -12,16 +14,19 @@ use t_config::Config;
 use t_console::RectContainer;
 use t_console::SSH;
 
-pub struct Driver {
+pub struct DriverForScript {
     pub config: Config,
     server: Option<Server>,
-    stop_tx: mpsc::Sender<()>,
+    server_stop_tx: mpsc::Sender<()>,
+
+    engine: Option<Engine>,
+    engine_client: Option<EngineClient>,
 }
 
 type Result<T> = std::result::Result<T, DriverError>;
 
-impl Driver {
-    pub fn new(config: Config) -> Result<Self> {
+impl DriverForScript {
+    fn new(config: Config) -> Result<Self> {
         let mut builder = ServerBuilder::new(config.clone());
 
         let _vnc = &config.console.vnc;
@@ -32,12 +37,14 @@ impl Driver {
                 Self::save_screenshots(screenshot_rx, dir);
             }
         }
-        let (server, stop_tx) = builder.build().map_err(DriverError::ConsoleError)?;
+        let (s, c) = builder.build().map_err(DriverError::ConsoleError)?;
 
         Ok(Self {
             config,
-            server: Some(server),
-            stop_tx,
+            server: Some(s),
+            server_stop_tx: c,
+            engine: None,
+            engine_client: None,
         })
     }
 
@@ -66,9 +73,26 @@ impl Driver {
         });
     }
 
+    pub fn new_with_engine(config: Config, ext: String) -> Result<Self> {
+        let mut res = Self::new(config)?;
+        let (engine, enginec) = Engine::new(ext.as_str());
+        res.engine = Some(engine);
+        res.engine_client = Some(enginec);
+        Ok(res)
+    }
+
     pub fn start(&mut self) -> &mut Self {
-        if let Some(server) = self.server.take() {
-            server.start();
+        // spawn script engine if some
+        if let Some(mut e) = self.engine.take() {
+            thread::spawn(move || {
+                e.start();
+            });
+        }
+
+        // spawn server non-blocking
+        if let Some(s) = self.server.take() {
+            s.start();
+            // recover server after stop
         }
         self
     }
@@ -79,8 +103,22 @@ impl Driver {
     }
 
     pub fn stop(&mut self) -> &mut Self {
-        if self.stop_tx.send(()).is_err() {
+        // stop script engine if exists
+        if let Some(c) = self.engine_client.as_mut() {
+            c.stop();
+        }
+
+        // stop api handle loop. TODO: ensure server is stopped
+        if self.server_stop_tx.send(()).is_err() {
             tracing::error!("stop server failed");
+        }
+
+        self
+    }
+
+    pub fn run_file(&mut self, script: String) -> &mut Self {
+        if let Some(c) = self.engine_client.as_mut() {
+            c.run_file(script.as_str());
         }
         self
     }

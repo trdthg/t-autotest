@@ -1,6 +1,6 @@
 use std::sync::mpsc;
 
-use t_binding::{JSEngine, LuaEngine, ScriptEngine};
+use t_binding::{JSEngine, ScriptEngine};
 
 pub enum Msg {
     Stop(mpsc::Sender<()>),
@@ -44,7 +44,6 @@ impl Engine {
     pub fn start(&mut self) {
         let _e: Box<dyn ScriptEngine> = match self.ext.as_str() {
             "js" => Box::new(JSEngine::new()),
-            "lua" => Box::new(LuaEngine::new()),
             _ => unimplemented!(),
         };
 
@@ -64,7 +63,6 @@ impl Engine {
     fn run_file(&mut self, file: &str) {
         let mut e: Box<dyn ScriptEngine> = match self.ext.as_str() {
             "js" => Box::new(JSEngine::new()),
-            "lua" => Box::new(LuaEngine::new()),
             _ => unimplemented!(),
         };
         e.run_file(file);

@@ -5,11 +5,12 @@ use std::{
         mpsc::{self, Receiver, Sender},
         Arc,
     },
+    thread,
     time::{self, Duration},
 };
 use t_binding::{MsgReq, MsgRes, MsgResError};
 use t_config::{Config, Console};
-use t_console::{ConsoleError, Serial, VNCEventReq, VNCEventRes, SSH, VNC};
+use t_console::{ConsoleError, RectContainer, Serial, VNCEventReq, VNCEventRes, SSH, VNC};
 use tracing::{error, info, warn};
 
 #[derive(Clone)]
@@ -48,37 +49,34 @@ pub struct Server {
 
     msg_rx: Receiver<(MsgReq, Sender<MsgRes>)>,
 
-    stop_rx: mpsc::Receiver<mpsc::Sender<()>>,
+    stop_rx: mpsc::Receiver<()>,
 
     ssh_client: AMOption<SSH>,
     serial_client: AMOption<Serial>,
     vnc_client: AMOption<VNC>,
 }
 
-pub struct ServerClient {
-    stop_tx: mpsc::Sender<mpsc::Sender<()>>,
+pub struct ServerBuilder {
+    config: Config,
+    tx: Option<Sender<RectContainer<[u8; 3]>>>,
 }
 
-impl ServerClient {
-    pub fn stop(&self) {
-        let (tx, rx) = mpsc::channel();
-        if self.stop_tx.send(tx).is_err() {
-            error!(msg = "server stopped failed");
-            return;
-        }
-        if rx.recv().is_err() {
-            error!(msg = "script stopped unexpected");
-        }
+impl ServerBuilder {
+    pub fn new(config: Config) -> Self {
+        ServerBuilder { tx: None, config }
     }
-}
 
-impl Server {
-    pub fn new(c: Config) -> Result<(Self, ServerClient), ConsoleError> {
+    pub fn with_vnc_screenshot_subscriber(mut self, tx: Sender<RectContainer<[u8; 3]>>) -> Self {
+        self.tx = Some(tx);
+        self
+    }
+
+    pub fn build(self) -> Result<(Server, mpsc::Sender<()>), ConsoleError> {
         let Console {
             ssh: _ssh,
             serial: _serial,
             vnc: _vnc,
-        } = c.console.clone();
+        } = self.config.console.clone();
 
         let serial_client = if _serial.enable {
             Some(Serial::new(_serial)?)
@@ -98,8 +96,10 @@ impl Server {
                 .map_err(|e| {
                     ConsoleError::ConnectionBroken(format!("vnc addr is not valid, {}", e))
                 })?;
-            let vnc_client = VNC::connect(addr, _vnc.password.clone(), _vnc.screenshot_dir)
+
+            let vnc_client = VNC::connect(addr, _vnc.password.clone(), self.tx)
                 .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))?;
+
             info!(msg = "init vnc done");
             Some(vnc_client)
         } else {
@@ -112,22 +112,28 @@ impl Server {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         Ok((
-            Self {
-                config: c,
-
+            Server {
+                config: self.config,
                 msg_rx,
-
                 stop_rx,
 
                 ssh_client: AMOption::new(ssh_client),
                 serial_client: AMOption::new(serial_client),
                 vnc_client: AMOption::new(vnc_client),
             },
-            ServerClient { stop_tx },
+            stop_tx,
         ))
     }
+}
 
-    pub fn start(&self) {
+impl Server {
+    pub fn start(self) {
+        thread::spawn(move || {
+            self.pool();
+        });
+    }
+
+    fn pool(&self) {
         // start script engine if in case mode
         info!(msg = "start msg handler thread");
 
@@ -145,9 +151,8 @@ impl Server {
 
         loop {
             // stop on receive done signal
-            if let Ok(tx) = self.stop_rx.try_recv() {
+            if self.stop_rx.try_recv().is_ok() {
                 info!(msg = "runner handler thread stopped");
-                tx.send(()).unwrap();
                 break;
             }
 
@@ -278,7 +283,7 @@ impl Server {
                             let (tx, rx) = mpsc::channel();
 
                             vnc_client
-                                .map_ref(|c| c.event_tx.send((VNCEventReq::Dump, tx)))
+                                .map_ref(|c| c.event_tx.send((VNCEventReq::TakeScreenShot, tx)))
                                 .expect("no vnc")
                                 .unwrap();
 
