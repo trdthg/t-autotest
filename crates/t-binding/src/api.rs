@@ -206,3 +206,17 @@ pub fn vnc_mouse_click() -> Result<()> {
     }
     Err(ApiError::ServerInvalidResponse)
 }
+
+pub fn vnc_send_key(s: String) -> Result<()> {
+    if matches!(req(MsgReq::SendKey(s))?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
+}
+
+pub fn vnc_type_string(s: String) -> Result<()> {
+    if matches!(req(MsgReq::TypeString(s))?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
+}

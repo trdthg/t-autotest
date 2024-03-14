@@ -44,6 +44,8 @@ pub enum MsgReq {
     },
     MouseClick,
     MouseHide,
+    SendKey(String),
+    TypeString(String),
 }
 
 #[derive(Debug)]

@@ -1,7 +1,6 @@
 use crate::error::DriverError;
 use crate::server::Server;
 use crate::ServerBuilder;
-use image::ImageBuffer;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::mpsc::Receiver;
@@ -9,7 +8,7 @@ use std::thread;
 use std::time;
 use std::time::UNIX_EPOCH;
 use t_config::Config;
-use t_console::RectContainer;
+use t_console::PNG;
 use t_console::SSH;
 
 pub struct Driver {
@@ -41,12 +40,12 @@ impl Driver {
         })
     }
 
-    fn save_screenshots(screenshot_rx: Receiver<RectContainer<[u8; 3]>>, dir: &str) {
+    fn save_screenshots(screenshot_rx: Receiver<PNG>, dir: &str) {
         let path: PathBuf = PathBuf::from(dir);
         thread::spawn(move || {
             let mut path = path;
             while let Ok(screen) = screenshot_rx.recv() {
-                let p = ImageBuffer::from(screen);
+                let p = screen.into_img();
 
                 let image_name = format!(
                     "output-{}.png",

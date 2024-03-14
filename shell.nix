@@ -11,6 +11,11 @@ let
     fi
     source .venv/bin/activate
   '';
+  libPath = with pkgs; lib.makeLibraryPath [
+    libGL
+    libxkbcommon
+    wayland
+  ];
 in
 pkgs.mkShell {
   nativeBuildInputs = with pkgs; [
@@ -44,8 +49,9 @@ pkgs.mkShell {
   shellHook = ''
     export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${
       pkgs.lib.makeLibraryPath  [
+
       ]
-    }"
+    }:${libPath}"
     ${prepareVenvIfNotExists}
   '';
 }

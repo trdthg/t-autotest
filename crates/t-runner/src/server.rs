@@ -10,7 +10,7 @@ use std::{
 };
 use t_binding::{MsgReq, MsgRes, MsgResError};
 use t_config::{Config, Console};
-use t_console::{ConsoleError, RectContainer, Serial, VNCEventReq, VNCEventRes, SSH, VNC};
+use t_console::{ConsoleError, Key, Serial, VNCEventReq, VNCEventRes, PNG, SSH, VNC};
 use tracing::{error, info, warn};
 
 #[derive(Clone)]
@@ -58,7 +58,7 @@ pub struct Server {
 
 pub struct ServerBuilder {
     config: Config,
-    tx: Option<Sender<RectContainer<[u8; 3]>>>,
+    tx: Option<Sender<PNG>>,
 }
 
 impl ServerBuilder {
@@ -66,7 +66,7 @@ impl ServerBuilder {
         ServerBuilder { tx: None, config }
     }
 
-    pub fn with_vnc_screenshot_subscriber(mut self, tx: Sender<RectContainer<[u8; 3]>>) -> Self {
+    pub fn with_vnc_screenshot_subscriber(mut self, tx: Sender<PNG>) -> Self {
         self.tx = Some(tx);
         self
     }
@@ -300,8 +300,8 @@ impl Server {
                                     info!(msg = "match success", tag = tag);
                                     break Ok(res);
                                 }
-                                Ok(res) => {
-                                    warn!(msg = "invalid msg type", v = ?res);
+                                Ok(_) => {
+                                    warn!(msg = "invalid msg type");
                                 }
                                 Err(_e) => break Err(MsgResError::Timeout),
                             }
@@ -342,6 +342,31 @@ impl Server {
                     let (tx, rx) = mpsc::channel();
                     vnc_client
                         .map_ref(|c| c.event_tx.send((VNCEventReq::MouseHide, tx)))
+                        .unwrap()
+                        .unwrap();
+                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+                    MsgRes::Done
+                }
+                MsgReq::SendKey(s) => {
+                    let parts = s.split('-');
+                    let mut keys = Vec::new();
+                    for part in parts {
+                        if let Some(key) = Key::from_str(part) {
+                            keys.push(key);
+                        }
+                    }
+                    let (tx, rx) = mpsc::channel();
+                    vnc_client
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::SendKey { keys }, tx)))
+                        .unwrap()
+                        .unwrap();
+                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+                    MsgRes::Done
+                }
+                MsgReq::TypeString(s) => {
+                    let (tx, rx) = mpsc::channel();
+                    vnc_client
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::TypeString(s), tx)))
                         .unwrap()
                         .unwrap();
                     assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
