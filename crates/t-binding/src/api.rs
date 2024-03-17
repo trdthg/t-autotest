@@ -207,6 +207,13 @@ pub fn vnc_mouse_click() -> Result<()> {
     Err(ApiError::ServerInvalidResponse)
 }
 
+pub fn vnc_mouse_rclick() -> Result<()> {
+    if matches!(req(MsgReq::MouseRClick)?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
+}
+
 pub fn vnc_send_key(s: String) -> Result<()> {
     if matches!(req(MsgReq::SendKey(s))?, MsgRes::Done) {
         return Ok(());

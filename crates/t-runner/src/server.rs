@@ -11,7 +11,7 @@ use std::{
 use t_binding::{MsgReq, MsgRes, MsgResError};
 use t_config::{Config, Console};
 use t_console::{ConsoleError, Key, Serial, VNCEventReq, VNCEventRes, PNG, SSH, VNC};
-use tracing::{error, info, warn};
+use tracing::{error, info, trace, warn};
 
 #[derive(Clone)]
 struct AMOption<T> {
@@ -162,7 +162,7 @@ impl Server {
                 continue;
             }
             let (req, tx) = res.unwrap();
-            info!(msg = "recv script engine request", req = ?req);
+            trace!(msg = "recv request", req = ?req);
             let res = match req {
                 // common
                 MsgReq::GetConfig { key } => {
@@ -321,10 +321,15 @@ impl Server {
                     assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
                     MsgRes::Done
                 }
-                MsgReq::MouseClick => {
+                MsgReq::MouseClick | MsgReq::MouseRClick => {
+                    let button = match req {
+                        MsgReq::MouseClick => 0x00000001,
+                        MsgReq::MouseRClick => 2 << 0x00000001,
+                        _ => unreachable!(),
+                    };
                     let (tx, rx) = mpsc::channel();
                     vnc_client
-                        .map_ref(|c| c.event_tx.send((VNCEventReq::MoveDown, tx)))
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::MoveDown(button), tx)))
                         .unwrap()
                         .unwrap();
                     assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
@@ -332,7 +337,7 @@ impl Server {
                     let (tx, rx) = mpsc::channel();
 
                     vnc_client
-                        .map_ref(|c| c.event_tx.send((VNCEventReq::MoveUp, tx)))
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::MoveUp(button), tx)))
                         .unwrap()
                         .unwrap();
                     assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
@@ -373,7 +378,7 @@ impl Server {
                     MsgRes::Done
                 }
             };
-            info!(msg = format!("sending res: {:?}", res));
+            trace!(msg = format!("sending res: {:?}", res));
             if let Err(e) = tx.send(res) {
                 info!(msg = "script engine receiver closed", reason = ?e);
                 break;

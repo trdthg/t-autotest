@@ -43,6 +43,7 @@ pub enum MsgReq {
         y: u16,
     },
     MouseClick,
+    MouseRClick,
     MouseHide,
     SendKey(String),
     TypeString(String),

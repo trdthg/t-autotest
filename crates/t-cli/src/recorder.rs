@@ -11,7 +11,7 @@ use std::{
 use eframe::egui::{
     self, Color32, ColorImage, Margin, Pos2, RichText, Sense, Stroke, TextureHandle, TextureOptions,
 };
-use image::DynamicImage;
+use image::{DynamicImage, RgbImage};
 use t_binding::api;
 use t_console::PNG;
 use t_runner::needle::{Needle, NeedleConfig};
@@ -29,6 +29,14 @@ struct Screenshot {
 }
 
 impl Screenshot {
+    pub fn new(source: PNG) -> Self {
+        Self {
+            source,
+            image: None,
+            thumbnail: None,
+        }
+    }
+
     fn clone_source(&self) -> Self {
         Self {
             source: self.source.clone(),
@@ -58,14 +66,43 @@ impl Screenshot {
         egui::Image::from_texture(sized_image)
     }
 
-    #[allow(unused)]
     fn thumbnail(&mut self, ctx: &egui::Context) -> egui::Image {
         if let Some(thuma) = self.thumbnail.as_ref() {
             let sized_image = egui::load::SizedTexture::new(thuma.id(), thuma.size_vec2());
             egui::Image::from_texture(sized_image)
         } else {
-            // TODO: generate thumbnail if not exists
-            self.image(ctx)
+            return self.image(ctx);
+
+            // too slow
+            // let default_shrink_scale = 200. / self.source.height as f32;
+            // let src = &self.source;
+            // let image =
+            //     RgbImage::from_raw(src.width as u32, src.height as u32, src.data.clone()).unwrap();
+            // let scaled_image = image::imageops::resize(
+            //     &image,
+            //     (src.width as f32 * default_shrink_scale) as u32,
+            //     (src.height as f32 * default_shrink_scale) as u32,
+            //     image::imageops::FilterType::Nearest,
+            // );
+
+            // let color_image = egui::ColorImage::from_rgb(
+            //     [
+            //         scaled_image.width() as usize,
+            //         scaled_image.height() as usize,
+            //     ],
+            //     &scaled_image.as_raw(),
+            // );
+
+            // let handle = ctx.load_texture(
+            //     "current screenshot",
+            //     color_image,
+            //     TextureOptions {
+            //         ..Default::default()
+            //     },
+            // );
+            // let sized_image = egui::load::SizedTexture::new(handle.id(), handle.size_vec2());
+            // self.thumbnail = Some(handle);
+            // egui::Image::from_texture(sized_image)
         }
     }
 
@@ -203,7 +240,7 @@ impl RecorderBuilder {
         Self {
             stop_tx,
             screenshot_rx,
-            max_screenshot_num: 20,
+            max_screenshot_num: 3,
             needle_dir: None,
         }
     }
@@ -359,9 +396,11 @@ impl Recorder {
     }
 }
 
+const DEFAULT_FRAME: f32 = 20.;
+
 impl Recorder {
     fn pre_frame(&mut self, _ctx: &egui::Context) {
-        let FRAME_MS = Duration::from_secs_f32(1. / 30.);
+        let frame_ms = Duration::from_secs_f32(1. / DEFAULT_FRAME);
         self.frame_status.render_frame_start = Instant::now();
 
         // handle vnc subscribe
@@ -371,6 +410,7 @@ impl Recorder {
             if self.frame_status.last_screenshot > self.frame_status.phy_frame_start {
                 return;
             }
+
             // append new screenshot
             // update status
             self.frame_status.last_screenshot = Instant::now();
@@ -381,25 +421,20 @@ impl Recorder {
                 self.screenshots.pop_front();
             }
 
-            let s = Screenshot {
-                source: screenshot,
-                image: None,
-                thumbnail: None,
-            };
-            self.screenshots.push_back(s);
+            self.screenshots.push_back(Screenshot::new(screenshot));
         }
     }
 
     fn after_frame(&mut self, ctx: &egui::Context) {
-        let FRAME_MS = Duration::from_secs_f32(1. / 20.);
+        let frame_ms = Duration::from_secs_f32(1. / DEFAULT_FRAME);
 
         let render_frame_elasped = Instant::now() - self.frame_status.render_frame_start;
-        if render_frame_elasped > FRAME_MS {
+        if render_frame_elasped > frame_ms {
             warn!("frame render take {} ms", render_frame_elasped.as_millis());
         }
 
-        while Instant::now() - self.frame_status.phy_frame_start > FRAME_MS {
-            self.frame_status.phy_frame_start += FRAME_MS;
+        while Instant::now() - self.frame_status.phy_frame_start > frame_ms {
+            self.frame_status.phy_frame_start += frame_ms;
             self.frame_status.new_screenshot_count = 0;
 
             debug!(
@@ -408,7 +443,7 @@ impl Recorder {
             );
         }
 
-        ctx.request_repaint_after(FRAME_MS);
+        ctx.request_repaint_after(frame_ms);
     }
 }
 
@@ -445,18 +480,30 @@ impl eframe::App for Recorder {
                                 // render current screenshot
                                 let screenshot =
                                     ui.add(screenshot.image(ctx).sense(Sense::click()));
+
+                                // if mouse move out of image, do nothing
+                                if let Some(pos) = screenshot.hover_pos() {
+                                    let relative_x = (pos.x as u16)
+                                        .checked_sub(screenshot.rect.left() as u16)
+                                        .unwrap_or(0);
+                                    let relative_y = (pos.y as u16)
+                                        .checked_sub(screenshot.rect.top() as u16)
+                                        .unwrap_or(0);
+
+                                    if let Err(e) = api::vnc_mouse_move(relative_x, relative_y) {
+                                        error!(msg="mouse move failed", reason = ?e);
+                                    }
+                                }
+
                                 if screenshot.clicked() {
-                                    // TODO:
-                                    if let Some(pos) = screenshot.interact_pointer_pos() {
-                                        if let Err(e) = api::vnc_mouse_move(
-                                            pos.x as u16 - screenshot.rect.left() as u16,
-                                            pos.y as u16 - screenshot.rect.top() as u16,
-                                        ) {
-                                            error!("mouse move failed");
-                                        }
-                                        if let Err(e) = api::vnc_mouse_click() {
-                                            error!("click click failed");
-                                        }
+                                    if let Err(e) = api::vnc_mouse_click() {
+                                        error!(msg="mouse click failed", reason = ?e);
+                                    }
+                                }
+
+                                if screenshot.secondary_clicked() {
+                                    if let Err(e) = api::vnc_mouse_rclick() {
+                                        error!(msg="mouse right click failed", reason = ?e);
                                     }
                                 }
                             }
@@ -465,11 +512,7 @@ impl eframe::App for Recorder {
                             // handle select event
                             if self.editting_ss.is_none() {
                                 if let Some(screenshot) = self.screenshots.back() {
-                                    self.editting_ss = Some(Screenshot {
-                                        source: screenshot.source.clone(),
-                                        image: None,
-                                        thumbnail: None,
-                                    });
+                                    self.editting_ss = Some(screenshot.clone_source());
                                 }
                             }
 
@@ -548,7 +591,7 @@ impl eframe::App for Recorder {
             egui::ScrollArea::vertical()
                 .id_source("control panel")
                 .show(ui, |ui| {
-                    ui.set_height(ui.available_height() / 2.);
+                    ui.set_height(ui.available_height() / 4.);
 
                     if ui
                         .button(match self.mode {
@@ -578,6 +621,15 @@ impl eframe::App for Recorder {
                         }
                     }
                 });
+
+            // error log
+            egui::ScrollArea::vertical()
+                .id_source("error log")
+                .show(ui, |ui| {
+                    ui.set_height(ui.available_height() / 4.);
+
+                });
+
             // needle list
             egui::ScrollArea::vertical()
                 .id_source("needle view")
@@ -710,7 +762,7 @@ impl eframe::App for Recorder {
             egui::ScrollArea::horizontal().show(ui, |ui| {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
                     for (_i, screenshot) in self.screenshots.iter_mut().rev().enumerate() {
-                        ui.add(screenshot.image(ctx).max_height(200.));
+                        ui.add(screenshot.thumbnail(ctx).max_height(200.));
                     }
                 });
             });

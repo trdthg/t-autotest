@@ -2,13 +2,18 @@ pub mod recorder;
 
 use clap::{Parser, Subcommand};
 use std::{env, fs, io::IsTerminal, path::Path, sync::mpsc};
+use t_binding::api;
 use t_config::Config;
 use t_runner::{DriverForScript, ServerBuilder};
+use toml::ser;
 use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 #[derive(clap::Parser, Debug)]
 pub struct Cli {
+    #[clap(short, long)]
+    config: String,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -17,18 +22,23 @@ pub struct Cli {
 enum Commands {
     Run {
         #[clap(short, long)]
-        config: String,
-
-        #[clap(short, long)]
         script: String,
 
         #[clap(long)]
         env: Vec<String>,
     },
-    Record {
-        #[clap(short, long)]
-        config: String,
+    Record {},
+    VNCDO {
+        #[command(subcommand)]
+        action: VNCAction,
     },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum VNCAction {
+    Move { x: u16, y: u16 },
+    Click,
+    RClick,
 }
 
 fn main() {
@@ -58,12 +68,9 @@ fn main() {
     let cli = Cli::parse();
     info!(msg = "current cli", cli = ?cli);
 
+    let config = cli.config;
     match cli.command {
-        Commands::Run {
-            config,
-            script,
-            env,
-        } => {
+        Commands::Run { script, env } => {
             let mut config: Config =
                 toml::from_str(fs::read_to_string(config).unwrap().as_str()).unwrap();
             info!(msg = "current config", config = ?config);
@@ -91,7 +98,7 @@ fn main() {
                 }
             }
         }
-        Commands::Record { config } => {
+        Commands::Record {} => {
             let config: Config =
                 toml::from_str(fs::read_to_string(config).unwrap().as_str()).unwrap();
             info!(msg = "current config", config = ?config);
@@ -111,6 +118,31 @@ fn main() {
                     recorder::RecorderBuilder::new(stop_tx, screenshot_rx)
                         .build()
                         .start();
+                }
+                Err(e) => {
+                    error!(msg = "Driver init failed", reason = ?e)
+                }
+            }
+        }
+        Commands::VNCDO { action } => {
+            let mut config: Config =
+                toml::from_str(fs::read_to_string(config).unwrap().as_str()).unwrap();
+            config.console.ssh.enable = false;
+            config.console.serial.enable = false;
+            let builder = ServerBuilder::new(config);
+            match builder.build() {
+                Ok((server, stop_tx)) => {
+                    server.start();
+                    if let Err(e) = match action {
+                        VNCAction::Move { x, y } => api::vnc_mouse_move(x, y),
+                        VNCAction::Click => api::vnc_mouse_click(),
+                        VNCAction::RClick => api::vnc_mouse_rclick(),
+                    } {
+                        error!(msg = "do vnc action failed", reason=?e);
+                    }
+                    if let Err(e) = stop_tx.send(()) {
+                        error!(msg = "server stop failed", reason=?e);
+                    }
                 }
                 Err(e) => {
                     error!(msg = "Driver init failed", reason = ?e)
