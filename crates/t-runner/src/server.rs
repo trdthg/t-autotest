@@ -323,8 +323,8 @@ impl Server {
                 }
                 MsgReq::MouseClick | MsgReq::MouseRClick => {
                     let button = match req {
-                        MsgReq::MouseClick => 0x00000001,
-                        MsgReq::MouseRClick => 2 << 0x00000001,
+                        MsgReq::MouseClick => 1,
+                        MsgReq::MouseRClick => 1 << 2,
                         _ => unreachable!(),
                     };
                     let (tx, rx) = mpsc::channel();

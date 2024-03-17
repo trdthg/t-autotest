@@ -67,13 +67,13 @@ impl Screenshot {
     }
 
     fn thumbnail(&mut self, ctx: &egui::Context) -> egui::Image {
-        if let Some(thuma) = self.thumbnail.as_ref() {
-            let sized_image = egui::load::SizedTexture::new(thuma.id(), thuma.size_vec2());
+        if let Some(thumbnail) = self.thumbnail.as_ref() {
+            let sized_image = egui::load::SizedTexture::new(thumbnail.id(), thumbnail.size_vec2());
             egui::Image::from_texture(sized_image)
         } else {
+            // generate thumbnail looks too slow, so commented now
             return self.image(ctx);
 
-            // too slow
             // let default_shrink_scale = 200. / self.source.height as f32;
             // let src = &self.source;
             // let image =
@@ -84,7 +84,6 @@ impl Screenshot {
             //     (src.height as f32 * default_shrink_scale) as u32,
             //     image::imageops::FilterType::Nearest,
             // );
-
             // let color_image = egui::ColorImage::from_rgb(
             //     [
             //         scaled_image.width() as usize,
@@ -92,7 +91,6 @@ impl Screenshot {
             //     ],
             //     &scaled_image.as_raw(),
             // );
-
             // let handle = ctx.load_texture(
             //     "current screenshot",
             //     color_image,

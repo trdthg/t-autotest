@@ -187,6 +187,17 @@ impl VNC {
         screenshot_tx: Option<Sender<PNG>>,
     ) -> Result<Self, VNCError> {
         let mut vnc = VNC::_connect(addr, password)?;
+
+        // vnc.set_encodings(&[t_vnc::Encoding::Zrle, t_vnc::Encoding::DesktopSize])
+        vnc.set_encodings(&[
+            t_vnc::Encoding::Zrle,
+            t_vnc::Encoding::CopyRect,
+            t_vnc::Encoding::Raw,
+            t_vnc::Encoding::Cursor,
+            t_vnc::Encoding::DesktopSize,
+        ])
+        .unwrap();
+
         let size = vnc.size();
         let pixel_format = vnc.format();
 
