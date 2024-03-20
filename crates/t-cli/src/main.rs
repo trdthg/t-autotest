@@ -1,7 +1,7 @@
 pub mod recorder;
 
 use clap::{Parser, Subcommand};
-use std::{env, fs, io::IsTerminal, path::Path, sync::mpsc};
+use std::{env, fs, io::IsTerminal, path::Path};
 use t_binding::api;
 use t_config::Config;
 use t_runner::{DriverForScript, ServerBuilder};

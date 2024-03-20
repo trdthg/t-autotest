@@ -48,7 +48,7 @@ impl Screenshot {
 
     fn clone_source(&self) -> Self {
         Self {
-            recv_time: self.recv_time.clone(),
+            recv_time: self.recv_time,
             source: self.source.clone(),
             image: None,
             thumbnail: None,
@@ -481,7 +481,6 @@ impl Recorder {
         }
         self.toasts.show(ctx);
 
-
         // calc render time
         let render_frame_elasped = Instant::now() - self.frame_status.render_frame_start;
         self.frame_status.last_render = render_frame_elasped;
@@ -638,21 +637,19 @@ impl Recorder {
                                         }
                                     }
                                 } else {
-                                    if screenshot.drag_started() {
-                                        if self.drag_rect.is_none() {
-                                            if let Some(start_point) =
-                                                screenshot.interact_pointer_pos()
-                                            {
-                                                let drag_rect = RectF32 {
-                                                    left: start_point.x - screenshot.rect.left(),
-                                                    top: start_point.y - screenshot.rect.top(),
-                                                    width: 0.,
-                                                    height: 0.,
-                                                };
-                                                self.drag_rect = Some(drag_rect);
-                                            }
+                                    if screenshot.drag_started() && self.drag_rect.is_none() {
+                                        if let Some(start_point) = screenshot.interact_pointer_pos()
+                                        {
+                                            let drag_rect = RectF32 {
+                                                left: start_point.x - screenshot.rect.left(),
+                                                top: start_point.y - screenshot.rect.top(),
+                                                width: 0.,
+                                                height: 0.,
+                                            };
+                                            self.drag_rect = Some(drag_rect);
                                         }
-                                    } else if screenshot.dragged() {
+                                    }
+                                    if screenshot.dragged() {
                                         if let Some(rect) = self.drag_rect.as_mut() {
                                             let delta = screenshot.drag_delta();
                                             rect.add_delta_f32_noreverse(delta.x, delta.y);
@@ -667,7 +664,8 @@ impl Recorder {
                                                 Color32::from_rgba_premultiplied(0, 255, 0, 100),
                                             );
                                         }
-                                    } else if screenshot.drag_released() {
+                                    }
+                                    if screenshot.drag_released() {
                                         if let Some(mut rect) = self.drag_rect.take() {
                                             rect.reverse_if_needed();
                                             if rect.width != 0. && rect.height != 0. {
@@ -753,7 +751,7 @@ impl Recorder {
                                     |ui| {
                                         ui.label(format!(
                                             "{}",
-                                            screenshot.recv_time.format("%H:%M:%S").to_string()
+                                            screenshot.recv_time.format("%H:%M:%S")
                                         ));
                                         if ui.button("del").clicked() {
                                             deleted.push(i);

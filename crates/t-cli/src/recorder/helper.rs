@@ -1,6 +1,7 @@
 use eframe::egui::Color32;
 use egui_notify::ToastLevel;
 
+#[allow(unused)]
 pub fn tracing_level_2_egui_color32(level: &tracing_core::Level) -> Option<Color32> {
     match *level {
         tracing_core::Level::ERROR => Some(Color32::RED),
