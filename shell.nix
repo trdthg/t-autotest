@@ -1,5 +1,7 @@
 let
-  pkgs = import (fetchTarball https://nixos.org/channels/nixos-unstable/nixexprs.tar.xz) { };
+  pkgs = import
+    (fetchTarball "https://nixos.org/channels/nixos-unstable/nixexprs.tar.xz")
+    { };
   prepareVenvIfNotExists = ''
     # create .venv if not exists
     version_output=$(.venv/bin/python --version 2>&1)
@@ -11,13 +13,8 @@ let
     fi
     source .venv/bin/activate
   '';
-  libPath = with pkgs; lib.makeLibraryPath [
-    libGL
-    libxkbcommon
-    wayland
-  ];
-in
-pkgs.mkShell {
+  libPath = with pkgs; lib.makeLibraryPath [ libGL libxkbcommon wayland ];
+in pkgs.mkShell {
   nativeBuildInputs = with pkgs; [
     ### build(bin/examples) SDL2-sys
     SDL2.dev
@@ -41,14 +38,21 @@ pkgs.mkShell {
     # build python binding
     maturin
 
+    ### build(gui-x11)
+    xorg.libX11
+    xorg.libXcursor
+    xorg.libXi
+    xorg.libXrandr
+    xorg.libxcb
+    libGL
+
     ### ci
     act
   ];
-  buildInputs = with pkgs;[
-  ];
+  buildInputs = with pkgs; [ ];
   shellHook = ''
     export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${
-      pkgs.lib.makeLibraryPath  [
+      pkgs.lib.makeLibraryPath [
 
       ]
     }:${libPath}"
