@@ -3,7 +3,7 @@ use image::{DynamicImage, RgbImage};
 pub type Rect = t_vnc::Rect;
 
 // data rect
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Container {
     pub width: u16,
     pub height: u16,

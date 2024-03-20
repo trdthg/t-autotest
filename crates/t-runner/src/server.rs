@@ -10,7 +10,7 @@ use std::{
 };
 use t_binding::{MsgReq, MsgRes, MsgResError};
 use t_config::{Config, Console};
-use t_console::{ConsoleError, Key, Serial, VNCEventReq, VNCEventRes, PNG, SSH, VNC};
+use t_console::{key, ConsoleError, Serial, VNCEventReq, VNCEventRes, PNG, SSH, VNC};
 use tracing::{error, info, trace, warn};
 
 #[derive(Clone)]
@@ -271,6 +271,18 @@ impl Server {
                         MsgRes::Done
                     }
                 }
+                MsgReq::TakeScreenShot => {
+                    let (tx, rx) = mpsc::channel();
+
+                    vnc_client
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::TakeScreenShot, tx)))
+                        .expect("no vnc")
+                        .unwrap();
+                    match rx.recv() {
+                        Ok(VNCEventRes::Screen(res)) => MsgRes::Screenshot(res),
+                        _ => MsgRes::Error(MsgResError::Timeout),
+                    }
+                }
                 MsgReq::AssertScreen {
                     tag,
                     threshold: _,
@@ -321,6 +333,24 @@ impl Server {
                     assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
                     MsgRes::Done
                 }
+                MsgReq::MouseKeyDown(down) => {
+                    let (tx, rx) = mpsc::channel();
+                    vnc_client
+                        .map_ref(|c| {
+                            c.event_tx.send((
+                                if down {
+                                    VNCEventReq::MoveDown(1)
+                                } else {
+                                    VNCEventReq::MoveUp(1)
+                                },
+                                tx,
+                            ))
+                        })
+                        .unwrap()
+                        .unwrap();
+                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+                    MsgRes::Done
+                }
                 MsgReq::MouseClick | MsgReq::MouseRClick => {
                     let button = match req {
                         MsgReq::MouseClick => 1,
@@ -356,7 +386,7 @@ impl Server {
                     let parts = s.split('-');
                     let mut keys = Vec::new();
                     for part in parts {
-                        if let Some(key) = Key::from_str(part) {
+                        if let Some(key) = key::from_str(part) {
                             keys.push(key);
                         }
                     }

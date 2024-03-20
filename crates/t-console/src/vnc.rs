@@ -18,22 +18,22 @@ pub use data::Rect;
 use t_vnc::{client::Event, PixelFormat};
 use tracing::{debug, error, info, trace, warn};
 
-pub mod Key {
-    pub const BackSpace: u32 = 0xff08;
-    pub const Tab: u32 = 0xff09;
-    pub const Return: u32 = 0xff0d;
-    pub const Enter: u32 = Return;
-    pub const Escape: u32 = 0xff1b;
-    pub const Insert: u32 = 0xff63;
-    pub const Delete: u32 = 0xffff;
-    pub const Home: u32 = 0xff50;
-    pub const End: u32 = 0xff57;
-    pub const PageUp: u32 = 0xff55;
-    pub const PageDown: u32 = 0xff56;
-    pub const Left: u32 = 0xff51;
-    pub const Up: u32 = 0xff52;
-    pub const Right: u32 = 0xff53;
-    pub const Down: u32 = 0xff54;
+pub mod key {
+    pub const BACK_SPACE: u32 = 0xff08;
+    pub const TAB: u32 = 0xff09;
+    pub const RETURN: u32 = 0xff0d;
+    pub const ENTER: u32 = RETURN;
+    pub const ESCAPE: u32 = 0xff1b;
+    pub const INSERT: u32 = 0xff63;
+    pub const DELETE: u32 = 0xffff;
+    pub const HOME: u32 = 0xff50;
+    pub const END: u32 = 0xff57;
+    pub const PAGE_UP: u32 = 0xff55;
+    pub const PAGE_DOWN: u32 = 0xff56;
+    pub const LEFT: u32 = 0xff51;
+    pub const UP: u32 = 0xff52;
+    pub const RIGHT: u32 = 0xff53;
+    pub const DOWN: u32 = 0xff54;
     pub const F1: u32 = 0xffbe;
     pub const F2: u32 = 0xffbf;
     pub const F3: u32 = 0xffc0;
@@ -46,31 +46,31 @@ pub mod Key {
     pub const F10: u32 = 0xffc7;
     pub const F11: u32 = 0xffc8;
     pub const F12: u32 = 0xffc9;
-    pub const ShiftLeft: u32 = 0xffe1;
-    pub const ShiftRight: u32 = 0xffe2;
-    pub const CtrlLeft: u32 = 0xffe3;
-    pub const CtrlRight: u32 = 0xffe4;
-    pub const MetaLeft: u32 = 0xffe7;
-    pub const MetaRight: u32 = 0xffe8;
-    pub const AltLeft: u32 = 0xffe9;
-    pub const AltRight: u32 = 0xffea;
+    pub const SHIFT_LEFT: u32 = 0xffe1;
+    pub const SHIFT_RIGHT: u32 = 0xffe2;
+    pub const CTRL_LEFT: u32 = 0xffe3;
+    pub const CTRL_RIGHT: u32 = 0xffe4;
+    pub const META_LEFT: u32 = 0xffe7;
+    pub const META_RIGHT: u32 = 0xffe8;
+    pub const ALT_LEFT: u32 = 0xffe9;
+    pub const ALT_RIGHT: u32 = 0xffea;
 
     pub fn from_str(s: &str) -> Option<u32> {
         let key = match s {
-            "back" | "backspace" => BackSpace,
-            "tab" => Tab,
-            "ret" | "return" | "enter" => Return,
-            "esc" | "escape" => Escape,
-            "ins" | "insert" => Insert,
-            "del" | "delete" => Delete,
-            "home" => Home,
-            "end" => End,
-            "pageup" => PageUp,
-            "pagedown" => PageDown,
-            "left" => Left,
-            "up" => Up,
-            "right" => Right,
-            "down" => Down,
+            "back" | "backspace" => BACK_SPACE,
+            "tab" => TAB,
+            "ret" | "return" | "enter" => RETURN,
+            "esc" | "escape" => ESCAPE,
+            "ins" | "insert" => INSERT,
+            "del" | "delete" => DELETE,
+            "home" => HOME,
+            "end" => END,
+            "pageup" => PAGE_UP,
+            "pagedown" => PAGE_DOWN,
+            "left" => LEFT,
+            "up" => UP,
+            "right" => RIGHT,
+            "down" => DOWN,
             "f1" => F1,
             "f2" => F2,
             "f3" => F3,
@@ -83,14 +83,14 @@ pub mod Key {
             "f10" => F10,
             "f11" => F11,
             "f12" => F12,
-            "ctrl" | "ctrll" | "lctrl" => CtrlLeft,
-            "rctrl" | "ctrlr" => CtrlRight,
-            "shift" | "shiftl" | "lshift" => ShiftLeft,
-            "shiftr" | "rshift" => ShiftRight,
-            "meta" | "metal" | "lmeta" => MetaLeft,
-            "rmeta" | "metar" => MetaRight,
-            "alt" | "altl" | "lalt" => AltLeft,
-            "altr" | "ralt" => AltRight,
+            "ctrl" | "ctrll" | "lctrl" => CTRL_LEFT,
+            "rctrl" | "ctrlr" => CTRL_RIGHT,
+            "shift" | "shiftl" | "lshift" => SHIFT_LEFT,
+            "shiftr" | "rshift" => SHIFT_RIGHT,
+            "meta" | "metal" | "lmeta" => META_LEFT,
+            "rmeta" | "metar" => META_RIGHT,
+            "alt" | "altl" | "lalt" => ALT_LEFT,
+            "altr" | "ralt" => ALT_RIGHT,
             _ => 0,
         };
         if key == 0 {
@@ -120,7 +120,6 @@ pub type PNG = Container;
 pub enum VNCEventRes {
     Done,
     Screen(PNG),
-    SameScreen,
 }
 
 pub struct VNC {
@@ -184,7 +183,7 @@ impl VNC {
     pub fn connect(
         addr: SocketAddr,
         password: Option<String>,
-        screenshot_tx: Option<Sender<PNG>>,
+        screenshot_tx: Option<Sender<Container>>,
     ) -> Result<Self, VNCError> {
         let mut vnc = VNC::_connect(addr, password)?;
 
@@ -252,8 +251,8 @@ struct VncClientInner {
 
     event_rx: Receiver<(VNCEventReq, Sender<VNCEventRes>)>,
     stop_rx: Receiver<()>,
-    screenshot_tx: Option<Sender<PNG>>,
 
+    screenshot_tx: Option<Sender<Container>>,
     screenshot_buffer: std::collections::VecDeque<PNG>,
 }
 
@@ -370,13 +369,10 @@ impl VncClientInner {
                 }
                 self.screenshot_buffer
                     .push_back(self.unstable_screen.clone());
-
-                if let Some(ref tx) = self.screenshot_tx {
-                    if let Some(screenshot) = self.screenshot_buffer.pop_front() {
-                        if tx.send(screenshot).is_err() {
-                            self.screenshot_tx = None;
-                            info!(msg = "vnc client stopped");
-                        }
+                if let Some(tx) = &self.screenshot_tx {
+                    if tx.send(self.unstable_screen.clone()).is_err() {
+                        error!(msg = "screenshot channel closed");
+                        self.screenshot_tx = None;
                     }
                 }
             }
@@ -429,7 +425,7 @@ impl VncClientInner {
                 VNCEventRes::Done
             }
             VNCEventReq::TakeScreenShot => {
-                let screen = self.screenshot_buffer[0].clone();
+                let screen = self.screenshot_buffer.back().unwrap().clone();
                 VNCEventRes::Screen(screen)
             }
             VNCEventReq::MouseHide => {

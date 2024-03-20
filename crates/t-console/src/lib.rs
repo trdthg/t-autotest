@@ -9,7 +9,7 @@ use std::fmt::Display;
 pub use serial::Serial;
 pub use ssh::SSH;
 pub use term::*;
-pub use vnc::{Rect, VNCError, VNCEventReq, VNCEventRes, PNG, VNC, Key};
+pub use vnc::{key, Rect, VNCError, VNCEventReq, VNCEventRes, PNG, VNC};
 
 #[derive(Debug)]
 pub enum ConsoleError {

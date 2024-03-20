@@ -20,6 +20,7 @@ t-config  = { workspace = true }
 t-runner  = { workspace = true }
 
 tracing            = { workspace = true }
+tracing-core       = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap               = { workspace = true }
 home               = { workspace = true }
@@ -31,5 +32,9 @@ image              = { workspace = true, features = ["png", "jpeg"] }
 png                = { workspace = true }
 parking_lot        = { workspace = true }
 nanoid             = { workspace = true }
-eframe             = { workspace = true }
+eframe             = { workspace = true, features = ["x11", "wayland"] }
 egui_extras        = { workspace = true, features = ["default", "all_loaders", "image"] }
+rfd                = { workspace = true }
+egui-notify        = { workspace = true }
+egui_tiles         = { workspace = true }
+chrono             = { workspace = true }

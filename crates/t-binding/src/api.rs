@@ -186,8 +186,29 @@ pub fn vnc_assert_screen(tag: String, timeout: i32) -> Result<()> {
     }
 }
 
+pub fn vnc_take_screenshot() -> Result<t_console::PNG> {
+    if let MsgRes::Screenshot(res) = req(MsgReq::TakeScreenShot)? {
+        return Ok(res);
+    }
+    Err(ApiError::ServerInvalidResponse)
+}
+
 pub fn vnc_mouse_move(x: u16, y: u16) -> Result<()> {
     if matches!(req(MsgReq::MouseMove { x, y })?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
+}
+
+pub fn vnc_mouse_keydown() -> Result<()> {
+    if matches!(req(MsgReq::MouseKeyDown(true))?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
+}
+
+pub fn vnc_mouse_keyup() -> Result<()> {
+    if matches!(req(MsgReq::MouseKeyDown(false))?, MsgRes::Done) {
         return Ok(());
     }
     Err(ApiError::ServerInvalidResponse)

@@ -37,6 +37,7 @@ dotenv             = { version = "0.15.0" }
 home               = { version = "0.5.9" }
 tracing            = { version = "0.1.40" }
 tracing-test       = { version = "0.2.4" }
+tracing-core       = { version = "0.1.32" }
 tracing-subscriber = { version = "0.3.18" }
 pipe-trait         = { version = "0.4.0" }
 shell-escape       = { version = "0.1.5" }
@@ -59,8 +60,12 @@ rquickjs           = { version = "0.5.1", features = ["macro"] }
 mlua               = { version = "0.9.1", features = ["lua54", "vendored"] }
 pyo3               = { version = "0.20.0", features = ["auto-initialize", "abi3-py37"] }
 ctrlc              = { version = "3.4.2" }
-eframe             = { version = "0.26.2" }
+eframe             = { version = "0.26.2", features = ["x11", "wayland"] }
 egui_extras        = { version = "0.26.2" }
+rfd                = { version = "0.14.0" }
+egui-notify        = { version = "0.13.0" }
+egui_tiles         = { version = "0.7.2" }
+chrono             = { version = "0.4.35" }
 
 [profile.dev]
 incremental = true

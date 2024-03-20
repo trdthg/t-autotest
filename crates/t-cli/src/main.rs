@@ -5,7 +5,6 @@ use std::{env, fs, io::IsTerminal, path::Path, sync::mpsc};
 use t_binding::api;
 use t_config::Config;
 use t_runner::{DriverForScript, ServerBuilder};
-use toml::ser;
 use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -28,7 +27,7 @@ enum Commands {
         env: Vec<String>,
     },
     Record {},
-    VNCDO {
+    VncDo {
         #[command(subcommand)]
         action: VNCAction,
     },
@@ -109,22 +108,18 @@ fn main() {
                 return;
             }
 
-            let (screenshot_tx, screenshot_rx) = mpsc::channel();
-            let builder = ServerBuilder::new(config).with_vnc_screenshot_subscriber(screenshot_tx);
-
+            let builder = ServerBuilder::new(config);
             match builder.build() {
                 Ok((server, stop_tx)) => {
                     server.start();
-                    recorder::RecorderBuilder::new(stop_tx, screenshot_rx)
-                        .build()
-                        .start();
+                    recorder::RecorderBuilder::new(stop_tx).build().start();
                 }
                 Err(e) => {
                     error!(msg = "Driver init failed", reason = ?e)
                 }
             }
         }
-        Commands::VNCDO { action } => {
+        Commands::VncDo { action } => {
             let mut config: Config =
                 toml::from_str(fs::read_to_string(config).unwrap().as_str()).unwrap();
             config.console.ssh.enable = false;
