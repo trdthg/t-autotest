@@ -313,7 +313,7 @@ impl Server {
 
                             match rx.recv_timeout(deadline - time::Instant::now()) {
                                 Ok(VNCEventRes::Screen(s)) => {
-                                    let Some(res) = nmg.cmp_by_tag(&s, &tag) else {
+                                    let Some(res) = nmg.cmp(&s, &tag) else {
                                         error!(msg = "Needle file not found", tag = tag);
                                         break Ok(false);
                                     };

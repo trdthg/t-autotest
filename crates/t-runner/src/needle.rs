@@ -1,7 +1,7 @@
 use std::{
     fs::File,
     io::{BufReader, Read},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use serde::{Deserialize, Serialize};
@@ -21,18 +21,17 @@ impl NeedleManager {
         Self { dir: dir.into() }
     }
 
-    pub fn load_by_tag(&self, tag: &str) -> Option<Needle> {
-        let needle_png = self.load_file_by_tag(tag);
-        let json_file = File::open(self.dir.join(format!("{tag}.json"))).ok()?;
-        let json: NeedleConfig = serde_json::from_reader(BufReader::new(json_file)).ok()?;
+    pub fn load(&self, tag: impl AsRef<Path>) -> Option<Needle> {
+        let needle_png = self.load_image(self.dir.join(&tag).join("png"))?;
+        let json: NeedleConfig = self.load_json(self.dir.join(&tag).join("path"))?;
         Some(Needle {
             config: json,
-            data: needle_png?,
+            data: needle_png,
         })
     }
 
-    pub fn load_file_by_tag(&self, tag: &str) -> Option<PNG> {
-        let needle_file = File::open(self.dir.join(format!("{tag}.png"))).ok()?;
+    pub fn load_image(&self, tag: impl AsRef<Path>) -> Option<PNG> {
+        let needle_file = File::open(tag).ok()?;
         let needle_png = image::load(BufReader::new(needle_file), image::ImageFormat::Png).ok()?;
         match needle_png {
             image::DynamicImage::ImageRgb8(img) => {
@@ -49,8 +48,14 @@ impl NeedleManager {
         }
     }
 
-    pub fn cmp_by_tag(&self, s: &PNG, tag: &str) -> Option<bool> {
-        let Some(needle) = self.load_by_tag(tag) else {
+    pub fn load_json(&self, tag: impl AsRef<Path>) -> Option<NeedleConfig> {
+        let json_file = File::open(tag).ok()?;
+        let json: NeedleConfig = serde_json::from_reader(BufReader::new(json_file)).ok()?;
+        Some(json)
+    }
+
+    pub fn cmp(&self, s: &PNG, filename: &str) -> Option<bool> {
+        let Some(needle) = self.load(filename) else {
             return None;
         };
         for area in needle.config.areas.iter() {
@@ -179,7 +184,7 @@ mod test {
     #[test]
     fn get_needle() {
         let needle_mg = init_needle_manager();
-        let png = needle_mg.load_by_tag("output").unwrap();
+        let png = needle_mg.load("output").unwrap();
 
         assert_eq!(
             png.config,
@@ -205,7 +210,7 @@ mod test {
         };
         assert!(png.data.cmp_rect(&png.data, &rect));
 
-        let png2 = needle_mg.load_file_by_tag("output2").unwrap();
+        let png2 = needle_mg.load_image("output2").unwrap();
         assert!(png.data.cmp_rect(&png2, &rect));
     }
 }
