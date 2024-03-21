@@ -113,6 +113,7 @@ pub enum VNCEventReq {
     MoveUp(u8),
     MouseHide,
     TakeScreenShot,
+    Refresh,
 }
 
 pub type PNG = Container;
@@ -424,8 +425,24 @@ impl VncClientInner {
                 vnc.send_pointer_event(self.buttons, self.mouse_x, self.mouse_y)?;
                 VNCEventRes::Done
             }
+            VNCEventReq::Refresh => {
+                vnc.request_update(
+                    Rect {
+                        left: 0,
+                        top: 0,
+                        width: self.width,
+                        height: self.height,
+                    },
+                    false,
+                )?;
+                VNCEventRes::Done
+            }
             VNCEventReq::TakeScreenShot => {
-                let screen = self.screenshot_buffer.back().unwrap().clone();
+                let screen = self
+                    .screenshot_buffer
+                    .back()
+                    .unwrap_or(&Container::new(80, 24, 3))
+                    .clone();
                 VNCEventRes::Screen(screen)
             }
             VNCEventReq::MouseHide => {
@@ -442,11 +459,11 @@ impl VncClientInner {
 fn convert_to_rgb(pixel_format: &PixelFormat, raw_pixel_chunks: &[u8]) -> Vec<u8> {
     let byte_per_pixel = pixel_format.bits_per_pixel as usize / 8;
     let len = raw_pixel_chunks.len() / byte_per_pixel;
-    let mut image_buffer: Vec<u8> = Vec::new();
+
+    let mut image_buffer: Vec<u8> = Vec::with_capacity(len * 3);
 
     // 将像素数据转换为图像缓冲区
-    for i in 0..len {
-        let pixel_chunk = &raw_pixel_chunks[(i * byte_per_pixel)..((i + 1) * byte_per_pixel)];
+    for pixel_chunk in raw_pixel_chunks.chunks_exact(byte_per_pixel) {
         let pixel_value = if pixel_format.big_endian {
             BigEndian::read_u32(pixel_chunk)
         } else {

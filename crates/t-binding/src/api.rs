@@ -5,28 +5,21 @@ use crate::{
     MsgReq, MsgRes,
 };
 use std::{sync::mpsc, time::Duration};
-use tracing::{error, info, trace, Level};
+use tracing::{info, trace, Level};
 
 fn req(req: MsgReq) -> Result<MsgRes> {
     let msg_tx = get_global_sender();
 
     trace!(msg = "sending req");
     let (tx, rx) = mpsc::channel::<MsgRes>();
-    if let Err(e) = msg_tx.send((req, tx)) {
-        error!(msg = "main runner loop closed", reason = ?e);
-    }
+    msg_tx
+        .send((req, tx))
+        .map_err(|_| ApiError::ServerStopped)?;
 
     trace!(msg = "waiting res");
-    let res = rx.recv();
-
+    let res = rx.recv().map_err(|_| ApiError::ServerStopped)?;
     trace!(msg = "received res");
-    match res {
-        Ok(res) => Ok(res),
-        Err(_) => {
-            error!(msg = "req failed, server already stopped");
-            Err(ApiError::ServerStopped)
-        }
-    }
+    Ok(res)
 }
 
 fn _script_run(cmd: String, console: Option<TextConsole>, timeout: i32) -> Result<(i32, String)> {
@@ -184,6 +177,13 @@ pub fn vnc_assert_screen(tag: String, timeout: i32) -> Result<()> {
     } else {
         Err(ApiError::AssertFailed)
     }
+}
+
+pub fn vnc_refresh() -> Result<()> {
+    if matches!(req(MsgReq::Refresh)?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_take_screenshot() -> Result<t_console::PNG> {

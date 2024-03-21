@@ -36,6 +36,7 @@ pub enum MsgReq {
     },
     // vnc
     TakeScreenShot,
+    Refresh,
     AssertScreen {
         tag: String,
         threshold: i32,

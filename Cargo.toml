@@ -66,6 +66,7 @@ rfd                = { version = "0.14.0" }
 egui-notify        = { version = "0.13.0" }
 egui_tiles         = { version = "0.7.2" }
 chrono             = { version = "0.4.35" }
+rayon              = { version = "1.9.0" }
 
 [profile.dev]
 incremental = true

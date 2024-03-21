@@ -38,3 +38,4 @@ rfd                = { workspace = true }
 egui-notify        = { workspace = true }
 egui_tiles         = { workspace = true }
 chrono             = { workspace = true }
+rayon              = { workspace = true }

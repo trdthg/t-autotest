@@ -283,6 +283,18 @@ impl Server {
                         _ => MsgRes::Error(MsgResError::Timeout),
                     }
                 }
+                MsgReq::Refresh => {
+                    let (tx, rx) = mpsc::channel();
+
+                    vnc_client
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::Refresh, tx)))
+                        .expect("no vnc")
+                        .unwrap();
+                    match rx.recv() {
+                        Ok(VNCEventRes::Done) => MsgRes::Done,
+                        _ => MsgRes::Error(MsgResError::Timeout),
+                    }
+                }
                 MsgReq::AssertScreen {
                     tag,
                     threshold: _,

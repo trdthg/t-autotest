@@ -18,7 +18,7 @@ use std::{
 use t_binding::api;
 use t_console::PNG;
 use t_runner::needle::NeedleConfig;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use tracing_core::Level;
 mod deque;
 mod helper;
@@ -33,6 +33,7 @@ struct Screenshot {
     recv_time: DateTime<Local>,
     source: PNG,
     image: Option<TextureHandle>,
+    #[allow(unused)]
     thumbnail: Option<TextureHandle>,
 }
 
@@ -413,7 +414,20 @@ struct DragedRect {
 }
 
 fn to_egui_rgb_color_image(image: &PNG) -> ColorImage {
-    egui::ColorImage::from_rgb([image.width as usize, image.height as usize], &image.data)
+    use rayon::prelude::*;
+    // NOTE: load image too slow, use rayon speed up 3x
+    let pixels = image
+        .data
+        .par_chunks_exact(3)
+        .map(|p| {
+            let res = Color32::from_rgb(p[0], p[1], p[2]);
+            res
+        })
+        .collect();
+    egui::ColorImage {
+        size: [image.width as usize, image.height as usize],
+        pixels,
+    }
 }
 
 impl Recorder {
@@ -438,21 +452,18 @@ impl Recorder {
     }
 }
 
-const DEFAULT_FRAME: f32 = 20.;
+const DEFAULT_FRAME: f32 = 30.;
 
 impl Recorder {
     fn pre_frame(&mut self, _ctx: &egui::Context) {
         let _frame_ms = Duration::from_secs_f32(1. / DEFAULT_FRAME);
         self.frame_status.render_frame_start = Instant::now();
 
-        // handle vnc subscribe
+        // if already got new screenshot in this frame, then skip
         if self.frame_status.last_screenshot > self.frame_status.phy_frame_start {
             return;
         }
         if let Ok(screenshot) = api::vnc_take_screenshot() {
-            // 60 fps
-            // if already got new screenshot in this frame, then skip
-
             // append new screenshot
             // update status
             self.frame_status.last_screenshot = Instant::now();
@@ -530,8 +541,6 @@ impl Recorder {
                 ..Default::default()
             })
             .show(ctx, |ui| {
-                ui.set_width(1280.);
-                ui.set_height(800.);
                 egui::ScrollArea::both().show(ui, |ui| {
                     match self.mode {
                         RecordMode::Interact => {
@@ -553,6 +562,8 @@ impl Recorder {
                                             format!("mouse move failed, reason = {:?}", e),
                                         ));
                                     }
+                                } else {
+                                    return;
                                 }
 
                                 // TODO: drag
@@ -804,21 +815,24 @@ impl Recorder {
                         RecordMode::Edit => {}
                         RecordMode::View => {}
                         RecordMode::Interact => {
-                            ui.text_edit_singleline(&mut self.type_string);
-                            if ui.button("send string").clicked()
-                                && api::vnc_type_string(self.type_string.clone()).is_err()
-                            {
-                                self.logs
-                                    .push((Level::ERROR, "send text failed".to_string()));
-                            }
-
-                            ui.text_edit_singleline(&mut self.send_key);
-                            if ui.button("send key").clicked()
-                                && api::vnc_send_key(self.send_key.clone()).is_err()
-                            {
-                                self.logs
-                                    .push((Level::ERROR, "send key failed".to_string()));
-                            }
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::LEFT), |ui| {
+                                if ui.button("send string").clicked()
+                                    && api::vnc_type_string(self.type_string.clone()).is_err()
+                                {
+                                    self.logs
+                                        .push((Level::ERROR, "send text failed".to_string()));
+                                }
+                                ui.text_edit_singleline(&mut self.type_string);
+                            });
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::LEFT), |ui| {
+                                if ui.button("send key").clicked()
+                                    && api::vnc_send_key(self.send_key.clone()).is_err()
+                                {
+                                    self.logs
+                                        .push((Level::ERROR, "send key failed".to_string()));
+                                }
+                                ui.text_edit_singleline(&mut self.send_key);
+                            });
                         }
                     }
                 });
@@ -995,6 +1009,12 @@ impl eframe::App for Recorder {
         // render ui
         egui::TopBottomPanel::top("tool bar").show(ctx, |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                if ui.button("force refresh").clicked() {
+                    if api::vnc_refresh().is_err() {
+                        self.logs
+                            .push((Level::ERROR, "force refresh failed".to_string()));
+                    }
+                }
                 ui.heading(format!(
                     "last: {}ms",
                     self.frame_status.last_render.as_millis()
@@ -1020,10 +1040,16 @@ impl eframe::App for Recorder {
             }
         }
 
+        let size = ctx.screen_rect();
         if self.show_confirmation_dialog {
             egui::Window::new("Do you want to quit?")
                 .collapsible(false)
                 .resizable(false)
+                .pivot(egui::Align2::CENTER_CENTER)
+                .current_pos(Pos2 {
+                    x: (size.min.x + size.max.x) / 2.,
+                    y: (size.min.y + size.max.y) / 2.,
+                })
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         if ui.button("No").clicked() {
