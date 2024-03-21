@@ -56,11 +56,11 @@ impl Screenshot {
         }
     }
 
-    fn image(&mut self, ctx: &egui::Context) -> egui::Image {
+    fn image(&mut self, ctx: &egui::Context, use_rayon: bool) -> egui::Image {
         let sized_image = match &self.image {
             None => {
                 // update screenshot
-                let color_image = to_egui_rgb_color_image(&self.source);
+                let color_image = to_egui_rgb_color_image(&self.source, use_rayon);
                 let handle = ctx.load_texture(
                     "current screenshot",
                     color_image,
@@ -77,13 +77,13 @@ impl Screenshot {
         egui::Image::from_texture(sized_image)
     }
 
-    fn thumbnail(&mut self, ctx: &egui::Context) -> egui::Image {
+    fn thumbnail(&mut self, ctx: &egui::Context, use_rayon: bool) -> egui::Image {
         if let Some(thumbnail) = self.thumbnail.as_ref() {
             let sized_image = egui::load::SizedTexture::new(thumbnail.id(), thumbnail.size_vec2());
             egui::Image::from_texture(sized_image)
         } else {
             // generate thumbnail looks too slow, so commented now
-            return self.image(ctx);
+            return self.image(ctx, use_rayon);
 
             // let default_shrink_scale = 200. / self.source.height as f32;
             // let src = &self.source;
@@ -128,24 +128,67 @@ impl Screenshot {
     }
 }
 
-struct FrameStatus {
-    // phy frame
-    phy_frame_start: Instant,
-    // egui render frame
-    render_frame_start: Instant,
-    last_render: Duration,
-    last_screenshot: Instant,
-    new_screenshot_count: usize,
+struct SampleStatus {
+    start: Instant,
+    samply_rate: Duration,
+    screenshot_count: usize,
+
+    vnc_fps: usize,
+    gui_fps: usize,
+    frame_render: Duration,
+    frame_renders: Vec<Duration>,
 }
-impl Default for FrameStatus {
+
+impl SampleStatus {
+    pub fn update(&mut self) {
+        self.start += self.samply_rate;
+        self.vnc_fps = self.screenshot_count;
+
+        let mut sum = Duration::ZERO;
+        for frame in &self.frame_renders {
+            sum += *frame;
+        }
+        sum /= self.frame_renders.len() as u32;
+        self.frame_render = sum;
+
+        self.gui_fps = self.frame_renders.len();
+
+        self.screenshot_count = 0;
+        self.frame_renders.clear();
+    }
+}
+
+impl Default for SampleStatus {
+    fn default() -> Self {
+        Self {
+            samply_rate: Duration::from_secs(1),
+            start: Instant::now(),
+            screenshot_count: 0,
+            frame_render: Duration::ZERO,
+            vnc_fps: 0,
+            gui_fps: 0,
+            frame_renders: Vec::new(),
+        }
+    }
+}
+
+struct EguiFrameStatus {
+    screenshot_interval: Option<Duration>,
+    egui_interval: Option<Duration>,
+    egui_start: Instant,
+    last_screenshot: Instant,
+}
+
+impl EguiFrameStatus {}
+
+impl Default for EguiFrameStatus {
     fn default() -> Self {
         let now = Instant::now();
         Self {
-            phy_frame_start: now,
-            render_frame_start: now,
-            last_render: Duration::ZERO,
+            screenshot_interval: Some(Duration::from_secs_f32(1. / 10.)),
+            egui_interval: Some(Duration::from_secs_f32(1. / 30.)),
+            egui_start: now,
             last_screenshot: now,
-            new_screenshot_count: Default::default(),
         }
     }
 }
@@ -155,8 +198,12 @@ pub struct Recorder {
     allowed_to_close: bool,
     stop_tx: Sender<()>,
 
+    // speed
+    use_rayon: bool,
+
     // frame evenv count
-    frame_status: FrameStatus,
+    frame_status: EguiFrameStatus,
+    sample_status: SampleStatus,
 
     // screenshot
     mode: RecordMode,
@@ -256,7 +303,7 @@ impl RecorderBuilder {
         Self {
             stop_tx,
             screenshot_rx: None,
-            max_screenshot_num: 3,
+            max_screenshot_num: 60,
             needle_dir: None,
         }
     }
@@ -281,7 +328,10 @@ impl RecorderBuilder {
             show_confirmation_dialog: false,
             allowed_to_close: false,
 
+            use_rayon: false,
+
             frame_status: Default::default(),
+            sample_status: Default::default(),
 
             stop_tx: self.stop_tx,
             screenshot_rx: self.screenshot_rx,
@@ -427,14 +477,22 @@ struct DragedRect {
     pub rect: RectF32,
 }
 
-fn to_egui_rgb_color_image(image: &PNG) -> ColorImage {
-    use rayon::prelude::*;
+fn to_egui_rgb_color_image(image: &PNG, use_rayon: bool) -> ColorImage {
     // NOTE: load image too slow, use rayon speed up 3x
-    let pixels = image
-        .data
-        .par_chunks_exact(3)
-        .map(|p| Color32::from_rgb(p[0], p[1], p[2]))
-        .collect();
+    let pixels = if use_rayon {
+        use rayon::prelude::*;
+        image
+            .data
+            .par_chunks_exact(3)
+            .map(|p| Color32::from_rgb(p[0], p[1], p[2]))
+            .collect()
+    } else {
+        image
+            .data
+            .chunks_exact(3)
+            .map(|p| Color32::from_rgb(p[0], p[1], p[2]))
+            .collect()
+    };
     egui::ColorImage {
         size: [image.width as usize, image.height as usize],
         pixels,
@@ -463,22 +521,21 @@ impl Recorder {
     }
 }
 
-const DEFAULT_FRAME: f32 = 30.;
-
 impl Recorder {
     fn pre_frame(&mut self, _ctx: &egui::Context) {
-        let _frame_ms = Duration::from_secs_f32(1. / DEFAULT_FRAME);
-        self.frame_status.render_frame_start = Instant::now();
+        self.frame_status.egui_start = Instant::now();
 
         // if already got new screenshot in this frame, then skip
-        if self.frame_status.last_screenshot > self.frame_status.phy_frame_start {
-            return;
+        if let Some(screenshot_interval) = self.frame_status.screenshot_interval {
+            if Instant::now() < self.frame_status.last_screenshot + screenshot_interval {
+                return;
+            }
         }
         if let Ok(screenshot) = api::vnc_take_screenshot() {
             // append new screenshot
             // update status
             self.frame_status.last_screenshot = Instant::now();
-            self.frame_status.new_screenshot_count += 1;
+            self.sample_status.screenshot_count += 1;
 
             // handle too many
             if self.screenshots.len() == self.max_screenshot_num {
@@ -491,8 +548,6 @@ impl Recorder {
     }
 
     fn after_frame(&mut self, ctx: &egui::Context) {
-        let frame_ms = Duration::from_secs_f32(1. / DEFAULT_FRAME);
-
         // notify
         while let Some((level, log)) = self.logs.pop_front() {
             let mut toast = Toast::custom(log, helper::tracing_level_2_toast_level(level));
@@ -504,31 +559,28 @@ impl Recorder {
         self.toasts.show(ctx);
 
         // calc render time
-        let render_frame_elasped = Instant::now() - self.frame_status.render_frame_start;
-        self.frame_status.last_render = render_frame_elasped;
-        if render_frame_elasped > frame_ms {
-            self.logs.push((
-                tracing_core::Level::WARN,
-                format!("frame render take {} ms", render_frame_elasped.as_millis()),
-            ));
-        }
+        let egui_elasped = Instant::now() - self.frame_status.egui_start;
+        self.sample_status.frame_renders.push(egui_elasped);
 
         // slepp until next frame
-        let elpase_render = Instant::now() - self.frame_status.phy_frame_start;
-        if elpase_render < frame_ms {
-            thread::sleep(frame_ms - elpase_render);
-        } else {
-            self.frame_status.phy_frame_start += frame_ms;
-            self.frame_status.new_screenshot_count = 0;
-
+        let elpase_sample = Instant::now() - self.sample_status.start;
+        if elpase_sample > self.sample_status.samply_rate {
+            self.sample_status.update();
             // update phy frame status
             debug!(
-                "this frame receive {} new screenshot",
-                self.frame_status.new_screenshot_count
+                "receive {} new screenshot in 1s",
+                self.sample_status.screenshot_count
             );
         }
 
-        ctx.request_repaint_after(2 * frame_ms);
+        if let Some(internal) = self.frame_status.egui_interval {
+            let elpase = Instant::now() - self.frame_status.egui_start;
+            if elpase < internal {
+                thread::sleep(internal - elpase);
+            }
+        }
+
+        ctx.request_repaint();
     }
 
     fn render_main(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -557,8 +609,11 @@ impl Recorder {
                         RecordMode::Interact => {
                             if let Some(screenshot) = self.screenshots.back_mut() {
                                 // render current screenshot
-                                let screenshot =
-                                    ui.add(screenshot.image(ctx).sense(Sense::click()));
+                                let screenshot = ui.add(
+                                    screenshot
+                                        .image(ctx, self.use_rayon)
+                                        .sense(Sense::click_and_drag()),
+                                );
 
                                 // if mouse move out of image, do nothing
                                 if let Some(pos) = screenshot.hover_pos() {
@@ -577,7 +632,7 @@ impl Recorder {
                                     return;
                                 }
 
-                                // TODO: drag
+                                // TODO: fix drag
                                 if screenshot.drag_started() {
                                     if let Some(pos) = screenshot.interact_pointer_pos() {
                                         self.drag_pos = pos;
@@ -643,8 +698,18 @@ impl Recorder {
                                 }
                             }
                             if let Some(screenshot) = &mut self.current_screenshot {
-                                let screenshot =
-                                    ui.add(screenshot.image(ctx).sense(Sense::click_and_drag()));
+                                let mut screenshot = ui.add(
+                                    screenshot
+                                        .image(ctx, self.use_rayon)
+                                        .sense(Sense::click_and_drag()),
+                                );
+
+                                if let Some(pos_max) = screenshot.hover_pos() {
+                                    let x = pos_max.x - screenshot.rect.left();
+                                    let y = pos_max.y - screenshot.rect.top();
+                                    screenshot = screenshot
+                                        .on_hover_text_at_pointer(format!("x: {:.1}, y: {:.1}", x, y));
+                                }
 
                                 if self.mouse_click_mode {
                                     if screenshot.clicked() {
@@ -672,8 +737,16 @@ impl Recorder {
                                     }
                                     if screenshot.dragged() {
                                         if let Some(rect) = self.drag_rect.as_mut() {
-                                            let delta = screenshot.drag_delta();
-                                            rect.add_delta_f32_noreverse(delta.x, delta.y);
+                                            if let Some(pos_max) = screenshot.interact_pointer_pos()
+                                            {
+                                                rect.width =
+                                                    pos_max.x - screenshot.rect.left() - rect.left;
+                                                rect.height =
+                                                    pos_max.y - screenshot.rect.top() - rect.top;
+                                            }
+
+                                            // let delta = screenshot.drag_delta();
+                                            // rect.add_delta_f32_noreverse(delta.x, delta.y);
 
                                             let rect = rect
                                                 .clone()
@@ -688,9 +761,7 @@ impl Recorder {
                                     }
                                     if screenshot.drag_released() {
                                         if let Some(mut rect) = self.drag_rect.take() {
-                                            info!("rect bef: {:?}", rect);
                                             rect.reverse_if_needed();
-                                            info!("rect rev: {:?}", rect);
                                             if rect.width != 0. && rect.height != 0. {
                                                 if self.drag_rects.is_none() {
                                                     self.drag_rects = Some(Vec::new());
@@ -744,7 +815,11 @@ impl Recorder {
                                 }
                             }
                             if let Some(screenshot) = &mut self.current_screenshot {
-                                ui.add(screenshot.image(ctx).sense(Sense::click_and_drag()));
+                                ui.add(
+                                    screenshot
+                                        .image(ctx, self.use_rayon)
+                                        .sense(Sense::click_and_drag()),
+                                );
                             }
                         }
                     }
@@ -782,7 +857,9 @@ impl Recorder {
                                     },
                                 );
                                 // thumbnail
-                                let thumbnail = ui.add(screenshot.thumbnail(ctx).max_height(200.));
+                                let thumbnail = ui.add(
+                                    screenshot.thumbnail(ctx, self.use_rayon).max_height(200.),
+                                );
                                 if thumbnail.clicked() {
                                     self.mode = RecordMode::View;
                                     self.current_screenshot = Some(screenshot.clone_source());
@@ -1023,12 +1100,23 @@ impl eframe::App for Recorder {
                     self.logs
                         .push((Level::ERROR, "force refresh failed".to_string()));
                 }
+                ui.heading(format!("GUI FPS: {:>2}", self.sample_status.gui_fps));
+                ui.heading(format!("VNC FPS {:>2}", self.sample_status.vnc_fps));
+                if ui
+                    .button(format!(
+                        "rayon: {}",
+                        if self.use_rayon { "on" } else { "off" }
+                    ))
+                    .clicked()
+                {
+                    self.use_rayon = !self.use_rayon;
+                }
                 ui.heading(format!(
-                    "last: {}ms",
-                    self.frame_status.last_render.as_millis()
+                    "last frame:{:>3}ms",
+                    self.sample_status.frame_render.as_millis()
                 ));
                 ui.heading(format!(
-                    "no update: {}s",
+                    "no update:{}s",
                     (Instant::now() - self.frame_status.last_screenshot).as_secs()
                 ));
             });

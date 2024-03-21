@@ -149,8 +149,7 @@ impl Display for VNCError {
 
 impl VNC {
     fn _connect(addr: SocketAddr, password: Option<String>) -> Result<t_vnc::Client, VNCError> {
-        let stream =
-            TcpStream::connect_timeout(&addr, Duration::from_secs(3)).map_err(VNCError::Io)?;
+        let stream = TcpStream::connect(&addr).map_err(VNCError::Io)?;
 
         let vnc = t_vnc::Client::from_tcp_stream(stream, false, |methods| {
             for method in methods {
