@@ -18,7 +18,7 @@ use std::{
 use t_binding::api;
 use t_console::PNG;
 use t_runner::needle::NeedleConfig;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use tracing_core::Level;
 mod deque;
 mod helper;
@@ -330,10 +330,24 @@ impl RectF32 {
     }
 
     pub fn reverse_if_needed(&mut self) -> &mut Self {
-        self.add_delta_f32(0., 0.);
+        if self.width < 0. {
+            let new_left = self.left + self.width;
+            let new_left = if new_left < 0. { 0. } else { new_left };
+            self.width = self.left - new_left;
+            self.left = new_left;
+        }
+
+        if self.height < 0. {
+            let new_top = self.top + self.height;
+            let new_top = if new_top < 0. { 0. } else { new_top };
+            self.height = self.top - new_top;
+            self.top = new_top;
+        }
+
         self
     }
 
+    #[allow(unused)]
     fn add_delta_f32(&mut self, x: f32, y: f32) {
         let Self {
             left,
@@ -382,29 +396,29 @@ fn test_transform_one() {
         height: 0.,
     };
     r.add_delta_f32(-1., -1.);
-    assert!(r.left == 1.);
-    assert!(r.top == 1.);
-    assert!(r.width == 1.);
-    assert!(r.height == 1.);
+    assert_eq!(r.left, 1.);
+    assert_eq!(r.top, 1.);
+    assert_eq!(r.width, 1.);
+    assert_eq!(r.height, 1.);
 
-    r.add_delta_f32(5., 5.);
+    r.add_delta_f32_noreverse(5., 5.);
 
-    assert!(r.left == 2.);
-    assert!(r.top == 2.);
-    assert!(r.width == 4.);
-    assert!(r.height == 4.);
+    assert_eq!(r.left, 1.);
+    assert_eq!(r.top, 1.);
+    assert_eq!(r.width, 6.);
+    assert_eq!(r.height, 6.);
 
-    r.add_delta_f32(-5., -5.);
-    assert!(r.left == 1.);
-    assert!(r.top == 1.);
-    assert!(r.width == 1.);
-    assert!(r.height == 1.);
+    r.add_delta_f32_noreverse(-7., -7.);
+    assert_eq!(r.left, 1.);
+    assert_eq!(r.top, 1.);
+    assert_eq!(r.width, -1.);
+    assert_eq!(r.height, -1.);
 
-    r.add_delta_f32(-2., -2.);
-    assert!(r.left == 0.);
-    assert!(r.top == 0.);
-    assert!(r.width == 1.);
-    assert!(r.height == 1.);
+    r.reverse_if_needed();
+    assert_eq!(r.left, 0.);
+    assert_eq!(r.top, 0.);
+    assert_eq!(r.width, 1.);
+    assert_eq!(r.height, 1.);
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -674,7 +688,9 @@ impl Recorder {
                                     }
                                     if screenshot.drag_released() {
                                         if let Some(mut rect) = self.drag_rect.take() {
+                                            info!("rect bef: {:?}", rect);
                                             rect.reverse_if_needed();
+                                            info!("rect rev: {:?}", rect);
                                             if rect.width != 0. && rect.height != 0. {
                                                 if self.drag_rects.is_none() {
                                                     self.drag_rects = Some(Vec::new());
