@@ -46,14 +46,16 @@ pub mod key {
     pub const F10: u32 = 0xffc7;
     pub const F11: u32 = 0xffc8;
     pub const F12: u32 = 0xffc9;
-    pub const SHIFT_LEFT: u32 = 0xffe1;
-    pub const SHIFT_RIGHT: u32 = 0xffe2;
-    pub const CTRL_LEFT: u32 = 0xffe3;
-    pub const CTRL_RIGHT: u32 = 0xffe4;
-    pub const META_LEFT: u32 = 0xffe7;
-    pub const META_RIGHT: u32 = 0xffe8;
-    pub const ALT_LEFT: u32 = 0xffe9;
-    pub const ALT_RIGHT: u32 = 0xffea;
+    pub const SHIFT_L: u32 = 0xffe1;
+    pub const SHIFT_R: u32 = 0xffe2;
+    pub const CTRL_L: u32 = 0xffe3;
+    pub const CTRL_R: u32 = 0xffe4;
+    pub const META_L: u32 = 0xffe7;
+    pub const META_R: u32 = 0xffe8;
+    pub const ALT_L: u32 = 0xffe9;
+    pub const ALT_R: u32 = 0xffea;
+    pub const SUPER_L: u32 = 0xffeb;
+    pub const SUPER_R: u32 = 0xffec;
 
     pub fn from_str(s: &str) -> Option<u32> {
         let key = match s {
@@ -83,14 +85,16 @@ pub mod key {
             "f10" => F10,
             "f11" => F11,
             "f12" => F12,
-            "ctrl" | "ctrll" | "lctrl" => CTRL_LEFT,
-            "rctrl" | "ctrlr" => CTRL_RIGHT,
-            "shift" | "shiftl" | "lshift" => SHIFT_LEFT,
-            "shiftr" | "rshift" => SHIFT_RIGHT,
-            "meta" | "metal" | "lmeta" => META_LEFT,
-            "rmeta" | "metar" => META_RIGHT,
-            "alt" | "altl" | "lalt" => ALT_LEFT,
-            "altr" | "ralt" => ALT_RIGHT,
+            "ctrl" | "ctrl_l" => CTRL_L,
+            "ctrl_r" => CTRL_R,
+            "shift" | "shift_l" => SHIFT_L,
+            "shift_r" => SHIFT_R,
+            "meta" | "meta_l" => META_L,
+            "meta_r" => META_R,
+            "alt" | "alt_l" => ALT_L,
+            "alt_r" => ALT_R,
+            "super" | "super_l" => SUPER_L,
+            "super_r" => SUPER_R,
             _ => 0,
         };
         if key == 0 {

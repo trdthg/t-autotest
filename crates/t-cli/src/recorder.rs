@@ -18,7 +18,7 @@ use std::{
 use t_binding::api;
 use t_console::PNG;
 use t_runner::needle::NeedleConfig;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 use tracing_core::Level;
 mod deque;
 mod helper;
@@ -175,7 +175,7 @@ pub struct Recorder {
     needle_dir: PathBuf,
     needle_name: String,
     mouse_click_mode: bool,
-    mouse_click_points: Vec<(bool, f32, f32)>,
+    mouse_click_point: Option<(bool, f32, f32)>,
     drag_pos: Pos2,
     drag_rect: Option<RectF32>,
     drag_rects: Option<Vec<DragedRect>>,
@@ -299,7 +299,7 @@ impl RecorderBuilder {
             needle_dir: PathBuf::new(),
             needle_name: String::new(),
             mouse_click_mode: false,
-            mouse_click_points: Vec::new(),
+            mouse_click_point: None,
             drag_pos: Pos2 { x: 0., y: 0. },
             drag_rects: None,
             drag_rect: None,
@@ -419,10 +419,7 @@ fn to_egui_rgb_color_image(image: &PNG) -> ColorImage {
     let pixels = image
         .data
         .par_chunks_exact(3)
-        .map(|p| {
-            let res = Color32::from_rgb(p[0], p[1], p[2]);
-            res
-        })
+        .map(|p| Color32::from_rgb(p[0], p[1], p[2]))
         .collect();
     egui::ColorImage {
         size: [image.width as usize, image.height as usize],
@@ -639,8 +636,7 @@ impl Recorder {
                                     if screenshot.clicked() {
                                         if let Some(click_point) = screenshot.hover_pos() {
                                             self.toasts.info("add pos");
-                                            let points = &mut self.mouse_click_points;
-                                            points.push((
+                                            self.mouse_click_point = Some((
                                                 false,
                                                 click_point.x - screenshot.rect.left(),
                                                 click_point.y - screenshot.rect.left(),
@@ -709,7 +705,7 @@ impl Recorder {
                                 }
 
                                 // draw selected rect
-                                for (hover, x, y) in self.mouse_click_points.iter() {
+                                if let Some((hover, x, y)) = &self.mouse_click_point {
                                     ui.painter().circle_filled(
                                         Pos2 {
                                             x: x + screenshot.rect.left(),
@@ -925,8 +921,8 @@ impl Recorder {
                             });
                         }
 
-                        let mut deleted = Vec::new();
-                        for (i, (hover, x, y)) in self.mouse_click_points.iter_mut().enumerate() {
+                        let mut delated = false;
+                        if let Some((hover, x, y)) = &mut self.mouse_click_point {
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::LEFT), |ui| {
                                 *hover = ui
                                     .group(|ui| {
@@ -935,18 +931,16 @@ impl Recorder {
                                             x, y
                                         ));
                                         if ui.button("delete").clicked() {
-                                            deleted.push(i);
+                                            delated = true;
                                         };
                                     })
                                     .response
                                     .hovered()
                             });
                         }
-                        let mut index: usize = self.mouse_click_points.len();
-                        self.mouse_click_points.retain(|_| {
-                            index -= 1;
-                            !deleted.contains(&index)
-                        });
+                        if delated {
+                            self.mouse_click_point = None;
+                        }
                     });
 
                     ui.add_space(20.);
@@ -1009,11 +1003,9 @@ impl eframe::App for Recorder {
         // render ui
         egui::TopBottomPanel::top("tool bar").show(ctx, |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                if ui.button("force refresh").clicked() {
-                    if api::vnc_refresh().is_err() {
-                        self.logs
-                            .push((Level::ERROR, "force refresh failed".to_string()));
-                    }
+                if ui.button("force refresh").clicked() && api::vnc_refresh().is_err() {
+                    self.logs
+                        .push((Level::ERROR, "force refresh failed".to_string()));
                 }
                 ui.heading(format!(
                     "last: {}ms",
