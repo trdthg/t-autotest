@@ -163,12 +163,36 @@ impl Driver {
         api::vnc_assert_screen(tag, timeout).map_err(into_pyerr)
     }
 
+    fn vnc_type_string(&self, s: String) -> PyResult<()> {
+        api::vnc_type_string(s).map_err(into_pyerr)
+    }
+
+    fn vnc_send_key(&self, s: String) -> PyResult<()> {
+        api::vnc_send_key(s).map_err(into_pyerr)
+    }
+
+    fn vnc_refresh(&self) -> PyResult<()> {
+        api::vnc_refresh().map_err(into_pyerr)
+    }
+
     fn check_screen(&self, tag: String, timeout: i32) -> PyResult<bool> {
         api::vnc_check_screen(tag, timeout).map_err(into_pyerr)
     }
 
     fn mouse_click(&self) -> PyResult<()> {
         api::vnc_mouse_click().map_err(into_pyerr)
+    }
+
+    fn mouse_rclick(&self) -> PyResult<()> {
+        api::vnc_mouse_rclick().map_err(into_pyerr)
+    }
+
+    fn mouse_keydown(&self) -> PyResult<()> {
+        api::vnc_mouse_keydown().map_err(into_pyerr)
+    }
+
+    fn mouse_keyup(&self) -> PyResult<()> {
+        api::vnc_mouse_keyup().map_err(into_pyerr)
     }
 
     fn mouse_move(&self, x: i32, y: i32) -> PyResult<()> {

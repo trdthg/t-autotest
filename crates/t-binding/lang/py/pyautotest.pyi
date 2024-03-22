@@ -91,9 +91,39 @@ class Driver:
         check screen, return false if timeout, or not similar to tag
         """
 
+    def vnc_type_string(self, s: str):
+        """
+        type string
+        """
+
+    def vnc_send_key(self):
+        """
+        send event
+        """
+
+    def vnc_refresh(self):
+        """
+        force refresh
+        """
+
     def mouse_click(self):
         """
         click mouse
+        """
+
+    def mouse_rclick(self):
+        """
+        click mouse right button
+        """
+
+    def mouse_keydown(self):
+        """
+        mouse left button down
+        """
+
+    def mouse_keyup(self):
+        """
+        mouse left button up
         """
 
     def mouse_move(self, x: int, y: int):
