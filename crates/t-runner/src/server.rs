@@ -6,7 +6,7 @@ use std::{
         Arc,
     },
     thread,
-    time::{self, Duration},
+    time::{self, Duration, Instant},
 };
 use t_binding::{MsgReq, MsgRes, MsgResError};
 use t_config::{Config, Console};
@@ -54,20 +54,32 @@ pub struct Server {
     ssh_client: AMOption<SSH>,
     serial_client: AMOption<Serial>,
     vnc_client: AMOption<VNC>,
+
+    screenshot_tx: Option<Sender<PNG>>,
 }
 
 pub struct ServerBuilder {
     config: Config,
     tx: Option<Sender<PNG>>,
+    tx2: Option<Sender<PNG>>,
 }
 
 impl ServerBuilder {
     pub fn new(config: Config) -> Self {
-        ServerBuilder { tx: None, config }
+        ServerBuilder {
+            tx: None,
+            tx2: None,
+            config,
+        }
     }
 
     pub fn with_vnc_screenshot_subscriber(mut self, tx: Sender<PNG>) -> Self {
         self.tx = Some(tx);
+        self
+    }
+
+    pub fn with_latest_vnc_screenshot_subscriber(mut self, tx: Sender<PNG>) -> Self {
+        self.tx2 = Some(tx);
         self
     }
 
@@ -78,18 +90,21 @@ impl ServerBuilder {
             vnc: _vnc,
         } = self.config.console.clone();
 
+        // init serial
         let serial_client = if _serial.enable {
             Some(Serial::new(_serial)?)
         } else {
             None
         };
 
+        // init ssh
         let ssh_client = if _ssh.enable {
             Some(SSH::new(_ssh)?)
         } else {
             None
         };
 
+        // init vnc
         let vnc_client = if _vnc.enable {
             let addr = format!("{}:{}", _vnc.host, _vnc.port)
                 .parse()
@@ -97,7 +112,7 @@ impl ServerBuilder {
                     ConsoleError::ConnectionBroken(format!("vnc addr is not valid, {}", e))
                 })?;
 
-            let vnc_client = VNC::connect(addr, _vnc.password.clone(), self.tx)
+            let vnc_client = VNC::connect(addr, _vnc.password.clone(), self.tx2)
                 .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))?;
 
             info!(msg = "init vnc done");
@@ -106,16 +121,18 @@ impl ServerBuilder {
             None
         };
 
+        // init api request channel
         let (tx, msg_rx) = mpsc::channel();
         t_binding::init(tx);
 
+        // init server
         let (stop_tx, stop_rx) = mpsc::channel();
-
         Ok((
             Server {
                 config: self.config,
                 msg_rx,
                 stop_rx,
+                screenshot_tx: self.tx,
 
                 ssh_client: AMOption::new(ssh_client),
                 serial_client: AMOption::new(serial_client),
@@ -144,6 +161,7 @@ impl Server {
             ssh_client,
             serial_client,
             vnc_client,
+            screenshot_tx,
         } = self;
 
         let _ssh_tty = ssh_client.map_ref(|c| c.tty());
@@ -153,6 +171,7 @@ impl Server {
             // stop on receive done signal
             if self.stop_rx.try_recv().is_ok() {
                 info!(msg = "runner handler thread stopped");
+                self.stop();
                 break;
             }
 
@@ -161,6 +180,7 @@ impl Server {
             if res.is_err() {
                 continue;
             }
+
             let (req, tx) = res.unwrap();
             trace!(msg = "recv request", req = ?req);
             let res = match req {
@@ -301,28 +321,30 @@ impl Server {
                     timeout,
                 } => {
                     let nmg = NeedleManager::new(&config.needle_dir);
-                    let res: Result<bool, MsgResError> = {
+                    let res: Result<(bool, Option<t_console::PNG>), MsgResError> = {
                         let deadline = time::Instant::now() + timeout;
-                        loop {
-                            let (tx, rx) = mpsc::channel();
+                        'res: loop {
+                            if Instant::now() > deadline {
+                                break 'res Ok((false, None));
+                            }
 
+                            let (tx, rx) = mpsc::channel();
                             vnc_client
                                 .map_ref(|c| c.event_tx.send((VNCEventReq::TakeScreenShot, tx)))
                                 .expect("no vnc")
                                 .unwrap();
-
-                            match rx.recv_timeout(deadline - time::Instant::now()) {
+                            match rx.recv() {
                                 Ok(VNCEventRes::Screen(s)) => {
                                     let Some(res) = nmg.cmp(&s, &tag) else {
                                         error!(msg = "Needle file not found", tag = tag);
-                                        break Ok(false);
+                                        break 'res Ok((false, Some(s)));
                                     };
                                     if !res {
                                         warn!(msg = "match failed", tag = tag);
                                         continue;
                                     }
                                     info!(msg = "match success", tag = tag);
-                                    break Ok(res);
+                                    break 'res Ok((res, Some(s)));
                                 }
                                 Ok(_) => {
                                     warn!(msg = "invalid msg type");
@@ -331,9 +353,21 @@ impl Server {
                             }
                         }
                     };
-                    MsgRes::AssertScreen {
-                        similarity: 0,
-                        ok: res.is_ok(),
+                    if let Ok((same, png)) = res {
+                        if let (Some(tx), Some(png)) = (&screenshot_tx, png) {
+                            if tx.send(png).is_err() {
+                                // TODO: handle ch close
+                            }
+                        }
+                        MsgRes::AssertScreen {
+                            similarity: 0,
+                            ok: same,
+                        }
+                    } else {
+                        MsgRes::AssertScreen {
+                            similarity: 0,
+                            ok: false,
+                        }
                     }
                 }
                 MsgReq::MouseMove { x, y } => {
@@ -420,6 +454,10 @@ impl Server {
                     MsgRes::Done
                 }
             };
+
+            // if handle req, take a screenshot
+            Self::send_screenshot(&vnc_client, &screenshot_tx);
+
             trace!(msg = format!("sending res: {:?}", res));
             if let Err(e) = tx.send(res) {
                 info!(msg = "script engine receiver closed", reason = ?e);
@@ -427,6 +465,22 @@ impl Server {
             }
         }
         info!(msg = "Runner loop stopped")
+    }
+
+    fn send_screenshot(vnc_client: &AMOption<VNC>, screenshot_tx: &Option<Sender<PNG>>) {
+        let (tx, rx) = mpsc::channel();
+
+        vnc_client
+            .map_ref(|c| c.event_tx.send((VNCEventReq::TakeScreenShot, tx)))
+            .expect("no vnc")
+            .unwrap();
+        if let Ok(VNCEventRes::Screen(png)) = rx.recv() {
+            if let Some(tx) = screenshot_tx {
+                if tx.send(png).is_err() {
+                    // TODO: handle ch close
+                }
+            }
+        }
     }
 
     pub fn stop(&self) {

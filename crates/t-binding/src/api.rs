@@ -171,8 +171,7 @@ pub fn vnc_check_screen(tag: String, timeout: i32) -> Result<bool> {
 }
 
 pub fn vnc_assert_screen(tag: String, timeout: i32) -> Result<()> {
-    let res = vnc_check_screen(tag, timeout)?;
-    if res {
+    if vnc_check_screen(tag, timeout)? {
         Ok(())
     } else {
         Err(ApiError::AssertFailed)

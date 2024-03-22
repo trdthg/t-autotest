@@ -61,7 +61,7 @@ impl Container {
         data
     }
 
-    pub fn set_rect(&mut self, left: u16, top: u16, c: Container) {
+    pub fn set_rect(&mut self, left: u16, top: u16, c: &Container) {
         assert!(c.pixel_size == self.pixel_size);
         for row in top..top + c.height {
             for col in left..left + c.width {
@@ -77,12 +77,12 @@ impl Container {
     }
 
     pub fn cmp(&self, o: &Self) -> bool {
-        // 检查图像的宽度和高度是否相同
+        // check width and height
         if self.width != o.width || self.height != o.height {
             return false;
         }
 
-        // 比较每个像素的 RGB 值
+        // compare rgb
         for (pixel1, pixel2) in self.data.iter().zip(&o.data) {
             let rgb1 = pixel1;
             let rgb2 = pixel2;
@@ -94,16 +94,16 @@ impl Container {
     }
 
     pub fn cmp_rect(&self, o: &Self, rect: &Rect) -> bool {
-        // 检查图像的宽度和高度是否相同
+        // check width and height
         if self.width != o.width || self.height != o.height {
             return false;
         }
 
-        // 比较每个像素的 RGB 值
-        for x in rect.left..rect.left + rect.width {
-            for y in rect.top..rect.top + rect.height {
-                if self.get(x, y) != o.get(x, y) {
-                    return false;
+        // compare rgb
+        for row in rect.top..rect.top + rect.height {
+            for col in rect.left..rect.left + rect.width {
+                if let Some((p1, p2)) = self.get(row, col).iter().zip(o.get(row, col)).next() {
+                    return *p1 == *p2;
                 }
             }
         }
@@ -113,6 +113,8 @@ impl Container {
 
 #[cfg(test)]
 mod test {
+
+    use t_vnc::Rect;
 
     use super::*;
 
@@ -142,7 +144,7 @@ mod test {
         );
         assert_eq!(sc.get(0, 1), vec![2]);
 
-        sc.set_rect(1, 1, sub_sc);
+        sc.set_rect(1, 1, &sub_sc);
 
         assert_eq!(sc.get(1, 2), vec![2]);
     }
@@ -173,8 +175,28 @@ mod test {
         );
         assert_eq!(sc.get(0, 1), vec![2, 2]);
 
-        sc.set_rect(1, 1, sub_sc);
+        sc.set_rect(1, 1, &sub_sc);
 
         assert_eq!(sc.get(1, 2), vec![2, 2]);
+
+        assert!(sc.cmp_rect(
+            &sub_sc,
+            &Rect {
+                left: 0,
+                top: 0,
+                width: 2,
+                height: 2,
+            },
+        ));
+
+        assert!(sc.cmp_rect(
+            &sub_sc,
+            &Rect {
+                left: 1,
+                top: 1,
+                width: 2,
+                height: 2,
+            },
+        ));
     }
 }

@@ -6,6 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use t_console::{Rect, PNG};
+use tracing::info;
 
 pub struct Needle {
     pub config: NeedleConfig,
@@ -21,9 +22,9 @@ impl NeedleManager {
         Self { dir: dir.into() }
     }
 
-    pub fn load(&self, tag: impl AsRef<Path>) -> Option<Needle> {
-        let needle_png = self.load_image(self.dir.join(&tag).join("png"))?;
-        let json: NeedleConfig = self.load_json(self.dir.join(&tag).join("path"))?;
+    pub fn load(&self, tag: &str) -> Option<Needle> {
+        let needle_png = self.load_image(self.dir.join(&format!("{}.png", tag)))?;
+        let json: NeedleConfig = self.load_json(self.dir.join(&format!("{}.json", tag)))?;
         Some(Needle {
             config: json,
             data: needle_png,

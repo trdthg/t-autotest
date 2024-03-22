@@ -149,7 +149,7 @@ impl Display for VNCError {
 
 impl VNC {
     fn _connect(addr: SocketAddr, password: Option<String>) -> Result<t_vnc::Client, VNCError> {
-        let stream = TcpStream::connect(&addr).map_err(VNCError::Io)?;
+        let stream = TcpStream::connect(addr).map_err(VNCError::Io)?;
 
         let vnc = t_vnc::Client::from_tcp_stream(stream, false, |methods| {
             for method in methods {
@@ -217,6 +217,7 @@ impl VNC {
                 pixel_format,
                 unstable_screen: Container::new(size.0, size.1, 3),
                 updated_in_frame: false,
+                last_take_screenshot: Instant::now(),
 
                 buttons: 0,
 
@@ -256,6 +257,7 @@ struct VncClientInner {
     event_rx: Receiver<(VNCEventReq, Sender<VNCEventRes>)>,
     stop_rx: Receiver<()>,
 
+    last_take_screenshot: Instant,
     screenshot_tx: Option<Sender<Container>>,
     screenshot_buffer: std::collections::VecDeque<PNG>,
 }
@@ -335,26 +337,26 @@ impl VncClientInner {
                 return Err(e);
             }
             Event::Resize(w, h) => {
-                info!("VNC Window Resize");
+                info!(msg = "VNC Window Resize");
                 self.updated_in_frame = true;
                 self.width = w;
                 self.height = h;
                 let mut new_screen = Container::new(w, h, 3);
-                new_screen.set_rect(0, 0, self.unstable_screen.clone());
+                new_screen.set_rect(0, 0, &self.unstable_screen);
                 self.unstable_screen = new_screen;
             }
             Event::PutPixels(rect, pixels) => {
                 self.updated_in_frame = true;
                 let data = convert_to_rgb(&self.pixel_format, &pixels);
                 let c = Container::new_with_data(rect.width, rect.height, data, 3);
-                self.unstable_screen.set_rect(rect.left, rect.top, c);
+                self.unstable_screen.set_rect(rect.left, rect.top, &c);
             }
             Event::CopyPixels { src, dst } => {
                 self.updated_in_frame = true;
                 self.unstable_screen.set_rect(
                     dst.left,
                     dst.top,
-                    Container::new_with_data(
+                    &Container::new_with_data(
                         dst.width,
                         dst.height,
                         self.unstable_screen.get_rect(src),
@@ -366,19 +368,29 @@ impl VncClientInner {
                 if !self.updated_in_frame {
                     return Ok(());
                 }
-                self.updated_in_frame = false;
+
+                // save buffer
                 debug!(msg = "vnc event Event::EndOfFrame");
                 if self.screenshot_buffer.len() == 120 {
                     self.screenshot_buffer.pop_front();
                 }
                 self.screenshot_buffer
                     .push_back(self.unstable_screen.clone());
+
+                // send
                 if let Some(tx) = &self.screenshot_tx {
-                    if tx.send(self.unstable_screen.clone()).is_err() {
-                        error!(msg = "screenshot channel closed");
-                        self.screenshot_tx = None;
+                    if Instant::now().duration_since(self.last_take_screenshot)
+                        > Duration::from_secs(2)
+                    {
+                        self.last_take_screenshot = Instant::now();
+                        if tx.send(self.unstable_screen.clone()).is_err() {
+                            error!(msg = "screenshot channel closed");
+                            self.screenshot_tx = None;
+                        }
                     }
                 }
+
+                self.updated_in_frame = false;
             }
             Event::Clipboard(ref _text) => {}
             Event::SetCursor { .. } => {}
