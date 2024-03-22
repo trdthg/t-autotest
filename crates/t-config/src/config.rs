@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
@@ -7,6 +7,7 @@ pub struct Config {
     pub arch: String,
     pub os: String,
     pub needle_dir: String,
+    pub log_dir: String,
     pub console: Console,
     pub env: HashMap<String, toml::Value>,
 }
@@ -32,7 +33,9 @@ pub struct ConsoleSSH {
     pub username: String,
     pub auth: ConsoleSSHAuth,
     pub timeout: Option<Duration>,
-    pub log_file: Option<String>,
+
+    #[serde(skip_serializing)]
+    pub log_file: Option<PathBuf>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -56,7 +59,9 @@ pub struct ConsoleSerial {
     pub auto_login: bool,
     pub username: Option<String>,
     pub password: Option<String>,
-    pub log_file: Option<String>,
+
+    #[serde(skip_serializing)]
+    pub log_file: Option<PathBuf>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -65,7 +70,9 @@ pub struct ConsoleVNC {
     pub host: String,
     pub port: u16,
     pub password: Option<String>,
-    pub screenshot_dir: Option<String>,
+
+    #[serde(skip_serializing)]
+    pub screenshot_dir: Option<PathBuf>,
 }
 
 #[cfg(test)]

@@ -36,10 +36,11 @@ impl Driver {
                     .with_vnc_screenshot_subscriber(screenshot_tx)
                     .with_latest_vnc_screenshot_subscriber(screenshot_tx2);
                 let (done_tx, donw_rx) = mpsc::channel();
-                Self::save_screenshots(screenshot_rx, dir, done_tx);
+                Self::save_screenshots(screenshot_rx, dir.clone(), done_tx);
                 stop_rx = Some(donw_rx);
 
-                let latest_screenshot_path = PathBuf::from_iter(vec![dir, "latest.png"]);
+                let mut latest_screenshot_path = dir.clone();
+                latest_screenshot_path.push("latest.png");
                 thread::spawn(move || {
                     while let Ok(screen) = screenshot_rx2.recv() {
                         let p = screen.into_img();
@@ -61,8 +62,8 @@ impl Driver {
         Ok(res)
     }
 
-    fn save_screenshots(screenshot_rx: Receiver<PNG>, dir: &str, stop_tx: Sender<()>) {
-        let path: PathBuf = PathBuf::from(dir);
+    fn save_screenshots(screenshot_rx: Receiver<PNG>, dir: PathBuf, stop_tx: Sender<()>) {
+        let path = dir;
         thread::spawn(move || {
             let mut path = path;
             let mut i = 0;

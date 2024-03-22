@@ -1,9 +1,5 @@
 use std::{
-    fs::{File, OpenOptions},
-    io::{self, Read, Write},
-    sync::mpsc::{self, channel, Receiver, Sender},
-    thread,
-    time::{Duration, Instant},
+    fs::{File, OpenOptions}, io::{self, Read, Write}, path::PathBuf, sync::mpsc::{self, channel, Receiver, Sender}, thread, time::{Duration, Instant}
 };
 
 use image::EncodableLayout;
@@ -28,7 +24,7 @@ pub struct EvLoopCtl {
 }
 
 impl EvLoopCtl {
-    pub fn new<T: Read + Write + Send + 'static>(conn: T, log_file: Option<String>) -> Self {
+    pub fn new<T: Read + Write + Send + 'static>(conn: T, log_file: Option<PathBuf>) -> Self {
         let req_tx = EventLoop::spawn(conn, log_file);
         Self { req_tx }
     }
@@ -56,7 +52,7 @@ impl<T> EventLoop<T>
 where
     T: Read + Write + Send + 'static,
 {
-    pub fn spawn(conn: T, log_file: Option<String>) -> Sender<(Req, Sender<Res>)> {
+    pub fn spawn(conn: T, log_file: Option<PathBuf>) -> Sender<(Req, Sender<Res>)> {
         let log_file = if let Some(ref log_file) = log_file {
             let file = OpenOptions::new()
                 .create(true)

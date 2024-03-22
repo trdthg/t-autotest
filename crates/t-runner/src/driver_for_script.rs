@@ -33,7 +33,7 @@ impl DriverForScript {
             if let Some(ref dir) = _vnc.screenshot_dir {
                 let (screenshot_tx, screenshot_rx) = mpsc::channel();
                 builder = builder.with_vnc_screenshot_subscriber(screenshot_tx);
-                Self::save_screenshots(screenshot_rx, dir);
+                Self::save_screenshots(screenshot_rx, dir.clone());
             }
         }
         let (s, c) = builder.build().map_err(DriverError::ConsoleError)?;
@@ -47,8 +47,8 @@ impl DriverForScript {
         })
     }
 
-    fn save_screenshots(screenshot_rx: Receiver<PNG>, dir: &str) {
-        let path: PathBuf = PathBuf::from(dir);
+    fn save_screenshots(screenshot_rx: Receiver<PNG>, dir: PathBuf) {
+        let path: PathBuf = dir;
         thread::spawn(move || {
             let mut path = path;
             while let Ok(screen) = screenshot_rx.recv() {

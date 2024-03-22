@@ -1,7 +1,11 @@
 pub mod recorder;
 
 use clap::{Parser, Subcommand};
-use std::{env, fs, io::IsTerminal, path::Path};
+use std::{
+    env, fs,
+    io::IsTerminal,
+    path::{Path, PathBuf},
+};
 use t_binding::api;
 use t_config::Config;
 use t_runner::{DriverForScript, ServerBuilder};
@@ -68,12 +72,18 @@ fn main() {
     info!(msg = "current cli", cli = ?cli);
 
     let config = cli.config;
+    let mut config: Config = toml::from_str(fs::read_to_string(config).unwrap().as_str()).unwrap();
+
+    config.console.serial.log_file = Some(PathBuf::from_iter(vec![&config.log_dir, "serial.log"]));
+    config.console.ssh.log_file = Some(PathBuf::from_iter(vec![&config.log_dir, "ssh.log"]));
+    config.console.vnc.screenshot_dir = Some(PathBuf::from_iter(vec![&config.log_dir, "vnc"]));
+
+    fs::create_dir_all(config.console.vnc.screenshot_dir.clone().unwrap())
+        .expect("log folder create failed");
+
+    info!(msg = "current config", config = ?config);
     match cli.command {
         Commands::Run { script, env } => {
-            let mut config: Config =
-                toml::from_str(fs::read_to_string(config).unwrap().as_str()).unwrap();
-            info!(msg = "current config", config = ?config);
-
             for e in env {
                 if let Some((key, value)) = e.split_once('=') {
                     config
@@ -98,10 +108,6 @@ fn main() {
             }
         }
         Commands::Record {} => {
-            let config: Config =
-                toml::from_str(fs::read_to_string(config).unwrap().as_str()).unwrap();
-            info!(msg = "current config", config = ?config);
-
             let _vnc = &config.console.vnc;
             if !_vnc.enable {
                 warn!("Please enable vnc in your config.toml");
@@ -120,8 +126,6 @@ fn main() {
             }
         }
         Commands::VncDo { action } => {
-            let mut config: Config =
-                toml::from_str(fs::read_to_string(config).unwrap().as_str()).unwrap();
             config.console.ssh.enable = false;
             config.console.serial.enable = false;
             let builder = ServerBuilder::new(config);
