@@ -456,7 +456,7 @@ impl Server {
             };
 
             // if handle req, take a screenshot
-            Self::send_screenshot(&vnc_client, &screenshot_tx);
+            Self::send_screenshot(vnc_client, screenshot_tx);
 
             trace!(msg = format!("sending res: {:?}", res));
             if let Err(e) = tx.send(res) {

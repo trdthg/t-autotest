@@ -22,8 +22,8 @@ impl NeedleManager {
     }
 
     pub fn load(&self, tag: &str) -> Option<Needle> {
-        let needle_png = self.load_image(self.dir.join(&format!("{}.png", tag)))?;
-        let json: NeedleConfig = self.load_json(self.dir.join(&format!("{}.json", tag)))?;
+        let needle_png = self.load_image(self.dir.join(format!("{}.png", tag)))?;
+        let json: NeedleConfig = self.load_json(self.dir.join(format!("{}.json", tag)))?;
         Some(Needle {
             config: json,
             data: needle_png,
