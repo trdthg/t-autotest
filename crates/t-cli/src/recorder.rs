@@ -944,7 +944,7 @@ impl Recorder {
                     ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
                         // related button
                         if ui.button("folder").clicked() {
-                            if let Some(path) = rfd::FileDialog::new().pick_file() {
+                            if let Some(path) = rfd::FileDialog::new().pick_folder() {
                                 self.needle_dir = path;
                             }
                         }
