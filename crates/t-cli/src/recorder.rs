@@ -18,7 +18,7 @@ use std::{
 use t_binding::api;
 use t_console::PNG;
 use t_runner::needle::NeedleConfig;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 use tracing_core::Level;
 mod deque;
 mod helper;
@@ -373,6 +373,7 @@ struct RectF32 {
 }
 
 impl RectF32 {
+    #[allow(unused)]
     pub fn add_delta_f32_noreverse(&mut self, x: f32, y: f32) -> &mut Self {
         self.width += x;
         self.height += y;

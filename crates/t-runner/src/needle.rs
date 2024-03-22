@@ -6,7 +6,6 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use t_console::{Rect, PNG};
-use tracing::info;
 
 pub struct Needle {
     pub config: NeedleConfig,
