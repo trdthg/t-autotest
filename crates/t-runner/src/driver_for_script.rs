@@ -28,9 +28,8 @@ impl DriverForScript {
     fn new(config: Config) -> Result<Self> {
         let mut builder = ServerBuilder::new(config.clone());
 
-        let _vnc = &config.console.vnc;
-        if _vnc.enable {
-            if let Some(ref dir) = _vnc.screenshot_dir {
+        if let Some(vnc) = config.vnc.as_ref() {
+            if let Some(ref dir) = vnc.screenshot_dir {
                 let (screenshot_tx, screenshot_rx) = mpsc::channel();
                 builder = builder.with_vnc_screenshot_subscriber(screenshot_tx);
                 Self::save_screenshots(screenshot_rx, dir.clone());
@@ -123,6 +122,12 @@ impl DriverForScript {
     }
 
     pub fn new_ssh(&mut self) -> Result<SSH> {
-        SSH::new(self.config.console.ssh.clone()).map_err(DriverError::ConsoleError)
+        if let Some(ssh) = self.config.ssh.clone() {
+            SSH::new(ssh.clone()).map_err(DriverError::ConsoleError)
+        } else {
+            Err(DriverError::ConsoleError(
+                t_console::ConsoleError::ConnectionBroken("no ssh config".to_string()),
+            ))
+        }
     }
 }

@@ -1,6 +1,7 @@
 use crate::needle::NeedleManager;
 use parking_lot::Mutex;
 use std::{
+    env::current_dir,
     sync::{
         mpsc::{self, Receiver, Sender},
         Arc,
@@ -9,7 +10,7 @@ use std::{
     time::{self, Duration, Instant},
 };
 use t_binding::{MsgReq, MsgRes, MsgResError};
-use t_config::{Config, Console};
+use t_config::Config;
 use t_console::{key, ConsoleError, Serial, VNCEventReq, VNCEventRes, PNG, SSH, VNC};
 use tracing::{error, info, trace, warn};
 
@@ -84,42 +85,29 @@ impl ServerBuilder {
     }
 
     pub fn build(self) -> Result<(Server, mpsc::Sender<()>), ConsoleError> {
-        let Console {
-            ssh: _ssh,
-            serial: _serial,
-            vnc: _vnc,
-        } = self.config.console.clone();
+        let c = self.config;
 
         // init serial
-        let serial_client = if _serial.enable {
-            Some(Serial::new(_serial)?)
-        } else {
-            None
-        };
-
+        let serial_client = c.serial.clone().map(|c| Serial::new(c)).transpose()?;
         // init ssh
-        let ssh_client = if _ssh.enable {
-            Some(SSH::new(_ssh)?)
-        } else {
-            None
-        };
+        let ssh_client = c.ssh.clone().map(|c| SSH::new(c)).transpose()?;
 
         // init vnc
-        let vnc_client = if _vnc.enable {
-            let addr = format!("{}:{}", _vnc.host, _vnc.port)
-                .parse()
-                .map_err(|e| {
+        let vnc_client = c
+            .vnc
+            .clone()
+            .map(|vnc| {
+                let addr = format!("{}:{}", vnc.host, vnc.port).parse().map_err(|e| {
                     ConsoleError::ConnectionBroken(format!("vnc addr is not valid, {}", e))
                 })?;
 
-            let vnc_client = VNC::connect(addr, _vnc.password.clone(), self.tx2)
-                .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))?;
+                let vnc_client = VNC::connect(addr, vnc.password.clone(), self.tx2)
+                    .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))?;
 
-            info!(msg = "init vnc done");
-            Some(vnc_client)
-        } else {
-            None
-        };
+                info!(msg = "init vnc done");
+                Ok(vnc_client)
+            })
+            .transpose()?;
 
         // init api request channel
         let (tx, msg_rx) = mpsc::channel();
@@ -129,7 +117,7 @@ impl ServerBuilder {
         let (stop_tx, stop_rx) = mpsc::channel();
         Ok((
             Server {
-                config: self.config,
+                config: c,
                 msg_rx,
                 stop_rx,
                 screenshot_tx: self.tx,
@@ -320,7 +308,7 @@ impl Server {
                     threshold: _,
                     timeout,
                 } => {
-                    let nmg = NeedleManager::new(&config.needle_dir);
+                    let nmg = NeedleManager::new(current_dir().unwrap());
                     let res: Result<(f32, bool, Option<t_console::PNG>), MsgResError> = {
                         let deadline = time::Instant::now() + timeout;
                         let mut similarity: f32 = 0.;

@@ -4,7 +4,7 @@ use crate::term::Term;
 use crate::ConsoleError;
 use std::path::PathBuf;
 use std::{thread::sleep, time::Duration};
-use tracing::{error, info};
+use tracing::error;
 
 pub struct Serial {
     _config: t_config::ConsoleSerial,
@@ -40,14 +40,7 @@ impl Serial {
     fn connect_from_serial_config(
         c: &t_config::ConsoleSerial,
     ) -> Result<SerialClient<crate::VT102>> {
-        let username = c.username.clone().unwrap_or_default();
-        let password = c.password.clone().unwrap_or_default();
-        let auth = match c.auto_login {
-            true => Some((username.as_str(), password.as_str())),
-            false => None,
-        };
-        let ssh_client =
-            SerialClient::connect(&c.serial_file, c.bund_rate, auth, c.log_file.clone())?;
+        let ssh_client = SerialClient::connect(&c.serial_file, c.bund_rate, c.log_file.clone())?;
         Ok(ssh_client)
     }
 
@@ -116,12 +109,7 @@ impl<T> SerialClient<T>
 where
     T: Term,
 {
-    pub fn connect(
-        file: &str,
-        bund_rate: u32,
-        auth: Option<(&str, &str)>,
-        log_file: Option<PathBuf>,
-    ) -> Result<Self> {
+    pub fn connect(file: &str, bund_rate: u32, log_file: Option<PathBuf>) -> Result<Self> {
         // init tty
         // t_util::execute_shell(
         //     format!("stty -F {} {} -echo -icrnl -onlcr -icanon", file, bund_rate).as_str(),
@@ -134,38 +122,10 @@ where
             ConsoleError::ConnectionBroken(format!("serialport open failed, {}", e))
         })?;
 
-        let mut res = Self {
+        Ok(Self {
             tty: Tty::new(EvLoopCtl::new(port, log_file)),
             path: "".to_string(),
-        };
-
-        if let Some((username, password)) = auth {
-            info!(msg = "serial try logout");
-            res.logout()
-                .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))?;
-
-            info!(msg = "serial waiting login");
-            res.tty
-                .wait_string_ntimes(Duration::from_secs(30), "login", 1)
-                .map_err(|e| {
-                    ConsoleError::ConnectionBroken(format!(
-                        "serial login wait prompt failed: {}",
-                        e
-                    ))
-                })?;
-
-            info!(msg = "serial login");
-            res.login(username.as_ref(), password.as_ref());
-
-            info!(msg = "serial get tty");
-            let tty = res
-                .tty
-                .exec_global(Duration::from_secs(10), "tty")
-                .map_err(|_| ConsoleError::ConnectionBroken("serial get tty failed".to_string()))?;
-            res.path = tty.1;
-        }
-
-        Ok(res)
+        })
     }
 
     #[allow(unused)]
@@ -173,43 +133,14 @@ where
         self.path.to_owned()
     }
 
-    fn logout(&mut self) -> Result<()> {
-        // logout
-        self.tty
-            .write(b"\x04\n")
-            .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))?;
-        sleep(Duration::from_millis(5000));
-        Ok(())
-    }
-
-    fn login(&mut self, username: &str, password: &str) {
-        // username
-        self.write_string(&format!("{username}\n")).unwrap();
-        sleep(Duration::from_millis(5000));
-
-        // password
-        self.write_string(&format!("{password}\n")).unwrap();
-        sleep(Duration::from_millis(3000));
-
-        info!("{}", "try login done");
-    }
-
     pub fn history(&self) -> String {
         T::parse_and_strip(&self.tty.history())
-    }
-
-    pub fn write_string(&mut self, s: &str) -> Result<()> {
-        sleep(Duration::from_millis(100));
-        self.tty
-            .write_string(s)
-            .map_err(|_| ConsoleError::Timeout)?;
-        Ok(())
     }
 }
 
 #[cfg(test)]
 mod test {
-    use t_config::Config;
+    use t_config::{Config, ConsoleSerial};
 
     use crate::term::{Term, VT102};
     use std::{
@@ -228,11 +159,11 @@ mod test {
             return;
         }
         let c = c.unwrap();
-        if !c.console.serial.enable {
+        let Some(serial) = c.serial else {
             return;
-        }
+        };
 
-        let port = serialport::new(c.console.serial.serial_file, c.console.serial.bund_rate)
+        let port = serialport::new(serial.serial_file, serial.bund_rate)
             .timeout(Duration::from_secs(10))
             .open_native();
         if port.is_err() {
@@ -264,31 +195,18 @@ mod test {
         c.unwrap()
     }
 
-    fn get_client(c: &Config) -> SerialClient<VT102> {
-        assert!(c.console.serial.enable);
-
-        let c = c.console.serial.clone();
-        let username = c.username.unwrap_or_default();
-        let password = c.password.unwrap_or_default();
-        let auth = match c.auto_login {
-            true => Some((username.as_str(), password.as_str())),
-            false => None,
-        };
-
-        SerialClient::connect(&c.serial_file, c.bund_rate, auth, None).unwrap()
+    fn get_client(serial: &ConsoleSerial) -> SerialClient<VT102> {
+        SerialClient::connect(&serial.serial_file, serial.bund_rate, None).unwrap()
     }
 
     #[test]
     fn test_exec_global() {
-        let c = get_config_from_file();
-        if c.is_none() {
+        let Some(c) = get_config_from_file() else {
             return;
-        }
-        let c = c.unwrap();
-        if !c.console.serial.enable {
+        };
+        let Some(c) = c.serial else {
             return;
-        }
-
+        };
         let mut serial = get_client(&c);
 
         let cmds = [

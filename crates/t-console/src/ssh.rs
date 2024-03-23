@@ -66,9 +66,11 @@ impl SSH {
 
     fn connect_from_ssh_config(c: &t_config::ConsoleSSH) -> Result<SSHClient<crate::Xterm>> {
         info!(msg = "init ssh...");
-        let auth = match c.auth.r#type {
-            t_config::ConsoleSSHAuthType::PrivateKey => SSHAuthAuth::PrivateKey(
-                c.auth.private_key.clone().unwrap_or(
+        let auth = if let Some(password) = c.password.as_ref() {
+            SSHAuthAuth::Password(password.clone())
+        } else {
+            SSHAuthAuth::PrivateKey(
+                c.private_key.clone().unwrap_or(
                     home::home_dir()
                         .map(|mut x| {
                             x.push(std::path::Path::new(".ssh/id_rsa"));
@@ -76,10 +78,7 @@ impl SSH {
                         })
                         .unwrap(),
                 ),
-            ),
-            t_config::ConsoleSSHAuthType::Password => {
-                SSHAuthAuth::Password(c.auth.password.clone().unwrap())
-            }
+            )
         };
         SSHClient::connect(
             c.timeout,
@@ -245,7 +244,7 @@ mod test {
 
     fn get_ssh_client() -> Option<SSH> {
         if let Some(c) = get_config_from_file() {
-            return SSH::new(c.console.ssh).ok();
+            return SSH::new(c.ssh?).ok();
         }
         None
     }

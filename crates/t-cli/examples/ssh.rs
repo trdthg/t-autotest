@@ -1,6 +1,6 @@
 use clap::Parser;
 use std::path::PathBuf;
-use t_config::{ConsoleSSH, ConsoleSSHAuth};
+use t_config::ConsoleSSH;
 use t_console::SSH;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -27,17 +27,13 @@ fn main() {
 
     // Session is a wrapper around a russh client, defined down below
     match SSH::new(ConsoleSSH {
-        enable: true,
         host: cli.host,
         port: cli.port,
         username: cli.username.unwrap_or_else(|| "root".to_string()),
-        auth: ConsoleSSHAuth {
-            r#type: t_config::ConsoleSSHAuthType::PrivateKey,
-            private_key: cli
-                .private_key
-                .map(|p| p.as_path().to_string_lossy().to_string()),
-            password: None,
-        },
+        private_key: cli
+            .private_key
+            .map(|p| p.as_path().to_string_lossy().to_string()),
+        password: cli.password,
         timeout: None,
         log_file: None,
     }) {
@@ -87,11 +83,14 @@ pub struct Cli {
     #[clap(long, short, default_value_t = 22)]
     port: u16,
 
-    #[clap(long, short)]
+    #[clap(long, short = 'u')]
     username: Option<String>,
 
     #[clap(long, short = 'k')]
     private_key: Option<PathBuf>,
+
+    #[clap(long, short = 'p')]
+    password: Option<String>,
 
     #[clap(index = 1, required = true)]
     command: Vec<String>,

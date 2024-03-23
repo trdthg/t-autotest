@@ -33,4 +33,31 @@ mod test {
         let cfg = load_config_from_file("../../config/full-example.toml").unwrap();
         println!("{:#?}", cfg);
     }
+
+    #[test]
+    fn test_example_toml2() {
+        let s = r##"
+needle_dir = ""
+log_dir = ""
+
+[env]
+key = "value"
+a = 1
+
+[ssh]
+host = ""
+port = 1
+username = ""
+timeout = 1
+password = ""
+private_key = ""
+
+"##;
+
+        // [serial]
+        // [serialvnc]
+
+        use super::Config;
+        toml::from_str::<Config>(s).unwrap();
+    }
 }
