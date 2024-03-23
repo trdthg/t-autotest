@@ -2,6 +2,8 @@ use crate::needle::NeedleManager;
 use parking_lot::Mutex;
 use std::{
     env::current_dir,
+    path::PathBuf,
+    str::FromStr,
     sync::{
         mpsc::{self, Receiver, Sender},
         Arc,
@@ -154,6 +156,19 @@ impl Server {
 
         let _ssh_tty = ssh_client.map_ref(|c| c.tty());
         let serial_tty = serial_client.map_ref(|c| c.tty());
+
+        let nmg = NeedleManager::new(
+            config
+                .vnc
+                .as_ref()
+                .map_or(current_dir().ok(), |c| {
+                    c.needle_dir
+                        .as_ref()
+                        .map(|s| PathBuf::from_str(s).ok())
+                        .flatten()
+                })
+                .unwrap(),
+        );
 
         loop {
             // stop on receive done signal
@@ -308,7 +323,6 @@ impl Server {
                     threshold: _,
                     timeout,
                 } => {
-                    let nmg = NeedleManager::new(current_dir().unwrap());
                     let res: Result<(f32, bool, Option<t_console::PNG>), MsgResError> = {
                         let deadline = time::Instant::now() + timeout;
                         let mut similarity: f32 = 0.;

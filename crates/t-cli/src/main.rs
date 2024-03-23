@@ -97,7 +97,7 @@ fn main() {
             }
         }
         Commands::Record {} => {
-            let Some(vnc) = &config.vnc else {
+            let Some(_vnc) = &config.vnc else {
                 warn!("Please enable vnc in your config.toml");
                 return;
             };
