@@ -90,9 +90,9 @@ impl ServerBuilder {
         let c = self.config;
 
         // init serial
-        let serial_client = c.serial.clone().map(|c| Serial::new(c)).transpose()?;
+        let serial_client = c.serial.clone().map(Serial::new).transpose()?;
         // init ssh
-        let ssh_client = c.ssh.clone().map(|c| SSH::new(c)).transpose()?;
+        let ssh_client = c.ssh.clone().map(SSH::new).transpose()?;
 
         // init vnc
         let vnc_client = c
@@ -164,8 +164,7 @@ impl Server {
                 .map_or(current_dir().ok(), |c| {
                     c.needle_dir
                         .as_ref()
-                        .map(|s| PathBuf::from_str(s).ok())
-                        .flatten()
+                        .and_then(|s| PathBuf::from_str(s).ok())
                 })
                 .unwrap(),
         );
