@@ -56,9 +56,7 @@ impl NeedleManager {
     }
 
     pub fn cmp(&self, s: &PNG, filename: &str, min_same: Option<f32>) -> Option<(f32, bool)> {
-        let Some(needle) = self.load(filename) else {
-            return None;
-        };
+        let needle = self.load(filename)?;
         if needle.config.areas.is_empty() {
             warn!("this needle has no match ares");
             return Some((1.0, true));
