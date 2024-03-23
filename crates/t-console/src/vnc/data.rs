@@ -109,6 +109,27 @@ impl Container {
         }
         true
     }
+
+    pub fn cmp_rect_and_count(&self, o: &Self, rect: &Rect) -> (i32, bool) {
+        // check width and height
+        if self.width != o.width || self.height != o.height {
+            return (rect.width as i32 * rect.height as i32, false);
+        }
+
+        let mut n = 0;
+
+        // compare rgb
+        for row in rect.top..rect.top + rect.height {
+            for col in rect.left..rect.left + rect.width {
+                if let Some((p1, p2)) = self.get(row, col).iter().zip(o.get(row, col)).next() {
+                    if !*p1 == *p2 {
+                        n += 1;
+                    }
+                }
+            }
+        }
+        (n, n == 0)
+    }
 }
 
 #[cfg(test)]

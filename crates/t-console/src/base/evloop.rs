@@ -1,5 +1,10 @@
 use std::{
-    fs::{File, OpenOptions}, io::{self, Read, Write}, path::PathBuf, sync::mpsc::{self, channel, Receiver, Sender}, thread, time::{Duration, Instant}
+    fs::{File, OpenOptions},
+    io::{self, Read, Write},
+    path::PathBuf,
+    sync::mpsc::{self, channel, Receiver, Sender},
+    thread,
+    time::{Duration, Instant},
 };
 
 use image::EncodableLayout;

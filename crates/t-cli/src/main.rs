@@ -1,11 +1,7 @@
 pub mod recorder;
 
 use clap::{Parser, Subcommand};
-use std::{
-    env, fs,
-    io::IsTerminal,
-    path::{Path, PathBuf},
-};
+use std::{env, io::IsTerminal, path::Path};
 use t_binding::api;
 use t_config::Config;
 use t_runner::{DriverForScript, ServerBuilder};
@@ -71,15 +67,8 @@ fn main() {
     let cli = Cli::parse();
     info!(msg = "current cli", cli = ?cli);
 
-    let config = cli.config;
-    let mut config: Config = toml::from_str(fs::read_to_string(config).unwrap().as_str()).unwrap();
-
-    config.console.serial.log_file = Some(PathBuf::from_iter(vec![&config.log_dir, "serial.log"]));
-    config.console.ssh.log_file = Some(PathBuf::from_iter(vec![&config.log_dir, "ssh.log"]));
-    config.console.vnc.screenshot_dir = Some(PathBuf::from_iter(vec![&config.log_dir, "vnc"]));
-
-    fs::create_dir_all(config.console.vnc.screenshot_dir.clone().unwrap())
-        .expect("log folder create failed");
+    // init config
+    let mut config = Config::from_toml_file(cli.config.as_str()).expect("config not valid");
 
     info!(msg = "current config", config = ?config);
     match cli.command {

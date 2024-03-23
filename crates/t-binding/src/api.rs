@@ -165,7 +165,7 @@ pub fn vnc_check_screen(tag: String, timeout: i32) -> Result<bool> {
         threshold: 1,
         timeout: Duration::from_millis(timeout as u64),
     })? {
-        MsgRes::AssertScreen { similarity: 0, ok } => Ok(ok),
+        MsgRes::AssertScreen { similarity: _, ok } => Ok(ok),
         _ => Err(ApiError::ServerInvalidResponse),
     }
 }
@@ -194,6 +194,13 @@ pub fn vnc_take_screenshot() -> Result<t_console::PNG> {
 
 pub fn vnc_mouse_move(x: u16, y: u16) -> Result<()> {
     if matches!(req(MsgReq::MouseMove { x, y })?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
+}
+
+pub fn vnc_mouse_drag(x: u16, y: u16) -> Result<()> {
+    if matches!(req(MsgReq::MouseDrag { x, y })?, MsgRes::Done) {
         return Ok(());
     }
     Err(ApiError::ServerInvalidResponse)

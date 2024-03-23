@@ -637,14 +637,6 @@ impl Recorder {
                                 if screenshot.drag_started() {
                                     if let Some(pos) = screenshot.interact_pointer_pos() {
                                         self.drag_pos = pos;
-                                        if let Err(e) =
-                                            api::vnc_mouse_move(pos.x as u16, pos.y as u16)
-                                        {
-                                            self.logs.push((
-                                                Level::ERROR,
-                                                format!("mouse move failed, reason = {:?}", e),
-                                            ));
-                                        }
                                         if let Err(e) = api::vnc_mouse_keydown() {
                                             self.logs.push((
                                                 Level::ERROR,
@@ -654,13 +646,13 @@ impl Recorder {
                                     }
                                 } else if screenshot.dragged() {
                                     self.drag_pos += screenshot.drag_delta();
-                                    if let Err(e) = api::vnc_mouse_move(
+                                    if let Err(e) = api::vnc_mouse_drag(
                                         self.drag_pos.x as u16,
                                         self.drag_pos.y as u16,
                                     ) {
                                         self.logs.push((
                                             Level::ERROR,
-                                            format!("mouse move failed, reason = {:?}", e),
+                                            format!("mouse drag failed, reason = {:?}", e),
                                         ));
                                     }
                                 } else if screenshot.drag_released() {
@@ -708,8 +700,10 @@ impl Recorder {
                                 if let Some(pos_max) = screenshot.hover_pos() {
                                     let x = pos_max.x - screenshot.rect.left();
                                     let y = pos_max.y - screenshot.rect.top();
-                                    screenshot = screenshot
-                                        .on_hover_text_at_pointer(format!("x: {:.1}, y: {:.1}", x, y));
+                                    screenshot = screenshot.on_hover_text_at_pointer(format!(
+                                        "x: {:.1}, y: {:.1}",
+                                        x, y
+                                    ));
                                 }
 
                                 if self.mouse_click_mode {

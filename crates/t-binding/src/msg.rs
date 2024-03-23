@@ -46,6 +46,10 @@ pub enum MsgReq {
         x: u16,
         y: u16,
     },
+    MouseDrag {
+        x: u16,
+        y: u16,
+    },
     MouseHide,
     MouseClick,
     MouseRClick,
@@ -66,6 +70,6 @@ pub enum MsgRes {
     ConfigValue(Option<String>),
     ScriptRun(Result<(i32, String), MsgResError>),
     Error(MsgResError),
-    AssertScreen { similarity: i32, ok: bool },
+    AssertScreen { similarity: f32, ok: bool },
     Screenshot(PNG),
 }

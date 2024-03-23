@@ -321,11 +321,12 @@ impl Server {
                     timeout,
                 } => {
                     let nmg = NeedleManager::new(&config.needle_dir);
-                    let res: Result<(bool, Option<t_console::PNG>), MsgResError> = {
+                    let res: Result<(f32, bool, Option<t_console::PNG>), MsgResError> = {
                         let deadline = time::Instant::now() + timeout;
+                        let mut similarity: f32 = 0.;
                         'res: loop {
                             if Instant::now() > deadline {
-                                break 'res Ok((false, None));
+                                break 'res Ok((similarity, false, None));
                             }
 
                             let (tx, rx) = mpsc::channel();
@@ -335,37 +336,49 @@ impl Server {
                                 .unwrap();
                             match rx.recv() {
                                 Ok(VNCEventRes::Screen(s)) => {
-                                    let Some(res) = nmg.cmp(&s, &tag) else {
+                                    let Some((res_similarity, res)) = nmg.cmp(&s, &tag, None)
+                                    else {
                                         error!(msg = "Needle file not found", tag = tag);
-                                        break 'res Ok((false, Some(s)));
+                                        break 'res Ok((similarity, false, Some(s)));
                                     };
+                                    similarity = res_similarity;
+
                                     if !res {
-                                        warn!(msg = "match failed", tag = tag);
-                                        continue;
+                                        warn!(
+                                            msg = "match failed",
+                                            tag = tag,
+                                            similarity = similarity
+                                        );
+                                    } else {
+                                        info!(
+                                            msg = "match success",
+                                            tag = tag,
+                                            similarity = similarity
+                                        );
+                                        break 'res Ok((similarity, res, Some(s)));
                                     }
-                                    info!(msg = "match success", tag = tag);
-                                    break 'res Ok((res, Some(s)));
                                 }
                                 Ok(_) => {
                                     warn!(msg = "invalid msg type");
                                 }
                                 Err(_e) => break Err(MsgResError::Timeout),
                             }
+                            thread::sleep(Duration::from_millis(200));
                         }
                     };
-                    if let Ok((same, png)) = res {
+                    if let Ok((similarity, same, png)) = res {
                         if let (Some(tx), Some(png)) = (&screenshot_tx, png) {
                             if tx.send(png).is_err() {
                                 // TODO: handle ch close
                             }
                         }
                         MsgRes::AssertScreen {
-                            similarity: 0,
+                            similarity,
                             ok: same,
                         }
                     } else {
                         MsgRes::AssertScreen {
-                            similarity: 0,
+                            similarity: 0.,
                             ok: false,
                         }
                     }
@@ -374,6 +387,15 @@ impl Server {
                     let (tx, rx) = mpsc::channel();
                     vnc_client
                         .map_ref(|c| c.event_tx.send((VNCEventReq::MouseMove(x, y), tx)))
+                        .unwrap()
+                        .unwrap();
+                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+                    MsgRes::Done
+                }
+                MsgReq::MouseDrag { x, y } => {
+                    let (tx, rx) = mpsc::channel();
+                    vnc_client
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::MouseDrag(x, y), tx)))
                         .unwrap()
                         .unwrap();
                     assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
