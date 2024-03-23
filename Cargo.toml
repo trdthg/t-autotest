@@ -37,6 +37,7 @@ dotenv             = { version = "0.15.0" }
 home               = { version = "0.5.9" }
 tracing            = { version = "0.1.40" }
 tracing-test       = { version = "0.2.4" }
+tracing-core       = { version = "0.1.32" }
 tracing-subscriber = { version = "0.3.18" }
 pipe-trait         = { version = "0.4.0" }
 shell-escape       = { version = "0.1.5" }
@@ -50,16 +51,22 @@ ssh2               = { version = "0.9.4", features = [] }
 serialport         = { version = "4.3.0" }
 vt100              = { version = "0.15.2" }
 console            = { version = "0.15.8" }
-image              = { version = "0.24.7" }
+image              = { version = "0.25.0", features = ["png", "jpeg"] }
 png                = { version = "0.17.10" }
 byteorder          = { version = "1.5.0" }
 parking_lot        = { version = "0.12.1" }
 unescaper          = { version = "0.1.4" }
-
-rquickjs = { version = "0.5.1", features = ["macro"] }
-mlua     = { version = "0.9.1", features = ["lua54", "vendored"] }
-pyo3     = { version = "0.20.0", features = ["auto-initialize", "abi3-py37"] }
-ctrlc    = { version = "3.4.2" }
+rquickjs           = { version = "0.5.1", features = ["macro"] }
+mlua               = { version = "0.9.1", features = ["lua54", "vendored"] }
+pyo3               = { version = "0.20.0", features = ["auto-initialize", "abi3-py37"] }
+ctrlc              = { version = "3.4.2" }
+eframe             = { version = "0.26.2", features = ["x11", "wayland"] }
+egui_extras        = { version = "0.26.2" }
+rfd                = { version = "0.14.0" }
+egui-notify        = { version = "0.13.0" }
+egui_tiles         = { version = "0.7.2" }
+chrono             = { version = "0.4.35" }
+rayon              = { version = "1.9.0" }
 
 [profile.dev]
 incremental = true

@@ -1,7 +1,17 @@
-use std::{fs::File, io::BufReader, path::PathBuf};
+use std::{
+    fs::File,
+    io::{BufReader, Read},
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use t_console::{Rect, PNG};
+use tracing::warn;
+
+pub struct Needle {
+    pub config: NeedleConfig,
+    pub data: PNG,
+}
 
 pub struct NeedleManager {
     dir: PathBuf,
@@ -12,71 +22,69 @@ impl NeedleManager {
         Self { dir: dir.into() }
     }
 
-    pub fn load_by_tag(&self, tag: &str) -> Option<(NeedleConfig, PNG)> {
-        let needle_png = self.load_file_by_tag(tag);
-        let json_file = File::open(self.dir.join(format!("{tag}.json"))).ok()?;
-        let json: NeedleConfig = serde_json::from_reader(BufReader::new(json_file)).ok()?;
-        Some((json, needle_png?))
+    pub fn load(&self, tag: &str) -> Option<Needle> {
+        let needle_png = self.load_image(self.dir.join(format!("{}.png", tag)))?;
+        let json: NeedleConfig = self.load_json(self.dir.join(format!("{}.json", tag)))?;
+        Some(Needle {
+            config: json,
+            data: needle_png,
+        })
     }
 
-    pub fn load_file_by_tag(&self, tag: &str) -> Option<PNG> {
-        let needle_file = File::open(self.dir.join(format!("{tag}.png"))).ok()?;
+    pub fn load_image(&self, tag: impl AsRef<Path>) -> Option<PNG> {
+        let needle_file = File::open(tag).ok()?;
         let needle_png = image::load(BufReader::new(needle_file), image::ImageFormat::Png).ok()?;
-        Some(needle_png.into_rgb8())
+        match needle_png {
+            image::DynamicImage::ImageRgb8(img) => {
+                let data = img.bytes();
+                let data = data.map(|x| x.unwrap()).collect::<Vec<u8>>();
+                Some(PNG::new_with_data(
+                    img.width() as u16,
+                    img.height() as u16,
+                    data,
+                    3,
+                ))
+            }
+            _ => None,
+        }
     }
 
-    pub fn cmp_by_tag(&self, s: &PNG, tag: &str) -> Option<bool> {
-        let Some((needle_cfg, needle_png)) = self.load_by_tag(tag) else {
-            return None;
-        };
-        for area in needle_cfg.area.iter() {
-            if !cmp_image_rect(&needle_png, s, &area.into()) {
-                return Some(false);
+    pub fn load_json(&self, tag: impl AsRef<Path>) -> Option<NeedleConfig> {
+        let json_file = File::open(tag).ok()?;
+        let json: NeedleConfig = serde_json::from_reader(BufReader::new(json_file)).ok()?;
+        Some(json)
+    }
+
+    pub fn cmp(&self, s: &PNG, filename: &str, min_same: Option<f32>) -> Option<(f32, bool)> {
+        let needle = self.load(filename)?;
+        if needle.config.areas.is_empty() {
+            warn!("this needle has no match ares");
+            return Some((1.0, true));
+        }
+
+        let mut not_same = 0;
+        let mut all = 0;
+        for area in needle.config.areas.iter() {
+            all += area.width * area.height;
+            let (count, ok) = needle.data.cmp_rect_and_count(s, &area.into());
+            if !ok {
+                not_same += count;
             }
         }
-        Some(true)
-    }
-}
 
-#[allow(dead_code)]
-pub fn cmp_image_full(img1: &PNG, img2: &PNG) -> bool {
-    // 检查图像的宽度和高度是否相同
-    if img1.width() != img2.width() || img1.height() != img2.height() {
-        return false;
-    }
-
-    // 比较每个像素的 RGB 值
-    for (pixel1, pixel2) in img1.pixels().zip(img2.pixels()) {
-        let rgb1 = pixel1;
-        let rgb2 = pixel2;
-        if rgb1 != rgb2 {
-            return false;
+        if not_same == 0 {
+            return Some((1., true));
         }
-    }
-    true
-}
 
-pub fn cmp_image_rect(img1: &PNG, img2: &PNG, rect: &Rect) -> bool {
-    // 检查图像的宽度和高度是否相同
-    if img1.width() != img2.width() || img1.height() != img2.height() {
-        return false;
+        let res = 1. - (not_same as f32 / all as f32);
+        Some((res, res >= min_same.unwrap_or(0.95)))
     }
-
-    // 比较每个像素的 RGB 值
-    for x in rect.left..rect.left + rect.width {
-        for y in rect.top..rect.top + rect.height {
-            if img1.get_pixel(x as u32, y as u32) != img2.get_pixel(x as u32, y as u32) {
-                return false;
-            }
-        }
-    }
-    true
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NeedleConfig {
-    pub area: Vec<Area>,
+    pub areas: Vec<Area>,
     pub properties: Vec<String>,
     pub tags: Vec<String>,
 }
@@ -108,7 +116,7 @@ mod test {
     use std::fs;
 
     use super::NeedleManager;
-    use crate::needle::{cmp_image_rect, Area, NeedleConfig};
+    use crate::needle::{Area, NeedleConfig};
     use image::{ImageBuffer, Rgb};
     use t_console::Rect;
 
@@ -189,13 +197,13 @@ mod test {
 
     #[test]
     fn get_needle() {
-        let needle = init_needle_manager();
-        let (cfg, png) = needle.load_by_tag("output").unwrap();
+        let needle_mg = init_needle_manager();
+        let png = needle_mg.load("output").unwrap();
 
         assert_eq!(
-            cfg,
+            png.config,
             NeedleConfig {
-                area: vec![Area {
+                areas: vec![Area {
                     type_field: "match".to_string(),
                     left: 0,
                     top: 0,
@@ -207,16 +215,16 @@ mod test {
             }
         );
 
-        let rect = &cfg.area[0];
+        let rect = &png.config.areas[0];
         let rect = Rect {
             left: rect.left,
             top: rect.top,
             width: rect.width,
             height: rect.height,
         };
-        assert!(cmp_image_rect(&png, &png, &rect));
+        assert!(png.data.cmp_rect(&png.data, &rect));
 
-        let png2 = needle.load_file_by_tag("output2").unwrap();
-        assert!(!cmp_image_rect(&png, &png2, &rect));
+        let png2 = needle_mg.load_image("output2").unwrap();
+        assert!(png.data.cmp_rect(&png2, &rect));
     }
 }

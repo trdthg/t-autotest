@@ -3,7 +3,6 @@ use crate::engine::EngineClient;
 use crate::error::DriverError;
 use crate::server::Server;
 use crate::ServerBuilder;
-use image::ImageBuffer;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::mpsc::Receiver;
@@ -11,7 +10,7 @@ use std::thread;
 use std::time;
 use std::time::UNIX_EPOCH;
 use t_config::Config;
-use t_console::RectContainer;
+use t_console::PNG;
 use t_console::SSH;
 
 pub struct DriverForScript {
@@ -34,7 +33,7 @@ impl DriverForScript {
             if let Some(ref dir) = _vnc.screenshot_dir {
                 let (screenshot_tx, screenshot_rx) = mpsc::channel();
                 builder = builder.with_vnc_screenshot_subscriber(screenshot_tx);
-                Self::save_screenshots(screenshot_rx, dir);
+                Self::save_screenshots(screenshot_rx, dir.clone());
             }
         }
         let (s, c) = builder.build().map_err(DriverError::ConsoleError)?;
@@ -48,12 +47,12 @@ impl DriverForScript {
         })
     }
 
-    fn save_screenshots(screenshot_rx: Receiver<RectContainer<[u8; 3]>>, dir: &str) {
-        let path: PathBuf = PathBuf::from(dir);
+    fn save_screenshots(screenshot_rx: Receiver<PNG>, dir: PathBuf) {
+        let path: PathBuf = dir;
         thread::spawn(move || {
             let mut path = path;
             while let Ok(screen) = screenshot_rx.recv() {
-                let p = ImageBuffer::from(screen);
+                let p = screen.into_img();
 
                 let image_name = format!(
                     "output-{}.png",

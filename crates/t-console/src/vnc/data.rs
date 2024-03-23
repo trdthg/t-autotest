@@ -1,129 +1,223 @@
-impl From<(u16, u16, u16, u16)> for Rect {
-    fn from(val: (u16, u16, u16, u16)) -> Self {
-        Self {
-            left: val.0,
-            top: val.1,
-            width: val.2,
-            height: val.3,
-        }
-    }
-}
+use image::{DynamicImage, RgbImage};
 
-#[derive(Clone)]
-pub struct Rect {
-    pub left: u16,
-    pub top: u16,
-    pub width: u16,
-    pub height: u16,
-}
-
-impl From<t_vnc::Rect> for Rect {
-    fn from(value: t_vnc::Rect) -> Self {
-        Self {
-            left: value.left,
-            top: value.top,
-            width: value.width,
-            height: value.height,
-        }
-    }
-}
-
-impl From<&Rect> for t_vnc::Rect {
-    fn from(val: &Rect) -> Self {
-        t_vnc::Rect {
-            left: val.left,
-            top: val.top,
-            width: val.width,
-            height: val.height,
-        }
-    }
-}
+pub type Rect = t_vnc::Rect;
 
 // data rect
-#[derive(Clone)]
-pub struct RectContainer<P> {
-    pub rect: Rect,
-    pub data: Vec<P>,
+#[derive(Clone, Debug)]
+pub struct Container {
+    pub width: u16,
+    pub height: u16,
+    pub data: Vec<u8>,
+    pub pixel_size: usize,
 }
 
-impl<P: Clone + Sized + Default> RectContainer<P> {
-    pub fn new(rect: Rect) -> Self {
-        let cap = rect.width as usize * rect.height as usize;
-        let data = vec![P::default(); cap];
-        Self { rect, data }
+impl Container {
+    pub fn new(width: u16, height: u16, pixel_size: usize) -> Self {
+        let cap = width as usize * height as usize * pixel_size;
+        let data = vec![0; cap];
+        Self {
+            width,
+            height,
+            data,
+            pixel_size,
+        }
     }
 
-    pub fn new_with_data(rect: Rect, data: Vec<P>) -> Self {
-        Self { rect, data }
+    pub fn new_with_data(width: u16, height: u16, data: Vec<u8>, pixel_size: usize) -> Self {
+        Self {
+            width,
+            height,
+            data,
+            pixel_size,
+        }
     }
 
-    pub fn get_rect(&self, left: u16, top: u16, width: u16, height: u16) -> Vec<P> {
-        let mut data = Vec::with_capacity(width as usize * height as usize);
-        for col in left..left + self.rect.width {
-            for row in top..top + self.rect.height {
-                let p = self.get(row as usize, col as usize);
-                data.push(p);
+    fn get_pixel_start(&self, row: u16, col: u16) -> usize {
+        (row as usize * self.width as usize + col as usize) * self.pixel_size
+    }
+
+    pub fn get(&self, row: u16, col: u16) -> &[u8] {
+        assert!(row < self.height && col < self.width);
+        let start = self.get_pixel_start(row, col);
+        &self.data[start..start + self.pixel_size]
+    }
+
+    pub fn set(&mut self, row: u16, col: u16, p: &[u8]) {
+        assert!(row < self.height && col < self.width);
+        assert!(p.len() == self.pixel_size);
+        let start = self.get_pixel_start(row, col);
+        self.data[start..(start + self.pixel_size)]
+            .copy_from_slice(&p[..(start + self.pixel_size - start)]);
+    }
+
+    pub fn get_rect(&self, r: Rect) -> Vec<u8> {
+        let mut data = Vec::with_capacity((r.width * r.height) as usize * self.pixel_size);
+        for col in r.left..r.left + r.width {
+            for row in r.top..r.top + r.height {
+                let p = self.get(row, col);
+                data.extend(p);
             }
         }
         data
     }
 
-    pub fn get(&self, row: usize, col: usize) -> P {
-        assert!(row < self.rect.height as usize && col < self.rect.width as usize);
-        self.data[row * self.rect.width as usize + col].clone()
-    }
-
-    pub fn set(&mut self, row: usize, col: usize, p: P) {
-        assert!(row < self.rect.height as usize && col < self.rect.width as usize);
-        self.data[row * self.rect.width as usize + col] = p
-    }
-
-    pub fn update(&mut self, rect: RectContainer<P>) {
-        let offset_left = rect.rect.left - self.rect.left;
-        let offset_top = rect.rect.top - self.rect.top;
-
-        for col in 0..rect.rect.width {
-            for row in 0..rect.rect.height {
-                self.set(
-                    (row + offset_top) as usize,
-                    (col + offset_left) as usize,
-                    rect.get(row as usize, col as usize),
-                )
+    pub fn set_rect(&mut self, left: u16, top: u16, c: &Container) {
+        assert!(c.pixel_size == self.pixel_size);
+        for row in top..top + c.height {
+            for col in left..left + c.width {
+                self.set(row, col, c.get(row - top, col - left));
             }
         }
+    }
+
+    pub fn into_img(self) -> DynamicImage {
+        DynamicImage::ImageRgb8(
+            RgbImage::from_vec(self.width as u32, self.height as u32, self.data).unwrap(),
+        )
+    }
+
+    pub fn cmp(&self, o: &Self) -> bool {
+        // check width and height
+        if self.width != o.width || self.height != o.height {
+            return false;
+        }
+
+        // compare rgb
+        for (pixel1, pixel2) in self.data.iter().zip(&o.data) {
+            let rgb1 = pixel1;
+            let rgb2 = pixel2;
+            if rgb1 != rgb2 {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn cmp_rect(&self, o: &Self, rect: &Rect) -> bool {
+        // check width and height
+        if self.width != o.width || self.height != o.height {
+            return false;
+        }
+
+        // compare rgb
+        for row in rect.top..rect.top + rect.height {
+            for col in rect.left..rect.left + rect.width {
+                if let Some((p1, p2)) = self.get(row, col).iter().zip(o.get(row, col)).next() {
+                    return *p1 == *p2;
+                }
+            }
+        }
+        true
+    }
+
+    pub fn cmp_rect_and_count(&self, o: &Self, rect: &Rect) -> (i32, bool) {
+        // check width and height
+        if self.width != o.width || self.height != o.height {
+            return (rect.width as i32 * rect.height as i32, false);
+        }
+
+        let mut n = 0;
+
+        // compare rgb
+        for row in rect.top..rect.top + rect.height {
+            for col in rect.left..rect.left + rect.width {
+                if let Some((p1, p2)) = self.get(row, col).iter().zip(o.get(row, col)).next() {
+                    if !*p1 == *p2 {
+                        n += 1;
+                    }
+                }
+            }
+        }
+        (n, n == 0)
     }
 }
 
 #[cfg(test)]
 mod test {
 
-    use super::*;
+    use t_vnc::Rect;
 
-    type U8Screen = RectContainer<u8>;
+    use super::*;
 
     #[test]
     fn test_update() {
-        let mut sc = U8Screen::new_with_data(
-            (0, 0, 3, 3).into(),
+        let mut sc = Container::new_with_data(
+            3,
+            3,
             vec![
                 1, 2, 3, //
                 4, 5, 6, //
                 7, 8, 9, //
             ],
+            1,
         );
 
-        assert_eq!(sc.get(1, 2), 6);
+        assert_eq!(sc.get(1, 2), vec![6]);
 
-        let sub_sc = U8Screen::new_with_data(
-            (1, 1, 2, 2).into(),
+        let sub_sc = Container::new_with_data(
+            2,
+            2,
             vec![
                 1, 2, //
                 3, 4, //
             ],
+            1,
         );
-        assert_eq!(sc.get(0, 1), 2);
+        assert_eq!(sc.get(0, 1), vec![2]);
 
-        sc.update(sub_sc);
-        assert_eq!(sc.get(1, 2), 2);
+        sc.set_rect(1, 1, &sub_sc);
+
+        assert_eq!(sc.get(1, 2), vec![2]);
+    }
+
+    #[test]
+    fn test_update2() {
+        let mut sc = Container::new_with_data(
+            3,
+            3,
+            vec![
+                1, 1, 2, 2, 3, 3, //
+                4, 4, 5, 5, 6, 6, //
+                7, 7, 8, 8, 9, 9, //
+            ],
+            2,
+        );
+
+        assert_eq!(sc.get(1, 2), vec![6, 6]);
+
+        let sub_sc = Container::new_with_data(
+            2,
+            2,
+            vec![
+                1, 1, 2, 2, //
+                3, 3, 4, 4, //
+            ],
+            2,
+        );
+        assert_eq!(sc.get(0, 1), vec![2, 2]);
+
+        sc.set_rect(1, 1, &sub_sc);
+
+        assert_eq!(sc.get(1, 2), vec![2, 2]);
+
+        assert!(sc.cmp_rect(
+            &sub_sc,
+            &Rect {
+                left: 0,
+                top: 0,
+                width: 2,
+                height: 2,
+            },
+        ));
+
+        assert!(sc.cmp_rect(
+            &sub_sc,
+            &Rect {
+                left: 1,
+                top: 1,
+                width: 2,
+                height: 2,
+            },
+        ));
     }
 }

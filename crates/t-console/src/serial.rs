@@ -2,6 +2,7 @@ use crate::base::evloop::{EvLoopCtl, Req};
 use crate::base::tty::Tty;
 use crate::term::Term;
 use crate::ConsoleError;
+use std::path::PathBuf;
 use std::{thread::sleep, time::Duration};
 use tracing::{error, info};
 
@@ -119,7 +120,7 @@ where
         file: &str,
         bund_rate: u32,
         auth: Option<(&str, &str)>,
-        log_file: Option<String>,
+        log_file: Option<PathBuf>,
     ) -> Result<Self> {
         // init tty
         // t_util::execute_shell(

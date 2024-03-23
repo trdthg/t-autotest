@@ -5,28 +5,21 @@ use crate::{
     MsgReq, MsgRes,
 };
 use std::{sync::mpsc, time::Duration};
-use tracing::{error, info, trace, Level};
+use tracing::{info, trace, Level};
 
 fn req(req: MsgReq) -> Result<MsgRes> {
     let msg_tx = get_global_sender();
 
     trace!(msg = "sending req");
     let (tx, rx) = mpsc::channel::<MsgRes>();
-    if let Err(e) = msg_tx.send((req, tx)) {
-        error!(msg = "main runner loop closed", reason = ?e);
-    }
+    msg_tx
+        .send((req, tx))
+        .map_err(|_| ApiError::ServerStopped)?;
 
     trace!(msg = "waiting res");
-    let res = rx.recv();
-
+    let res = rx.recv().map_err(|_| ApiError::ServerStopped)?;
     trace!(msg = "received res");
-    match res {
-        Ok(res) => Ok(res),
-        Err(_) => {
-            error!(msg = "req failed, server already stopped");
-            Err(ApiError::ServerStopped)
-        }
-    }
+    Ok(res)
 }
 
 fn _script_run(cmd: String, console: Option<TextConsole>, timeout: i32) -> Result<(i32, String)> {
@@ -172,22 +165,56 @@ pub fn vnc_check_screen(tag: String, timeout: i32) -> Result<bool> {
         threshold: 1,
         timeout: Duration::from_millis(timeout as u64),
     })? {
-        MsgRes::AssertScreen { similarity: 0, ok } => Ok(ok),
+        MsgRes::AssertScreen { similarity: _, ok } => Ok(ok),
         _ => Err(ApiError::ServerInvalidResponse),
     }
 }
 
 pub fn vnc_assert_screen(tag: String, timeout: i32) -> Result<()> {
-    let res = vnc_check_screen(tag, timeout)?;
-    if res {
+    if vnc_check_screen(tag, timeout)? {
         Ok(())
     } else {
         Err(ApiError::AssertFailed)
     }
 }
 
+pub fn vnc_refresh() -> Result<()> {
+    if matches!(req(MsgReq::Refresh)?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
+}
+
+pub fn vnc_take_screenshot() -> Result<t_console::PNG> {
+    if let MsgRes::Screenshot(res) = req(MsgReq::TakeScreenShot)? {
+        return Ok(res);
+    }
+    Err(ApiError::ServerInvalidResponse)
+}
+
 pub fn vnc_mouse_move(x: u16, y: u16) -> Result<()> {
     if matches!(req(MsgReq::MouseMove { x, y })?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
+}
+
+pub fn vnc_mouse_drag(x: u16, y: u16) -> Result<()> {
+    if matches!(req(MsgReq::MouseDrag { x, y })?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
+}
+
+pub fn vnc_mouse_keydown() -> Result<()> {
+    if matches!(req(MsgReq::MouseKeyDown(true))?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
+}
+
+pub fn vnc_mouse_keyup() -> Result<()> {
+    if matches!(req(MsgReq::MouseKeyDown(false))?, MsgRes::Done) {
         return Ok(());
     }
     Err(ApiError::ServerInvalidResponse)
@@ -202,6 +229,27 @@ pub fn vnc_mouse_hide() -> Result<()> {
 
 pub fn vnc_mouse_click() -> Result<()> {
     if matches!(req(MsgReq::MouseClick)?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
+}
+
+pub fn vnc_mouse_rclick() -> Result<()> {
+    if matches!(req(MsgReq::MouseRClick)?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
+}
+
+pub fn vnc_send_key(s: String) -> Result<()> {
+    if matches!(req(MsgReq::SendKey(s))?, MsgRes::Done) {
+        return Ok(());
+    }
+    Err(ApiError::ServerInvalidResponse)
+}
+
+pub fn vnc_type_string(s: String) -> Result<()> {
+    if matches!(req(MsgReq::TypeString(s))?, MsgRes::Done) {
         return Ok(());
     }
     Err(ApiError::ServerInvalidResponse)

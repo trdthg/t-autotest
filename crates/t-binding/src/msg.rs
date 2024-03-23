@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use t_console::PNG;
+
 #[derive(Debug)]
 pub enum TextConsole {
     SSH,
@@ -33,6 +35,8 @@ pub enum MsgReq {
         timeout: Duration,
     },
     // vnc
+    TakeScreenShot,
+    Refresh,
     AssertScreen {
         tag: String,
         threshold: i32,
@@ -42,8 +46,16 @@ pub enum MsgReq {
         x: u16,
         y: u16,
     },
-    MouseClick,
+    MouseDrag {
+        x: u16,
+        y: u16,
+    },
     MouseHide,
+    MouseClick,
+    MouseRClick,
+    MouseKeyDown(bool),
+    SendKey(String),
+    TypeString(String),
 }
 
 #[derive(Debug)]
@@ -58,5 +70,6 @@ pub enum MsgRes {
     ConfigValue(Option<String>),
     ScriptRun(Result<(i32, String), MsgResError>),
     Error(MsgResError),
-    AssertScreen { similarity: i32, ok: bool },
+    AssertScreen { similarity: f32, ok: bool },
+    Screenshot(PNG),
 }

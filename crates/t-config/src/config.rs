@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, fs, path::PathBuf, time::Duration};
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
@@ -7,13 +7,31 @@ pub struct Config {
     pub arch: String,
     pub os: String,
     pub needle_dir: String,
+    pub log_dir: String,
     pub console: Console,
     pub env: HashMap<String, toml::Value>,
 }
 
 impl Config {
     pub fn from_toml_str(s: &str) -> Result<Self, toml::de::Error> {
-        toml::from_str(s)
+        let mut config: Config = toml::from_str(s).unwrap();
+        config.init();
+        Ok(config)
+    }
+
+    fn init(&mut self) {
+        self.console.serial.log_file = Some(PathBuf::from_iter(vec![&self.log_dir, "serial.log"]));
+        self.console.ssh.log_file = Some(PathBuf::from_iter(vec![&self.log_dir, "ssh.log"]));
+        self.console.vnc.screenshot_dir = Some(PathBuf::from_iter(vec![&self.log_dir, "vnc"]));
+
+        fs::create_dir_all(self.console.vnc.screenshot_dir.clone().unwrap())
+            .expect("log folder create failed");
+    }
+
+    pub fn from_toml_file(s: &str) -> Result<Self, toml::de::Error> {
+        let mut config: Config = toml::from_str(fs::read_to_string(s).unwrap().as_str()).unwrap();
+        config.init();
+        Ok(config)
     }
 }
 
@@ -32,7 +50,9 @@ pub struct ConsoleSSH {
     pub username: String,
     pub auth: ConsoleSSHAuth,
     pub timeout: Option<Duration>,
-    pub log_file: Option<String>,
+
+    #[serde(skip_serializing)]
+    pub log_file: Option<PathBuf>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -56,7 +76,9 @@ pub struct ConsoleSerial {
     pub auto_login: bool,
     pub username: Option<String>,
     pub password: Option<String>,
-    pub log_file: Option<String>,
+
+    #[serde(skip_serializing)]
+    pub log_file: Option<PathBuf>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -65,7 +87,9 @@ pub struct ConsoleVNC {
     pub host: String,
     pub port: u16,
     pub password: Option<String>,
-    pub screenshot_dir: Option<String>,
+
+    #[serde(skip_serializing)]
+    pub screenshot_dir: Option<PathBuf>,
 }
 
 #[cfg(test)]

@@ -6,12 +6,12 @@ use std::{
         Arc,
     },
     thread,
-    time::{self, Duration},
+    time::{self, Duration, Instant},
 };
 use t_binding::{MsgReq, MsgRes, MsgResError};
 use t_config::{Config, Console};
-use t_console::{ConsoleError, RectContainer, Serial, VNCEventReq, VNCEventRes, SSH, VNC};
-use tracing::{error, info, warn};
+use t_console::{key, ConsoleError, Serial, VNCEventReq, VNCEventRes, PNG, SSH, VNC};
+use tracing::{error, info, trace, warn};
 
 #[derive(Clone)]
 struct AMOption<T> {
@@ -54,20 +54,32 @@ pub struct Server {
     ssh_client: AMOption<SSH>,
     serial_client: AMOption<Serial>,
     vnc_client: AMOption<VNC>,
+
+    screenshot_tx: Option<Sender<PNG>>,
 }
 
 pub struct ServerBuilder {
     config: Config,
-    tx: Option<Sender<RectContainer<[u8; 3]>>>,
+    tx: Option<Sender<PNG>>,
+    tx2: Option<Sender<PNG>>,
 }
 
 impl ServerBuilder {
     pub fn new(config: Config) -> Self {
-        ServerBuilder { tx: None, config }
+        ServerBuilder {
+            tx: None,
+            tx2: None,
+            config,
+        }
     }
 
-    pub fn with_vnc_screenshot_subscriber(mut self, tx: Sender<RectContainer<[u8; 3]>>) -> Self {
+    pub fn with_vnc_screenshot_subscriber(mut self, tx: Sender<PNG>) -> Self {
         self.tx = Some(tx);
+        self
+    }
+
+    pub fn with_latest_vnc_screenshot_subscriber(mut self, tx: Sender<PNG>) -> Self {
+        self.tx2 = Some(tx);
         self
     }
 
@@ -78,18 +90,21 @@ impl ServerBuilder {
             vnc: _vnc,
         } = self.config.console.clone();
 
+        // init serial
         let serial_client = if _serial.enable {
             Some(Serial::new(_serial)?)
         } else {
             None
         };
 
+        // init ssh
         let ssh_client = if _ssh.enable {
             Some(SSH::new(_ssh)?)
         } else {
             None
         };
 
+        // init vnc
         let vnc_client = if _vnc.enable {
             let addr = format!("{}:{}", _vnc.host, _vnc.port)
                 .parse()
@@ -97,7 +112,7 @@ impl ServerBuilder {
                     ConsoleError::ConnectionBroken(format!("vnc addr is not valid, {}", e))
                 })?;
 
-            let vnc_client = VNC::connect(addr, _vnc.password.clone(), self.tx)
+            let vnc_client = VNC::connect(addr, _vnc.password.clone(), self.tx2)
                 .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))?;
 
             info!(msg = "init vnc done");
@@ -106,16 +121,18 @@ impl ServerBuilder {
             None
         };
 
+        // init api request channel
         let (tx, msg_rx) = mpsc::channel();
         t_binding::init(tx);
 
+        // init server
         let (stop_tx, stop_rx) = mpsc::channel();
-
         Ok((
             Server {
                 config: self.config,
                 msg_rx,
                 stop_rx,
+                screenshot_tx: self.tx,
 
                 ssh_client: AMOption::new(ssh_client),
                 serial_client: AMOption::new(serial_client),
@@ -144,6 +161,7 @@ impl Server {
             ssh_client,
             serial_client,
             vnc_client,
+            screenshot_tx,
         } = self;
 
         let _ssh_tty = ssh_client.map_ref(|c| c.tty());
@@ -153,6 +171,7 @@ impl Server {
             // stop on receive done signal
             if self.stop_rx.try_recv().is_ok() {
                 info!(msg = "runner handler thread stopped");
+                self.stop();
                 break;
             }
 
@@ -161,8 +180,9 @@ impl Server {
             if res.is_err() {
                 continue;
             }
+
             let (req, tx) = res.unwrap();
-            info!(msg = "recv script engine request", req = ?req);
+            trace!(msg = "recv request", req = ?req);
             let res = match req {
                 // common
                 MsgReq::GetConfig { key } => {
@@ -271,45 +291,96 @@ impl Server {
                         MsgRes::Done
                     }
                 }
+                MsgReq::TakeScreenShot => {
+                    let (tx, rx) = mpsc::channel();
+
+                    vnc_client
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::TakeScreenShot, tx)))
+                        .expect("no vnc")
+                        .unwrap();
+                    match rx.recv() {
+                        Ok(VNCEventRes::Screen(res)) => MsgRes::Screenshot(res),
+                        _ => MsgRes::Error(MsgResError::Timeout),
+                    }
+                }
+                MsgReq::Refresh => {
+                    let (tx, rx) = mpsc::channel();
+
+                    vnc_client
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::Refresh, tx)))
+                        .expect("no vnc")
+                        .unwrap();
+                    match rx.recv() {
+                        Ok(VNCEventRes::Done) => MsgRes::Done,
+                        _ => MsgRes::Error(MsgResError::Timeout),
+                    }
+                }
                 MsgReq::AssertScreen {
                     tag,
                     threshold: _,
                     timeout,
                 } => {
                     let nmg = NeedleManager::new(&config.needle_dir);
-                    let res: Result<bool, MsgResError> = {
+                    let res: Result<(f32, bool, Option<t_console::PNG>), MsgResError> = {
                         let deadline = time::Instant::now() + timeout;
-                        loop {
-                            let (tx, rx) = mpsc::channel();
+                        let mut similarity: f32 = 0.;
+                        'res: loop {
+                            if Instant::now() > deadline {
+                                break 'res Ok((similarity, false, None));
+                            }
 
+                            let (tx, rx) = mpsc::channel();
                             vnc_client
                                 .map_ref(|c| c.event_tx.send((VNCEventReq::TakeScreenShot, tx)))
                                 .expect("no vnc")
                                 .unwrap();
-
-                            match rx.recv_timeout(deadline - time::Instant::now()) {
+                            match rx.recv() {
                                 Ok(VNCEventRes::Screen(s)) => {
-                                    let Some(res) = nmg.cmp_by_tag(&s, &tag) else {
+                                    let Some((res_similarity, res)) = nmg.cmp(&s, &tag, None)
+                                    else {
                                         error!(msg = "Needle file not found", tag = tag);
-                                        break Ok(false);
+                                        break 'res Ok((similarity, false, Some(s)));
                                     };
+                                    similarity = res_similarity;
+
                                     if !res {
-                                        warn!(msg = "match failed", tag = tag);
-                                        continue;
+                                        warn!(
+                                            msg = "match failed",
+                                            tag = tag,
+                                            similarity = similarity
+                                        );
+                                    } else {
+                                        info!(
+                                            msg = "match success",
+                                            tag = tag,
+                                            similarity = similarity
+                                        );
+                                        break 'res Ok((similarity, res, Some(s)));
                                     }
-                                    info!(msg = "match success", tag = tag);
-                                    break Ok(res);
                                 }
-                                Ok(res) => {
-                                    warn!(msg = "invalid msg type", v = ?res);
+                                Ok(_) => {
+                                    warn!(msg = "invalid msg type");
                                 }
                                 Err(_e) => break Err(MsgResError::Timeout),
                             }
+                            thread::sleep(Duration::from_millis(200));
                         }
                     };
-                    MsgRes::AssertScreen {
-                        similarity: 0,
-                        ok: res.is_ok(),
+                    if let Ok((similarity, same, png)) = res {
+                        if let (Some(tx), Some(png)) = (&screenshot_tx, png) {
+                            if tx.send(png).is_err() {
+                                // TODO: handle ch close
+                            }
+                        }
+                        MsgRes::AssertScreen {
+                            similarity,
+                            ok: same,
+                        }
+                    } else {
+                        MsgRes::AssertScreen {
+                            similarity: 0.,
+                            ok: false,
+                        }
                     }
                 }
                 MsgReq::MouseMove { x, y } => {
@@ -321,10 +392,42 @@ impl Server {
                     assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
                     MsgRes::Done
                 }
-                MsgReq::MouseClick => {
+                MsgReq::MouseDrag { x, y } => {
                     let (tx, rx) = mpsc::channel();
                     vnc_client
-                        .map_ref(|c| c.event_tx.send((VNCEventReq::MoveDown, tx)))
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::MouseDrag(x, y), tx)))
+                        .unwrap()
+                        .unwrap();
+                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+                    MsgRes::Done
+                }
+                MsgReq::MouseKeyDown(down) => {
+                    let (tx, rx) = mpsc::channel();
+                    vnc_client
+                        .map_ref(|c| {
+                            c.event_tx.send((
+                                if down {
+                                    VNCEventReq::MoveDown(1)
+                                } else {
+                                    VNCEventReq::MoveUp(1)
+                                },
+                                tx,
+                            ))
+                        })
+                        .unwrap()
+                        .unwrap();
+                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+                    MsgRes::Done
+                }
+                MsgReq::MouseClick | MsgReq::MouseRClick => {
+                    let button = match req {
+                        MsgReq::MouseClick => 1,
+                        MsgReq::MouseRClick => 1 << 2,
+                        _ => unreachable!(),
+                    };
+                    let (tx, rx) = mpsc::channel();
+                    vnc_client
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::MoveDown(button), tx)))
                         .unwrap()
                         .unwrap();
                     assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
@@ -332,7 +435,7 @@ impl Server {
                     let (tx, rx) = mpsc::channel();
 
                     vnc_client
-                        .map_ref(|c| c.event_tx.send((VNCEventReq::MoveUp, tx)))
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::MoveUp(button), tx)))
                         .unwrap()
                         .unwrap();
                     assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
@@ -347,14 +450,59 @@ impl Server {
                     assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
                     MsgRes::Done
                 }
+                MsgReq::SendKey(s) => {
+                    let parts = s.split('-');
+                    let mut keys = Vec::new();
+                    for part in parts {
+                        if let Some(key) = key::from_str(part) {
+                            keys.push(key);
+                        }
+                    }
+                    let (tx, rx) = mpsc::channel();
+                    vnc_client
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::SendKey { keys }, tx)))
+                        .unwrap()
+                        .unwrap();
+                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+                    MsgRes::Done
+                }
+                MsgReq::TypeString(s) => {
+                    let (tx, rx) = mpsc::channel();
+                    vnc_client
+                        .map_ref(|c| c.event_tx.send((VNCEventReq::TypeString(s), tx)))
+                        .unwrap()
+                        .unwrap();
+                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+                    MsgRes::Done
+                }
             };
-            info!(msg = format!("sending res: {:?}", res));
+
+            // if handle req, take a screenshot
+            Self::send_screenshot(vnc_client, screenshot_tx);
+
+            trace!(msg = format!("sending res: {:?}", res));
             if let Err(e) = tx.send(res) {
                 info!(msg = "script engine receiver closed", reason = ?e);
                 break;
             }
         }
         info!(msg = "Runner loop stopped")
+    }
+
+    fn send_screenshot(vnc_client: &AMOption<VNC>, screenshot_tx: &Option<Sender<PNG>>) {
+        let (tx, rx) = mpsc::channel();
+
+        vnc_client
+            .map_ref(|c| c.event_tx.send((VNCEventReq::TakeScreenShot, tx)))
+            .expect("no vnc")
+            .unwrap();
+        if let Ok(VNCEventRes::Screen(png)) = rx.recv() {
+            if let Some(tx) = screenshot_tx {
+                if tx.send(png).is_err() {
+                    // TODO: handle ch close
+                }
+            }
+        }
     }
 
     pub fn stop(&self) {

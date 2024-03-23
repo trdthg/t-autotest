@@ -6,6 +6,7 @@ use crate::ConsoleError;
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
 use std::path::Path;
+use std::path::PathBuf;
 use std::thread::sleep;
 use std::time::Duration;
 use tracing::error;
@@ -188,7 +189,7 @@ where
         auth: &SSHAuthAuth<P>,
         user: impl Into<String>,
         addrs: A,
-        log_file: Option<String>,
+        log_file: Option<PathBuf>,
     ) -> std::result::Result<Self, std::io::Error> {
         let tcp = TcpStream::connect(addrs)?;
         let mut sess = ssh2::Session::new()?;
