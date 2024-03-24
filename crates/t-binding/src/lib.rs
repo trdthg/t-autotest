@@ -1,7 +1,7 @@
 pub mod api;
 mod engine;
-mod error;
-mod msg;
+pub mod error;
+pub mod msg;
 
 use std::sync::{mpsc::Sender, RwLock};
 use tracing::error;

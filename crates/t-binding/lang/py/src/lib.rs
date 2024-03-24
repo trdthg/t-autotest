@@ -1,14 +1,18 @@
 #![allow(unused)]
+mod api;
 use pyo3::{
     exceptions::{self, PyException, PyTypeError},
     prelude::*,
 };
 use std::{
     env,
-    sync::mpsc::{Receiver, Sender},
+    sync::{
+        mpsc::{Receiver, Sender},
+        Arc, Mutex,
+    },
     time::Duration,
 };
-use t_binding::{api, ApiError};
+use t_binding::ApiError;
 use t_config::{Config, ConsoleSSH};
 use t_console::SSH;
 use t_runner::{Driver as InnerDriver, Server};
@@ -32,10 +36,21 @@ fn into_pyerr(e: ApiError) -> PyErr {
     }
 }
 
+#[pyfunction]
+fn loop_forever(py: Python<'_>) -> PyResult<()> {
+    loop {
+        // As this loop is infinite it should check for signals every once in a while.
+        // Using `?` causes any `PyErr` (potentially containing `KeyboardInterrupt`)
+        // to break out of the loop.
+        py.check_signals()?;
+
+        // do work here
+    }
+}
+
 /// Entrypoint, A Python module implemented in Rust.
 #[pymodule]
 fn pyautotest(py: Python, m: &PyModule) -> PyResult<()> {
-    ctrlc::set_handler(|| std::process::exit(2)).unwrap();
     init_logger();
 
     tracing::info!("pyautotest module initialized");
@@ -101,109 +116,134 @@ impl Driver {
         self.driver.stop();
     }
 
-    fn sleep(&self, miles: i32) {
-        api::sleep(miles as u64);
+    fn sleep(&self, py: Python<'_>, miles: i32) {
+        api::sleep(py, miles as u64);
     }
 
-    fn get_env(&self, key: String) -> PyResult<Option<String>> {
-        api::get_env(key).map_err(into_pyerr)
+    fn get_env(&self, py: Python<'_>, key: String) -> PyResult<Option<String>> {
+        api::get_env(py, key).map_err(into_pyerr)
     }
 
-    fn assert_script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
-        api::assert_script_run_global(cmd, timeout).map_err(into_pyerr)
+    fn assert_script_run_global(
+        &self,
+        py: Python<'_>,
+        cmd: String,
+        timeout: i32,
+    ) -> PyResult<String> {
+        api::assert_script_run_global(py, cmd, timeout).map_err(into_pyerr)
     }
 
-    fn script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
-        api::script_run_global(cmd, timeout)
+    fn script_run_global(&self, py: Python<'_>, cmd: String, timeout: i32) -> PyResult<String> {
+        api::script_run_global(py, cmd, timeout)
             .map(|v| v.1)
             .map_err(into_pyerr)
     }
 
-    fn write_string(&self, s: String) -> PyResult<()> {
-        api::write_string(s).map_err(into_pyerr)
+    fn write_string(&self, py: Python<'_>, s: String) -> PyResult<()> {
+        api::write_string(py, s).map_err(into_pyerr)
     }
 
-    fn wait_string_ntimes(&self, s: String, n: i32, timeout: i32) -> PyResult<()> {
-        api::wait_string_ntimes(s, n, timeout).map_err(into_pyerr)
+    fn wait_string_ntimes(&self, py: Python<'_>, s: String, n: i32, timeout: i32) -> PyResult<()> {
+        api::wait_string_ntimes(py, s, n, timeout).map_err(into_pyerr)
     }
 
     // ssh
-    fn ssh_assert_script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
-        api::ssh_assert_script_run_global(cmd, timeout).map_err(into_pyerr)
+    fn ssh_assert_script_run_global(
+        &self,
+        py: Python<'_>,
+        cmd: String,
+        timeout: i32,
+    ) -> PyResult<String> {
+        api::ssh_assert_script_run_global(py, cmd, timeout).map_err(into_pyerr)
     }
 
-    fn ssh_script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
-        api::ssh_script_run_global(cmd, timeout)
+    fn ssh_script_run_global(&self, py: Python<'_>, cmd: String, timeout: i32) -> PyResult<String> {
+        api::ssh_script_run_global(py, cmd, timeout)
             .map(|v| v.1)
             .map_err(into_pyerr)
     }
 
-    fn ssh_write_string(&self, s: String) {
-        api::ssh_write_string(s);
+    fn ssh_write_string(&self, py: Python<'_>, s: String) {
+        api::ssh_write_string(py, s);
     }
 
-    fn ssh_assert_script_run_seperate(&self, cmd: String, timeout: i32) -> PyResult<String> {
-        api::ssh_assert_script_run_seperate(cmd, timeout).map_err(into_pyerr)
+    fn ssh_assert_script_run_seperate(
+        &self,
+        py: Python<'_>,
+        cmd: String,
+        timeout: i32,
+    ) -> PyResult<String> {
+        api::ssh_assert_script_run_seperate(py, cmd, timeout).map_err(into_pyerr)
     }
 
     // serial
-    fn serial_assert_script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
-        api::serial_assert_script_run_global(cmd, timeout).map_err(into_pyerr)
+    fn serial_assert_script_run_global(
+        &self,
+        py: Python<'_>,
+        cmd: String,
+        timeout: i32,
+    ) -> PyResult<String> {
+        api::serial_assert_script_run_global(py, cmd, timeout).map_err(into_pyerr)
     }
 
-    fn serial_script_run_global(&self, cmd: String, timeout: i32) -> PyResult<String> {
-        api::serial_script_run_global(cmd, timeout)
+    fn serial_script_run_global(
+        &self,
+        py: Python<'_>,
+        cmd: String,
+        timeout: i32,
+    ) -> PyResult<String> {
+        api::serial_script_run_global(py, cmd, timeout)
             .map(|v| v.1)
             .map_err(into_pyerr)
     }
 
-    fn serial_write_string(&self, s: String) {
-        api::serial_write_string(s);
+    fn serial_write_string(&self, py: Python<'_>, s: String) {
+        api::serial_write_string(py, s);
     }
 
     // vnc
-    fn assert_screen(&self, tag: String, timeout: i32) -> PyResult<()> {
-        api::vnc_assert_screen(tag, timeout).map_err(into_pyerr)
+    fn assert_screen(&self, py: Python<'_>, tag: String, timeout: i32) -> PyResult<()> {
+        api::vnc_assert_screen(py, tag, timeout).map_err(into_pyerr)
     }
 
-    fn vnc_type_string(&self, s: String) -> PyResult<()> {
-        api::vnc_type_string(s).map_err(into_pyerr)
+    fn vnc_type_string(&self, py: Python<'_>, s: String) -> PyResult<()> {
+        api::vnc_type_string(py, s).map_err(into_pyerr)
     }
 
-    fn vnc_send_key(&self, s: String) -> PyResult<()> {
-        api::vnc_send_key(s).map_err(into_pyerr)
+    fn vnc_send_key(&self, py: Python<'_>, s: String) -> PyResult<()> {
+        api::vnc_send_key(py, s).map_err(into_pyerr)
     }
 
-    fn vnc_refresh(&self) -> PyResult<()> {
-        api::vnc_refresh().map_err(into_pyerr)
+    fn vnc_refresh(&self, py: Python<'_>) -> PyResult<()> {
+        api::vnc_refresh(py).map_err(into_pyerr)
     }
 
-    fn check_screen(&self, tag: String, timeout: i32) -> PyResult<bool> {
-        api::vnc_check_screen(tag, timeout).map_err(into_pyerr)
+    fn check_screen(&self, py: Python<'_>, tag: String, timeout: i32) -> PyResult<bool> {
+        api::vnc_check_screen(py, tag, timeout).map_err(into_pyerr)
     }
 
-    fn mouse_click(&self) -> PyResult<()> {
-        api::vnc_mouse_click().map_err(into_pyerr)
+    fn mouse_click(&self, py: Python<'_>) -> PyResult<()> {
+        api::vnc_mouse_click(py).map_err(into_pyerr)
     }
 
-    fn mouse_rclick(&self) -> PyResult<()> {
-        api::vnc_mouse_rclick().map_err(into_pyerr)
+    fn mouse_rclick(&self, py: Python<'_>) -> PyResult<()> {
+        api::vnc_mouse_rclick(py).map_err(into_pyerr)
     }
 
-    fn mouse_keydown(&self) -> PyResult<()> {
-        api::vnc_mouse_keydown().map_err(into_pyerr)
+    fn mouse_keydown(&self, py: Python<'_>) -> PyResult<()> {
+        api::vnc_mouse_keydown(py).map_err(into_pyerr)
     }
 
-    fn mouse_keyup(&self) -> PyResult<()> {
-        api::vnc_mouse_keyup().map_err(into_pyerr)
+    fn mouse_keyup(&self, py: Python<'_>) -> PyResult<()> {
+        api::vnc_mouse_keyup(py).map_err(into_pyerr)
     }
 
-    fn mouse_move(&self, x: i32, y: i32) -> PyResult<()> {
-        api::vnc_mouse_move(x as u16, y as u16).map_err(into_pyerr)
+    fn mouse_move(&self, py: Python<'_>, x: i32, y: i32) -> PyResult<()> {
+        api::vnc_mouse_move(py, x as u16, y as u16).map_err(into_pyerr)
     }
 
-    fn mouse_hide(&self) -> PyResult<()> {
-        api::vnc_mouse_hide().map_err(into_pyerr)
+    fn mouse_hide(&self, py: Python<'_>) -> PyResult<()> {
+        api::vnc_mouse_hide(py).map_err(into_pyerr)
     }
 }
 
