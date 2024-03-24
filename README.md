@@ -1,14 +1,14 @@
 # [WIP] autotest
 
-自动化测试框架
+Autotest framework.
 
 ## Install
 
-目前提供了 Windows, Mac, Linux 三平台二进制文件，由 Github Action 自动构建. 下载地址：<https://github.com/trdthg/t-autotest/releases>
+Current provide Windows, Mac, Linux binary and python whl, auto build by Github Action. Download link:<https://github.com/trdthg/t-autotest/releases>
 
-下载完成后配置环境变量即可
+use binary directly after set env
 
-可以直接使用下面的脚本安装:
+you can also install with scripts:
 
 ### linux / mac
 
@@ -24,99 +24,240 @@ Invoke-WebRequest -Uri "https://github.com/trdthg/t-autotest/raw/main/scripts/in
 
 ## Usage
 
-使用方法: `autotest -c|--config <config.toml> -s|--script <script.ext>`
+```txt
+Usage: autotest --config <CONFIG> <COMMAND>
 
-- `config.toml` 指定测试环境配置
-- `case.ext` 指定需要运行的测试脚本, 目前支持 js 语言
+Commands:
+  run
+  record
+  vnc-do
+  help    Print this message or the help of the given subcommand(s)
 
-## 模块
+Options:
+  -c, --config <CONFIG>
+  -h, --help             Print help
+```
 
-- cli 模块 (提供命令行工具入口进程)
-  - Feature
-    - autotest: 提供命令行入口
-- console 模块 (负责和机器终端交互)
+## Examples
+
+### use as python pkg
+
+```py
+import pyautotest
+
+if __name__ == "__main__":
+    d = pyautotest.Driver(
+        """
+        log_dir = "./logs"
+        [env]
+        [serial]
+        serial_file = "/dev/ttyUSB0"
+        bund_rate   = 115200
+        """
+    )
+
+    d.writeln("\x03")
+    d.assert_wait_string_ntimes("login", 1, 10)
+
+    d.sleep(3)
+    d.writeln("pi")
+    d.assert_wait_string_ntimes("Password", 1, 10)
+
+    d.sleep(3)
+    d.writeln("pi")
+
+    d.sleep(3)
+    res = d.assert_script_run("whoami", 5)
+```
+
+### use as js script
+
+```js
+import { add } from "./lib.js"
+
+export function prehook() {
+    let res = script_run("ls", 9000)
+    console.log(res);
+}
+
+export function run() {
+    let res = script_run("lsa", 9000)
+    console.log(res);
+}
+
+export function afterhook() {
+    let res = script_run("ls", 9000)
+    console.log(res);
+}
+```
+
+## Module
+
+- cli (cli entry)
+- console (interact with os console)
   - ssh
-    - 支持 private_key, password 登录
-    - 在全局 shell session 交互式运行脚本
-    - 在单独 shell session 运行命令
-    - 等待 ssh tty 输出匹配文本
   - serial
-    - 支持 password 登录
-    - 在全局 session 交互式运行脚本
-    - 等待 tty 输出匹配文本
-    - 捕获所有串口输出文本，包括系统 boot 阶段 [输出参考](../doc/autotest/serial-log-example.txt)
   - vnc
-    - 支持 vnc 连接，密码登录
-    - 提供密码登录
-- binding 模块 (负责测试脚本对接)
-  - 提供基本的 api 函数
-  - 集成到各个语言
-    - js: 基于 quickjs 引擎完成 JS 测试脚本运行
-    - python: TODO (pyO3)
-- t-vnc 模块
-  - ([fork](https://github.com/trdthg/rust-vnc) 自 whitequark/rust-vnc, MIT)
-  - 解决 windows 无法编译
-- config 模块 (提供测试，命令行 需要的通用配置文件解析)
-- util 模块 (工具库)
+- binding
+  - provide stateless api func
+  - binding
+    - js: based on quickjs
+    - python: pyO3
+- t-vnc
+  - [fork](https://github.com/trdthg/rust-vnc) from whitequark/rust-vnc, MIT
+- config
 - ci (github action)
-  - [`test.yaml`](https://github.com/trdthg/t-autotest/actions/workflows/test.yaml): 提交代码或 pr 时运行 cargo check, test, fmt, clippy, build(linux)
-  - [`build.yaml`](https://github.com/trdthg/t-autotest/actions/workflows/release.yaml): 自动分发 linux, macos, windows 三平台二进制文件。[下载地址](https://github.com/trdthg/t-autotest/releases)
+  - [`test.yaml`](https://github.com/trdthg/t-autotest/actions/workflows/test.yaml): cargo check, test, fmt, clippy, build(linux)
+  - [`build.yaml`](https://github.com/trdthg/t-autotest/actions/workflows/release.yaml): auto release linux, macos, windows binary and python whl。[Download](https://github.com/trdthg/t-autotest/releases)
 
 ## api
 
-- 通用
-  - sleep: 为脚本提供统一的 sleep 函数实现
-  - get_env: 获取 `config.toml` 定义的环境变量
-  - assert_script_run: 根据配置文件自动选择 console, serial 优先于 ssh. 根据命令返回值判断，如果不为 0, 则会 panic
-  - script_run: 同上，只运行命令，不处理返回值
-  - write_string: 同上，只输入一段字符串，不包含控制字符
-- ssh
-  - ssh_assert_script_run_global: 调用 ssh 在主 session 执行脚本，断言命令返回值
-  - ssh_script_run_seperate: 调用 ssh 在分离 session 执行脚本，其他同上
-  - ssh_script_run_global: 调用 ssh 在主 session 执行脚本，只确保执行完成，不超时
-  - ssh_write_string: 调用 ssh 在主 session 写入文本
-- serial
-  - serial_assert_script_run_global: 调用 serial 在主 session 执行脚本
-  - serial_script_run_global: 调用 serial 在主 session 执行脚本，断言命令返回值
-  - serial_write_string: 调用 serial 在主 session 执行脚本
-- vnc
-  - assert_screen: 调用 vnc 断言屏幕
-  - check_screen: 调用 vnc 比较屏幕
-  - mouse_click: 调用 vnc 鼠标点击
-  - mouse_move: 调用 vnc 移动鼠标
-  - mouse_hide: 调用 vnc 隐藏鼠标
+```py
+class Driver:
+    """
+    A driver for running test
 
-## 测试用例示例
+    :param toml_str: toml config string
+    """
 
-### ruyi 测试
+    def __init__(self, toml_str: str) -> Driver: ...
+    def start(self):
+        """
+        start the runner
+        """
 
-- 测试用例：[ruyisdk.js](https://gitee.com/yan-mingzhu/autotest-examples/blob/master/ruyi/ruyisdk.js)
+    def stop(self):
+        """
+        stop the runner
+        """
 
-### poineerbox - riscv - debian
+    def sleep(self, secs: int):
+        """
+        sleep for secs, you can use this function to simulate a long running script
+        """
 
-- 宿主机：wiondows
-- 测试方法：ssh
-- 配置文件：<https://gitee.com/yan-mingzhu/autotest-examples/blob/master/machine/poiner.toml>
+    def get_env(self, key: str) -> str | None:
+        """
+        get environment variable by key from toml env section
+        """
 
-### VF2 - riscv - ubuntu
+    def assert_script_run(self, cmd: str, timeout: int) -> str:
+        """
+        run script in console, return stdout, throw exception if return code is not 0
+        """
 
-- 宿主机：arch
-- 测试方法：serial
-- 配置文件：<https://gitee.com/yan-mingzhu/autotest-examples/blob/master/machine/VF2.toml>
+    def script_run(self, cmd: str, timeout: int) -> str:
+        """
+        like assert_script_run, but not throw exception if return code is not 0
+        """
 
-### 树莓派 3B 1.2 - aarch - debian-bookworm
+    def write(self, s: str):
+        """
+        write string to console
+        """
 
-- 宿主机：nixos
-- 测试方法：ssh + serial
-- 配置文件：<https://gitee.com/yan-mingzhu/autotest-examples/blob/master/machine/rasp-pi.toml>
+    def writeln(self, s: str):
+        """
+        write string with '\n' to console
+        """
 
-## 已知问题
+    def wait_string_ntimes(self, s: str, n: int, timeout: int) -> bool:
+        """
+        wait pattern in console output show n times
+        """
 
-在使用默认 nanoid 长度(21) 时, 从终端读取到的 nanoid 可能会被截断导致重复, 无法匹配, 例如:
+    def assert_wait_string_ntimes(self, s: str, n: int, timeout: int):
+        """
+        wait pattern in console output, if timeout, throw error
+        """
 
-- 原始 nanoid: `aaaaaaabcccccc`
-- 读取到的: `aaaaaaab\rbcccccc`
+    def ssh_assert_script_run(self, cmd: str, timeout: int) -> str:
+        """
+        run script in ssh, return stdout, throw exception if return code is not 0
+        """
 
-## Roadmap
+    def ssh_script_run(self, cmd: str, timeout: int) -> str:
+        """
+        like ssh_assert_script_run, but not throw exception if return code is not 0
+        """
 
-- [ ] 以库的形式提供 python 包
+    def ssh_write(self, s: str):
+        """
+        write string to ssh console
+        """
+
+    def ssh_assert_script_run_seperate(self, cmd: str, timeout: int) -> str:
+        """
+        run script in seperate ssh session, return stdout, throw exception if return code is not 0
+        """
+
+    def serial_assert_script_run(self, cmd: str, timeout: int) -> str:
+        """
+        run script in global ssh session, return stdout, throw exception if return code is not 0
+        """
+
+    def serial_script_run(self, cmd: str, timeout: int) -> str:
+        """
+        like serial_assert_script_run, but not throw exception if return code is not 0
+        """
+
+    def serial_write(self, s: str):
+        """
+        write string to ssh console
+        """
+
+    def assert_screen(self, tag: str, timeout: int):
+        """
+        check screen, throw exception if timeout, or not similar to tag
+        """
+
+    def check_screen(self, tag: str, timeout: int) -> bool:
+        """
+        check screen, return false if timeout, or not similar to tag
+        """
+
+    def vnc_type_string(self, s: str):
+        """
+        type string
+        """
+
+    def vnc_send_key(self):
+        """
+        send event
+        """
+
+    def vnc_refresh(self):
+        """
+        force refresh
+        """
+
+    def mouse_click(self):
+        """
+        click mouse
+        """
+
+    def mouse_rclick(self):
+        """
+        click mouse right button
+        """
+
+    def mouse_keydown(self):
+        """
+        mouse left button down
+        """
+
+    def mouse_keyup(self):
+        """
+        mouse left button up
+        """
+
+    def mouse_move(self, x: int, y: int):
+        """
+        move mouse to x, y
+        """
+
+    def mouse_hide(self):
+        """
+        hide mouse
+        """
+```
