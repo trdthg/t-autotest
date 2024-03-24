@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use t_console::PNG;
 
+use crate::ApiError;
+
 #[derive(Debug)]
 pub enum TextConsole {
     SSH,
@@ -24,11 +26,11 @@ pub enum MsgReq {
         cmd: String,
         timeout: Duration,
     },
-    WriteStringGlobal {
+    WriteString {
         console: Option<TextConsole>,
         s: String,
     },
-    WaitStringGlobal {
+    WaitString {
         console: Option<TextConsole>,
         s: String,
         n: i32,
@@ -64,11 +66,20 @@ pub enum MsgResError {
     String(String),
 }
 
+impl From<MsgResError> for ApiError {
+    fn from(value: MsgResError) -> Self {
+        match value {
+            MsgResError::Timeout => Self::Timeout,
+            MsgResError::String(s) => Self::String(s),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum MsgRes {
     Done,
     ConfigValue(Option<String>),
-    ScriptRun(Result<(i32, String), MsgResError>),
+    ScriptRun { code: i32, value: String },
     Error(MsgResError),
     AssertScreen { similarity: f32, ok: bool },
     Screenshot(PNG),

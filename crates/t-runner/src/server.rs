@@ -198,7 +198,10 @@ impl Server {
                         .map_mut(|c| c.exec_seperate(&cmd))
                         .unwrap_or(Ok((-1, "no ssh".to_string())))
                         .map_err(|_| MsgResError::Timeout);
-                    MsgRes::ScriptRun(res)
+                    match res {
+                        Ok((code, value)) => MsgRes::ScriptRun { code, value },
+                        Err(e) => MsgRes::Error(e),
+                    }
                 }
                 MsgReq::ScriptRunGlobal {
                     cmd,
@@ -252,9 +255,12 @@ impl Server {
                             .map_err(|_| MsgResError::Timeout),
                         _ => Err(MsgResError::String("no console supported".to_string())),
                     };
-                    MsgRes::ScriptRun(res)
+                    match res {
+                        Ok((code, value)) => MsgRes::ScriptRun { code, value },
+                        Err(e) => MsgRes::Error(e),
+                    }
                 }
-                MsgReq::WriteStringGlobal { console, s } => {
+                MsgReq::WriteString { console, s } => {
                     if let Err(e) = match (console, ssh_client.is_some(), serial_client.is_some()) {
                         (None | Some(t_binding::TextConsole::Serial), _, true) => serial_client
                             .map_mut(|c| c.write_string(&s))
@@ -271,7 +277,7 @@ impl Server {
                         MsgRes::Done
                     }
                 }
-                MsgReq::WaitStringGlobal {
+                MsgReq::WaitString {
                     console,
                     s,
                     n,
@@ -491,6 +497,10 @@ impl Server {
     }
 
     fn send_screenshot(vnc_client: &AMOption<VNC>, screenshot_tx: &Option<Sender<PNG>>) {
+        if !vnc_client.is_some() {
+            return;
+        }
+
         let (tx, rx) = mpsc::channel();
 
         vnc_client
