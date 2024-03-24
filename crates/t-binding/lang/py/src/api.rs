@@ -6,7 +6,7 @@ use t_binding::{
     msg::{MsgResError, TextConsole},
     MsgReq, MsgRes,
 };
-use tracing::{info, trace, Level};
+use tracing::{info, trace, warn, Level};
 
 fn req(py: Python<'_>, req: MsgReq) -> Result<MsgRes> {
     let msg_tx = get_global_sender();
@@ -27,7 +27,7 @@ fn req(py: Python<'_>, req: MsgReq) -> Result<MsgRes> {
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => return Err(ApiError::ServerStopped),
         }
-        py.check_signals();
+        py.check_signals().map_err(|_| ApiError::Interrupt)?;
     }
 }
 
@@ -42,11 +42,11 @@ fn _script_run(
         MsgReq::ScriptRunGlobal {
             cmd,
             console,
-            timeout: Duration::from_millis(timeout as u64),
+            timeout: Duration::from_secs(timeout as u64),
         },
     )? {
-        MsgRes::ScriptRun(Ok(res)) => Ok(res),
-        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => Err(ApiError::Timeout),
+        MsgRes::ScriptRun { code, value } => Ok((code, value)),
+        MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),
     }
 }
@@ -62,24 +62,25 @@ fn _assert_script_run(
         MsgReq::ScriptRunGlobal {
             cmd,
             console,
-            timeout: Duration::from_millis(timeout as u64),
+            timeout: Duration::from_secs(timeout as u64),
         },
     )? {
-        MsgRes::ScriptRun(Ok(res)) => {
-            if res.0 == 0 {
-                Ok(res.1)
+        MsgRes::ScriptRun { code, value } => {
+            if code == 0 {
+                Ok(value)
             } else {
                 Err(ApiError::AssertFailed)
             }
         }
-        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => Err(ApiError::Timeout),
+        MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),
     }
 }
 
 fn _write_string(py: Python<'_>, s: String, console: Option<TextConsole>) -> Result<()> {
-    match req(py, MsgReq::WriteStringGlobal { s, console })? {
+    match req(py, MsgReq::WriteString { s, console })? {
         MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),
     }
 }
@@ -90,17 +91,19 @@ fn _wait_string_ntimes(
     s: String,
     n: i32,
     timeout: i32,
-) -> Result<()> {
+) -> Result<bool> {
     match req(
         py,
-        MsgReq::WaitStringGlobal {
+        MsgReq::WaitString {
             console,
             s,
             n,
             timeout: Duration::from_secs(timeout as u64),
         },
     )? {
-        MsgRes::Done => Ok(()),
+        MsgRes::Done => Ok(true),
+        MsgRes::Error(MsgResError::Timeout) => Ok(false),
+        MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),
     }
 }
@@ -116,9 +119,9 @@ pub fn print(py: Python<'_>, level: tracing::Level, msg: String) {
     }
 }
 
-pub fn sleep(py: Python<'_>, millis: u64) {
-    for i in 1..millis / 100 {
-        std::thread::sleep(Duration::from_millis(100));
+pub fn sleep(py: Python<'_>, secs: u64) {
+    for i in 0..secs {
+        std::thread::sleep(Duration::from_secs(1));
         py.check_signals();
     }
 }
@@ -131,40 +134,32 @@ pub fn get_env(py: Python<'_>, key: String) -> Result<Option<String>> {
 }
 
 // default
-pub fn script_run_global(py: Python<'_>, cmd: String, timeout: i32) -> Result<(i32, String)> {
+pub fn script_run(py: Python<'_>, cmd: String, timeout: i32) -> Result<(i32, String)> {
     _script_run(py, cmd, None, timeout)
 }
 
-pub fn assert_script_run_global(py: Python<'_>, cmd: String, timeout: i32) -> Result<String> {
+pub fn assert_script_run(py: Python<'_>, cmd: String, timeout: i32) -> Result<String> {
     _assert_script_run(py, cmd, None, timeout)
 }
 
-pub fn write_string(py: Python<'_>, s: String) -> Result<()> {
+pub fn write(py: Python<'_>, s: String) -> Result<()> {
     _write_string(py, s, None)
 }
 
-pub fn wait_string_ntimes(py: Python<'_>, s: String, n: i32, timeout: i32) -> Result<()> {
+pub fn wait_string_ntimes(py: Python<'_>, s: String, n: i32, timeout: i32) -> Result<bool> {
     _wait_string_ntimes(py, None, s, n, timeout)
 }
 
 // serial
-pub fn serial_script_run_global(
-    py: Python<'_>,
-    cmd: String,
-    timeout: i32,
-) -> Result<(i32, String)> {
+pub fn serial_script_run(py: Python<'_>, cmd: String, timeout: i32) -> Result<(i32, String)> {
     _script_run(py, cmd, Some(TextConsole::Serial), timeout)
 }
 
-pub fn serial_assert_script_run_global(
-    py: Python<'_>,
-    cmd: String,
-    timeout: i32,
-) -> Result<String> {
+pub fn serial_assert_script_run(py: Python<'_>, cmd: String, timeout: i32) -> Result<String> {
     _assert_script_run(py, cmd, Some(TextConsole::Serial), timeout)
 }
 
-pub fn serial_write_string(py: Python<'_>, s: String) -> Result<()> {
+pub fn serial_write(py: Python<'_>, s: String) -> Result<()> {
     _write_string(py, s, Some(TextConsole::Serial))
 }
 
@@ -174,30 +169,30 @@ pub fn ssh_assert_script_run_seperate(py: Python<'_>, cmd: String, timeout: i32)
         py,
         MsgReq::SSHScriptRunSeperate {
             cmd,
-            timeout: Duration::from_millis(timeout as u64),
+            timeout: Duration::from_secs(timeout as u64),
         },
     )? {
-        MsgRes::ScriptRun(Ok(res)) => {
-            if res.0 == 0 {
-                Ok(res.1)
+        MsgRes::ScriptRun { code, value } => {
+            if code == 0 {
+                Ok(value)
             } else {
                 Err(ApiError::AssertFailed)
             }
         }
-        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => Err(ApiError::Timeout),
+        MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),
     }
 }
 
-pub fn ssh_script_run_global(py: Python<'_>, cmd: String, timeout: i32) -> Result<(i32, String)> {
+pub fn ssh_script_run(py: Python<'_>, cmd: String, timeout: i32) -> Result<(i32, String)> {
     _script_run(py, cmd, Some(TextConsole::SSH), timeout)
 }
 
-pub fn ssh_assert_script_run_global(py: Python<'_>, cmd: String, timeout: i32) -> Result<String> {
+pub fn ssh_assert_script_run(py: Python<'_>, cmd: String, timeout: i32) -> Result<String> {
     _assert_script_run(py, cmd, Some(TextConsole::SSH), timeout)
 }
 
-pub fn ssh_write_string(py: Python<'_>, s: String) -> Result<()> {
+pub fn ssh_write(py: Python<'_>, s: String) -> Result<()> {
     _write_string(py, s, Some(TextConsole::SSH))
 }
 
@@ -208,10 +203,11 @@ pub fn vnc_check_screen(py: Python<'_>, tag: String, timeout: i32) -> Result<boo
         MsgReq::AssertScreen {
             tag: tag.clone(),
             threshold: 1,
-            timeout: Duration::from_millis(timeout as u64),
+            timeout: Duration::from_secs(timeout as u64),
         },
     )? {
         MsgRes::AssertScreen { similarity: _, ok } => Ok(ok),
+        MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),
     }
 }
@@ -225,78 +221,89 @@ pub fn vnc_assert_screen(py: Python<'_>, tag: String, timeout: i32) -> Result<()
 }
 
 pub fn vnc_refresh(py: Python<'_>) -> Result<()> {
-    if matches!(req(py, MsgReq::Refresh)?, MsgRes::Done) {
-        return Ok(());
+    match req(py, MsgReq::Refresh)? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_take_screenshot(py: Python<'_>) -> Result<t_console::PNG> {
-    if let MsgRes::Screenshot(res) = req(py, MsgReq::TakeScreenShot)? {
-        return Ok(res);
+    match req(py, MsgReq::TakeScreenShot)? {
+        MsgRes::Screenshot(res) => Ok(res),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_mouse_move(py: Python<'_>, x: u16, y: u16) -> Result<()> {
-    if matches!(req(py, MsgReq::MouseMove { x, y })?, MsgRes::Done) {
-        return Ok(());
+    match req(py, MsgReq::MouseMove { x, y })? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_mouse_drag(py: Python<'_>, x: u16, y: u16) -> Result<()> {
-    if matches!(req(py, MsgReq::MouseDrag { x, y })?, MsgRes::Done) {
-        return Ok(());
+    match req(py, MsgReq::MouseDrag { x, y })? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_mouse_keydown(py: Python<'_>) -> Result<()> {
-    if matches!(req(py, MsgReq::MouseKeyDown(true))?, MsgRes::Done) {
-        return Ok(());
+    match req(py, MsgReq::MouseKeyDown(true))? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_mouse_keyup(py: Python<'_>) -> Result<()> {
-    if matches!(req(py, MsgReq::MouseKeyDown(false))?, MsgRes::Done) {
-        return Ok(());
+    match req(py, MsgReq::MouseKeyDown(false))? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_mouse_hide(py: Python<'_>) -> Result<()> {
-    if matches!(req(py, MsgReq::MouseHide)?, MsgRes::Done) {
-        return Ok(());
+    match req(py, MsgReq::MouseHide)? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_mouse_click(py: Python<'_>) -> Result<()> {
-    if matches!(req(py, MsgReq::MouseClick)?, MsgRes::Done) {
-        return Ok(());
+    match req(py, MsgReq::MouseClick)? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_mouse_rclick(py: Python<'_>) -> Result<()> {
-    if matches!(req(py, MsgReq::MouseRClick)?, MsgRes::Done) {
-        return Ok(());
+    match req(py, MsgReq::MouseRClick)? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_send_key(py: Python<'_>, s: String) -> Result<()> {
-    if matches!(req(py, MsgReq::SendKey(s))?, MsgRes::Done) {
-        return Ok(());
+    match req(py, MsgReq::SendKey(s))? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_type_string(py: Python<'_>, s: String) -> Result<()> {
-    if matches!(req(py, MsgReq::TypeString(s))?, MsgRes::Done) {
-        return Ok(());
+    match req(py, MsgReq::TypeString(s))? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }

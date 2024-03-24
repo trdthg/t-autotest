@@ -20,31 +20,21 @@ use tracing::{error, Level};
 use tracing_subscriber::FmtSubscriber;
 
 pyo3::create_exception!(defaultmodule, DriverException, PyException);
+pyo3::create_exception!(defaultmodule, UserException, PyException);
 pyo3::create_exception!(defaultmodule, AssertException, PyException);
 pyo3::create_exception!(defaultmodule, TimeoutException, PyException);
+pyo3::create_exception!(defaultmodule, UnexpectedException, PyException);
 
 fn into_pyerr(e: ApiError) -> PyErr {
     match e {
-        ApiError::ServerStopped => {
-            DriverException::new_err("server stopped, maybe needle not found")
-        }
+        ApiError::ServerStopped => DriverException::new_err("server stopped"),
         ApiError::ServerInvalidResponse => {
             DriverException::new_err("server return invalid response, please open an issue")
         }
+        ApiError::String(s) => UnexpectedException::new_err(s),
         ApiError::Timeout => TimeoutException::new_err("timeout"),
         ApiError::AssertFailed => AssertException::new_err("assert failed"),
-    }
-}
-
-#[pyfunction]
-fn loop_forever(py: Python<'_>) -> PyResult<()> {
-    loop {
-        // As this loop is infinite it should check for signals every once in a while.
-        // Using `?` causes any `PyErr` (potentially containing `KeyboardInterrupt`)
-        // to break out of the loop.
-        py.check_signals()?;
-
-        // do work here
+        ApiError::Interrupt => UserException::new_err("interrupted by user"),
     }
 }
 
@@ -124,47 +114,56 @@ impl Driver {
         api::get_env(py, key).map_err(into_pyerr)
     }
 
-    fn assert_script_run_global(
+    fn assert_script_run(&self, py: Python<'_>, cmd: String, timeout: i32) -> PyResult<String> {
+        api::assert_script_run(py, cmd, timeout).map_err(into_pyerr)
+    }
+
+    fn script_run(&self, py: Python<'_>, cmd: String, timeout: i32) -> PyResult<(i32, String)> {
+        api::script_run(py, cmd, timeout).map_err(into_pyerr)
+    }
+
+    fn write(&self, py: Python<'_>, s: String) -> PyResult<()> {
+        api::write(py, s).map_err(into_pyerr)
+    }
+
+    fn writeln(&self, py: Python<'_>, s: String) -> PyResult<()> {
+        api::write(py, format!("{s}\n")).map_err(into_pyerr)
+    }
+
+    fn wait_string_ntimes(
         &self,
         py: Python<'_>,
-        cmd: String,
+        s: String,
+        n: i32,
         timeout: i32,
-    ) -> PyResult<String> {
-        api::assert_script_run_global(py, cmd, timeout).map_err(into_pyerr)
-    }
-
-    fn script_run_global(&self, py: Python<'_>, cmd: String, timeout: i32) -> PyResult<String> {
-        api::script_run_global(py, cmd, timeout)
-            .map(|v| v.1)
-            .map_err(into_pyerr)
-    }
-
-    fn write_string(&self, py: Python<'_>, s: String) -> PyResult<()> {
-        api::write_string(py, s).map_err(into_pyerr)
-    }
-
-    fn wait_string_ntimes(&self, py: Python<'_>, s: String, n: i32, timeout: i32) -> PyResult<()> {
+    ) -> PyResult<bool> {
         api::wait_string_ntimes(py, s, n, timeout).map_err(into_pyerr)
     }
 
-    // ssh
-    fn ssh_assert_script_run_global(
+    fn assert_wait_string_ntimes(
         &self,
         py: Python<'_>,
-        cmd: String,
+        s: String,
+        n: i32,
         timeout: i32,
-    ) -> PyResult<String> {
-        api::ssh_assert_script_run_global(py, cmd, timeout).map_err(into_pyerr)
+    ) -> PyResult<bool> {
+        if !api::wait_string_ntimes(py, s, n, timeout).map_err(into_pyerr)? {
+            return Err(AssertException::new_err("wait failed"));
+        }
+        Ok(true)
     }
 
-    fn ssh_script_run_global(&self, py: Python<'_>, cmd: String, timeout: i32) -> PyResult<String> {
-        api::ssh_script_run_global(py, cmd, timeout)
-            .map(|v| v.1)
-            .map_err(into_pyerr)
+    // ssh
+    fn ssh_assert_script_run(&self, py: Python<'_>, cmd: String, timeout: i32) -> PyResult<String> {
+        api::ssh_assert_script_run(py, cmd, timeout).map_err(into_pyerr)
     }
 
-    fn ssh_write_string(&self, py: Python<'_>, s: String) {
-        api::ssh_write_string(py, s);
+    fn ssh_script_run(&self, py: Python<'_>, cmd: String, timeout: i32) -> PyResult<(i32, String)> {
+        api::ssh_script_run(py, cmd, timeout).map_err(into_pyerr)
+    }
+
+    fn ssh_write(&self, py: Python<'_>, s: String) {
+        api::ssh_write(py, s);
     }
 
     fn ssh_assert_script_run_seperate(
@@ -177,28 +176,26 @@ impl Driver {
     }
 
     // serial
-    fn serial_assert_script_run_global(
+    fn serial_assert_script_run(
         &self,
         py: Python<'_>,
         cmd: String,
         timeout: i32,
     ) -> PyResult<String> {
-        api::serial_assert_script_run_global(py, cmd, timeout).map_err(into_pyerr)
+        api::serial_assert_script_run(py, cmd, timeout).map_err(into_pyerr)
     }
 
-    fn serial_script_run_global(
+    fn serial_script_run(
         &self,
         py: Python<'_>,
         cmd: String,
         timeout: i32,
-    ) -> PyResult<String> {
-        api::serial_script_run_global(py, cmd, timeout)
-            .map(|v| v.1)
-            .map_err(into_pyerr)
+    ) -> PyResult<(i32, String)> {
+        api::serial_script_run(py, cmd, timeout).map_err(into_pyerr)
     }
 
-    fn serial_write_string(&self, py: Python<'_>, s: String) {
-        api::serial_write_string(py, s);
+    fn serial_write(&self, py: Python<'_>, s: String) {
+        api::serial_write(py, s);
     }
 
     // vnc
@@ -267,7 +264,7 @@ impl DriverSSH {
     }
 
     fn assert_script_run(&mut self, cmd: String, timeout: u64) -> PyResult<String> {
-        let Ok(v) = self.inner.exec_global(Duration::from_millis(timeout), &cmd) else {
+        let Ok(v) = self.inner.exec_global(Duration::from_secs(timeout), &cmd) else {
             return Err(TimeoutException::new_err("assert script run timeout"));
         };
         if v.0 != 0 {

@@ -3,6 +3,7 @@ use crate::{term::Term, ConsoleError};
 use std::{
     marker::PhantomData,
     sync::mpsc,
+    thread,
     time::{Duration, Instant},
 };
 use tracing::{debug, error, info};
@@ -50,7 +51,6 @@ where
         self.ctl.send(req)
     }
 
-    #[allow(unused)]
     pub fn write(&mut self, s: &[u8]) -> Result<()> {
         self.ctl
             .send(Req::Write(s.to_vec()))
@@ -59,10 +59,8 @@ where
     }
 
     pub fn write_string(&mut self, s: &str) -> Result<()> {
-        debug!(msg = "write_string", s = s);
-        self.ctl
-            .send(Req::Write(s.as_bytes().to_vec()))
-            .map_err(|_| ConsoleError::ConnectionBroken("io loop closed unexpected".to_string()))?;
+        info!(msg = "write_string", s = s);
+        self.write(s.as_bytes())?;
         Ok(())
     }
 
@@ -155,17 +153,18 @@ where
 
         let mut buffer_len = 0;
         loop {
-            // debug!(msg = "deadline", deadline = ?(deadline - Instant::now()));
+            tracing::warn!(msg = "deadline", deadline = ?(deadline - Instant::now()));
             // handle timeout
             if Instant::now() > deadline {
                 break;
             }
 
             // read buffer
-            let res = self.ctl.send(Req::Read(Some(timeout)));
+            let res = self.ctl.send(Req::Read);
             match res {
                 Ok(Res::Value(ref recv)) => {
                     if recv.is_empty() {
+                        thread::sleep(Duration::from_millis(200));
                         continue;
                     }
 
@@ -199,7 +198,7 @@ where
                 }
                 Ok(t) => {
                     error!(msg = "invalid msg varient", t = ?t);
-                    panic!("invalid msg varient");
+                    break;
                 }
                 Err(_) => {
                     error!(msg = "recv failed");

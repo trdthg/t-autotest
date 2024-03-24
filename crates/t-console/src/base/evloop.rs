@@ -13,7 +13,7 @@ use tracing::{debug, error, info, warn};
 #[derive(Debug)]
 pub enum Req {
     Write(Vec<u8>),
-    Read(Option<Duration>),
+    Read,
     Dump,
     Stop,
 }
@@ -61,7 +61,8 @@ where
         let log_file = if let Some(ref log_file) = log_file {
             let file = OpenOptions::new()
                 .create(true)
-                .append(true)
+                .truncate(true)
+                .write(true)
                 .open(log_file)
                 .expect("Failed to open file");
             Some(file)
@@ -97,6 +98,7 @@ where
 
             // don't return too fast
             if Instant::now() < next_round {
+                thread::sleep(Duration::from_millis(10));
                 continue;
             }
             next_round = Instant::now() + min_interval;
@@ -147,7 +149,7 @@ where
                 debug!(msg = "write done");
                 Ok(Res::Done)
             }
-            Req::Read(t) => self.handle_req_read_buffer(t).map(Res::Value),
+            Req::Read => Ok(Res::Value(self.consume_buffer())),
             Req::Dump => Ok(Res::Value(self.history.clone())),
         }
     }
@@ -179,39 +181,12 @@ where
         }
     }
 
-    fn consume_buffer(&mut self) -> Option<Vec<u8>> {
+    fn consume_buffer(&mut self) -> Vec<u8> {
         if self.last_read_index == self.history.len() {
-            return None;
+            return Vec::new();
         }
         let res = &self.history[self.last_read_index..];
         self.last_read_index = self.history.len();
-        Some(res.to_vec())
-    }
-
-    fn handle_req_read_buffer(&mut self, timeout: Option<Duration>) -> Result<Vec<u8>, ()> {
-        if let Some(res) = self.consume_buffer() {
-            return Ok(res);
-        }
-
-        let deadline = timeout.map(|t| Instant::now() + t);
-
-        // block until receive new buffer
-        debug!(msg = "blocking... try read");
-        loop {
-            // handle max timeout
-            if let Some(deadline) = deadline {
-                if Instant::now() > deadline {
-                    break;
-                }
-            }
-
-            // handle tty output
-            if let Ok(buf) = self.try_read_buffer() {
-                if !buf.is_empty() {
-                    return Ok(unsafe { self.consume_buffer().unwrap_unchecked() });
-                }
-            }
-        }
-        Ok(Vec::new())
+        res.to_vec()
     }
 }

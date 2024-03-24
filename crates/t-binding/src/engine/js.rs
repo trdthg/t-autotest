@@ -91,7 +91,7 @@ impl JSEngine {
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> rquickjs::Result<String> {
-                                let res = api::assert_script_run_global(cmd, timeout);
+                                let res = api::assert_script_run(cmd, timeout);
                                 res.map_err(into_jserr)
                             },
                         ),
@@ -103,7 +103,7 @@ impl JSEngine {
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> Option<String> {
-                                api::script_run_global(cmd, timeout).map(|v| v.1).ok()
+                                api::script_run(cmd, timeout).map(|v| v.1).ok()
                             },
                         ),
                     )
@@ -111,7 +111,7 @@ impl JSEngine {
                 ctx.globals()
                     .set(
                         "write_string",
-                        Function::new(ctx.clone(), move |s: String| api::write_string(s).ok()),
+                        Function::new(ctx.clone(), move |s: String| api::write(s).ok()),
                     )
                     .unwrap();
 
@@ -122,7 +122,7 @@ impl JSEngine {
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> rquickjs::Result<String> {
-                                api::ssh_assert_script_run_global(cmd, timeout).map_err(into_jserr)
+                                api::ssh_assert_script_run(cmd, timeout).map_err(into_jserr)
                             },
                         ),
                     )
@@ -131,7 +131,7 @@ impl JSEngine {
                     .set(
                         "ssh_script_run_global",
                         Function::new(ctx.clone(), |cmd, timeout| -> rquickjs::Result<String> {
-                            api::ssh_script_run_global(cmd, timeout)
+                            api::ssh_script_run(cmd, timeout)
                                 .map(|v| v.1)
                                 .map_err(into_jserr)
                         }),
@@ -153,7 +153,7 @@ impl JSEngine {
                     .set(
                         "ssh_write_string",
                         Function::new(ctx.clone(), move |s: String| -> rquickjs::Result<()> {
-                            api::ssh_write_string(s).map_err(into_jserr)
+                            api::ssh_write(s).map_err(into_jserr)
                         }),
                     )
                     .unwrap();
@@ -165,8 +165,7 @@ impl JSEngine {
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> rquickjs::Result<String> {
-                                api::serial_assert_script_run_global(cmd, timeout)
-                                    .map_err(into_jserr)
+                                api::serial_assert_script_run(cmd, timeout).map_err(into_jserr)
                             },
                         ),
                     )
@@ -177,9 +176,7 @@ impl JSEngine {
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> Option<String> {
-                                api::serial_script_run_global(cmd, timeout)
-                                    .map(|v| v.1)
-                                    .ok()
+                                api::serial_script_run(cmd, timeout).map(|v| v.1).ok()
                             },
                         ),
                     )
@@ -188,7 +185,7 @@ impl JSEngine {
                     .set(
                         "serial_write_string",
                         Function::new(ctx.clone(), move |s: String| -> rquickjs::Result<()> {
-                            api::serial_write_string(s).map_err(into_jserr)
+                            api::serial_write(s).map_err(into_jserr)
                         }),
                     )
                     .unwrap();

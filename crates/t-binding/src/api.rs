@@ -1,9 +1,5 @@
 use super::error::{ApiError, Result};
-use crate::{
-    get_global_sender,
-    msg::{MsgResError, TextConsole},
-    MsgReq, MsgRes,
-};
+use crate::{get_global_sender, msg::TextConsole, MsgReq, MsgRes};
 use std::{sync::mpsc, time::Duration};
 use tracing::{info, trace, Level};
 
@@ -26,10 +22,10 @@ fn _script_run(cmd: String, console: Option<TextConsole>, timeout: i32) -> Resul
     match req(MsgReq::ScriptRunGlobal {
         cmd,
         console,
-        timeout: Duration::from_millis(timeout as u64),
+        timeout: Duration::from_secs(timeout as u64),
     })? {
-        MsgRes::ScriptRun(Ok(res)) => Ok(res),
-        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => Err(ApiError::Timeout),
+        MsgRes::ScriptRun { code, value } => Ok((code, value)),
+        MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),
     }
 }
@@ -38,23 +34,24 @@ fn _assert_script_run(cmd: String, console: Option<TextConsole>, timeout: i32) -
     match req(MsgReq::ScriptRunGlobal {
         cmd,
         console,
-        timeout: Duration::from_millis(timeout as u64),
+        timeout: Duration::from_secs(timeout as u64),
     })? {
-        MsgRes::ScriptRun(Ok(res)) => {
-            if res.0 == 0 {
-                Ok(res.1)
+        MsgRes::ScriptRun { code, value } => {
+            if code == 0 {
+                Ok(value)
             } else {
                 Err(ApiError::AssertFailed)
             }
         }
-        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => Err(ApiError::Timeout),
+        MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),
     }
 }
 
-fn _write_string(s: String, console: Option<TextConsole>) -> Result<()> {
-    match req(MsgReq::WriteStringGlobal { s, console })? {
+fn _write(s: String, console: Option<TextConsole>) -> Result<()> {
+    match req(MsgReq::WriteString { s, console })? {
         MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),
     }
 }
@@ -65,13 +62,14 @@ fn _wait_string_ntimes(
     n: i32,
     timeout: i32,
 ) -> Result<()> {
-    match req(MsgReq::WaitStringGlobal {
+    match req(MsgReq::WaitString {
         console,
         s,
         n,
         timeout: Duration::from_secs(timeout as u64),
     })? {
         MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),
     }
 }
@@ -87,8 +85,8 @@ pub fn print(level: tracing::Level, msg: String) {
     }
 }
 
-pub fn sleep(millis: u64) {
-    std::thread::sleep(Duration::from_millis(millis));
+pub fn sleep(secs: u64) {
+    std::thread::sleep(Duration::from_secs(secs));
 }
 
 pub fn get_env(key: String) -> Result<Option<String>> {
@@ -99,16 +97,16 @@ pub fn get_env(key: String) -> Result<Option<String>> {
 }
 
 // default
-pub fn script_run_global(cmd: String, timeout: i32) -> Result<(i32, String)> {
+pub fn script_run(cmd: String, timeout: i32) -> Result<(i32, String)> {
     _script_run(cmd, None, timeout)
 }
 
-pub fn assert_script_run_global(cmd: String, timeout: i32) -> Result<String> {
+pub fn assert_script_run(cmd: String, timeout: i32) -> Result<String> {
     _assert_script_run(cmd, None, timeout)
 }
 
-pub fn write_string(s: String) -> Result<()> {
-    _write_string(s, None)
+pub fn write(s: String) -> Result<()> {
+    _write(s, None)
 }
 
 pub fn wait_string_ntimes(s: String, n: i32, timeout: i32) -> Result<()> {
@@ -116,46 +114,46 @@ pub fn wait_string_ntimes(s: String, n: i32, timeout: i32) -> Result<()> {
 }
 
 // serial
-pub fn serial_script_run_global(cmd: String, timeout: i32) -> Result<(i32, String)> {
+pub fn serial_script_run(cmd: String, timeout: i32) -> Result<(i32, String)> {
     _script_run(cmd, Some(TextConsole::Serial), timeout)
 }
 
-pub fn serial_assert_script_run_global(cmd: String, timeout: i32) -> Result<String> {
+pub fn serial_assert_script_run(cmd: String, timeout: i32) -> Result<String> {
     _assert_script_run(cmd, Some(TextConsole::Serial), timeout)
 }
 
-pub fn serial_write_string(s: String) -> Result<()> {
-    _write_string(s, Some(TextConsole::Serial))
+pub fn serial_write(s: String) -> Result<()> {
+    _write(s, Some(TextConsole::Serial))
 }
 
 // ssh
 pub fn ssh_assert_script_run_seperate(cmd: String, timeout: i32) -> Result<String> {
     match req(MsgReq::SSHScriptRunSeperate {
         cmd,
-        timeout: Duration::from_millis(timeout as u64),
+        timeout: Duration::from_secs(timeout as u64),
     })? {
-        MsgRes::ScriptRun(Ok(res)) => {
-            if res.0 == 0 {
-                Ok(res.1)
+        MsgRes::ScriptRun { code, value } => {
+            if code == 0 {
+                Ok(value)
             } else {
                 Err(ApiError::AssertFailed)
             }
         }
-        MsgRes::ScriptRun(Err(MsgResError::Timeout)) => Err(ApiError::Timeout),
+        MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),
     }
 }
 
-pub fn ssh_script_run_global(cmd: String, timeout: i32) -> Result<(i32, String)> {
+pub fn ssh_script_run(cmd: String, timeout: i32) -> Result<(i32, String)> {
     _script_run(cmd, Some(TextConsole::SSH), timeout)
 }
 
-pub fn ssh_assert_script_run_global(cmd: String, timeout: i32) -> Result<String> {
+pub fn ssh_assert_script_run(cmd: String, timeout: i32) -> Result<String> {
     _assert_script_run(cmd, Some(TextConsole::SSH), timeout)
 }
 
-pub fn ssh_write_string(s: String) -> Result<()> {
-    _write_string(s, Some(TextConsole::SSH))
+pub fn ssh_write(s: String) -> Result<()> {
+    _write(s, Some(TextConsole::SSH))
 }
 
 // vnc
@@ -163,9 +161,10 @@ pub fn vnc_check_screen(tag: String, timeout: i32) -> Result<bool> {
     match req(MsgReq::AssertScreen {
         tag: tag.clone(),
         threshold: 1,
-        timeout: Duration::from_millis(timeout as u64),
+        timeout: Duration::from_secs(timeout as u64),
     })? {
         MsgRes::AssertScreen { similarity: _, ok } => Ok(ok),
+        MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),
     }
 }
@@ -179,78 +178,89 @@ pub fn vnc_assert_screen(tag: String, timeout: i32) -> Result<()> {
 }
 
 pub fn vnc_refresh() -> Result<()> {
-    if matches!(req(MsgReq::Refresh)?, MsgRes::Done) {
-        return Ok(());
+    match req(MsgReq::Refresh)? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_take_screenshot() -> Result<t_console::PNG> {
-    if let MsgRes::Screenshot(res) = req(MsgReq::TakeScreenShot)? {
-        return Ok(res);
+    match req(MsgReq::TakeScreenShot)? {
+        MsgRes::Screenshot(res) => Ok(res),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_mouse_move(x: u16, y: u16) -> Result<()> {
-    if matches!(req(MsgReq::MouseMove { x, y })?, MsgRes::Done) {
-        return Ok(());
+    match req(MsgReq::MouseMove { x, y })? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_mouse_drag(x: u16, y: u16) -> Result<()> {
-    if matches!(req(MsgReq::MouseDrag { x, y })?, MsgRes::Done) {
-        return Ok(());
+    match req(MsgReq::MouseDrag { x, y })? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_mouse_keydown() -> Result<()> {
-    if matches!(req(MsgReq::MouseKeyDown(true))?, MsgRes::Done) {
-        return Ok(());
+    match req(MsgReq::MouseKeyDown(true))? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_mouse_keyup() -> Result<()> {
-    if matches!(req(MsgReq::MouseKeyDown(false))?, MsgRes::Done) {
-        return Ok(());
+    match req(MsgReq::MouseKeyDown(false))? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_mouse_hide() -> Result<()> {
-    if matches!(req(MsgReq::MouseHide)?, MsgRes::Done) {
-        return Ok(());
+    match req(MsgReq::MouseHide)? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_mouse_click() -> Result<()> {
-    if matches!(req(MsgReq::MouseClick)?, MsgRes::Done) {
-        return Ok(());
+    match req(MsgReq::MouseClick)? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_mouse_rclick() -> Result<()> {
-    if matches!(req(MsgReq::MouseRClick)?, MsgRes::Done) {
-        return Ok(());
+    match req(MsgReq::MouseRClick)? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_send_key(s: String) -> Result<()> {
-    if matches!(req(MsgReq::SendKey(s))?, MsgRes::Done) {
-        return Ok(());
+    match req(MsgReq::SendKey(s))? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }
 
 pub fn vnc_type_string(s: String) -> Result<()> {
-    if matches!(req(MsgReq::TypeString(s))?, MsgRes::Done) {
-        return Ok(());
+    match req(MsgReq::TypeString(s))? {
+        MsgRes::Done => Ok(()),
+        MsgRes::Error(e) => Err(e.into()),
+        _ => Err(ApiError::ServerInvalidResponse),
     }
-    Err(ApiError::ServerInvalidResponse)
 }

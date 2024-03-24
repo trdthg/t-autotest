@@ -16,9 +16,9 @@ class Driver:
         stop the runner
         """
 
-    def sleep(self, miles: int):
+    def sleep(self, secs: int):
         """
-        sleep for miles, you can use this function to simulate a long running script
+        sleep for secs, you can use this function to simulate a long running script
         """
 
     def get_env(self, key: str) -> str | None:
@@ -26,37 +26,47 @@ class Driver:
         get environment variable by key from toml env section
         """
 
-    def assert_script_run_global(self, cmd: str, timeout: int) -> str:
+    def assert_script_run(self, cmd: str, timeout: int) -> str:
         """
         run script in console, return stdout, throw exception if return code is not 0
         """
 
-    def script_run_global(self, cmd: str, timeout: int) -> str:
+    def script_run(self, cmd: str, timeout: int) -> str:
         """
-        like assert_script_run_global, but not throw exception if return code is not 0
+        like assert_script_run, but not throw exception if return code is not 0
         """
 
-    def write_string(self, s: str):
+    def write(self, s: str):
         """
         write string to console
         """
 
-    def wait_string_ntimes(self, s: str, n: int, timeout: int):
+    def writeln(self, s: str):
+        """
+        write string with '\n' to console
+        """
+
+    def wait_string_ntimes(self, s: str, n: int, timeout: int) -> bool:
         """
         wait pattern in console output show n times
         """
 
-    def ssh_assert_script_run_global(self, cmd: str, timeout: int) -> str:
+    def assert_wait_string_ntimes(self, s: str, n: int, timeout: int):
+        """
+        wait pattern in console output, if timeout, throw error
+        """
+
+    def ssh_assert_script_run(self, cmd: str, timeout: int) -> str:
         """
         run script in ssh, return stdout, throw exception if return code is not 0
         """
 
-    def ssh_script_run_global(self, cmd: str, timeout: int) -> str:
+    def ssh_script_run(self, cmd: str, timeout: int) -> str:
         """
-        like ssh_assert_script_run_global, but not throw exception if return code is not 0
+        like ssh_assert_script_run, but not throw exception if return code is not 0
         """
 
-    def ssh_write_string(self, s: str):
+    def ssh_write(self, s: str):
         """
         write string to ssh console
         """
@@ -66,17 +76,17 @@ class Driver:
         run script in seperate ssh session, return stdout, throw exception if return code is not 0
         """
 
-    def serial_assert_script_run_global(self, cmd: str, timeout: int) -> str:
+    def serial_assert_script_run(self, cmd: str, timeout: int) -> str:
         """
         run script in global ssh session, return stdout, throw exception if return code is not 0
         """
 
-    def serial_script_run_global(self, cmd: str, timeout: int) -> str:
+    def serial_script_run(self, cmd: str, timeout: int) -> str:
         """
-        like serial_assert_script_run_global, but not throw exception if return code is not 0
+        like serial_assert_script_run, but not throw exception if return code is not 0
         """
 
-    def serial_write_string(self, s: str):
+    def serial_write(self, s: str):
         """
         write string to ssh console
         """
