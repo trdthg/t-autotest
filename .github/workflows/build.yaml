@@ -5,6 +5,8 @@ permissions:
 
 on:
   push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
@@ -108,6 +110,12 @@ jobs:
           name: ${{ matrix.archive-name }}
           path: |
             archive/${{ matrix.archive-name }}
+
+      - name: Upload Artifact Whl
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive-name }}.whl
+          path: |
             ./target/wheels/pyautotest-${{ matrix.build }}.whl
 
       - name: Upload Release
