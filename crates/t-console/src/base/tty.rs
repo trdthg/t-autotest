@@ -50,6 +50,7 @@ where
         self.ctl.send(req)
     }
 
+    #[allow(unused)]
     pub fn write(&mut self, s: &[u8]) -> Result<()> {
         self.ctl
             .send(Req::Write(s.to_vec()))

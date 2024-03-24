@@ -18,8 +18,10 @@ pub struct NeedleManager {
 }
 
 impl NeedleManager {
-    pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into() }
+    pub fn new(dir: impl AsRef<Path>) -> Self {
+        Self {
+            dir: dir.as_ref().to_path_buf(),
+        }
     }
 
     pub fn load(&self, tag: &str) -> Option<Needle> {

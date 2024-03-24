@@ -91,7 +91,10 @@ impl Driver {
 
     // ssh
     fn new_ssh(&self) -> PyResult<DriverSSH> {
-        DriverSSH::new(self.config.console.ssh.clone())
+        let Some(ssh) = self.config.ssh.clone() else {
+            return Err(DriverException::new_err("no ssh config"));
+        };
+        DriverSSH::new(ssh)
     }
 
     fn stop(&mut self) {

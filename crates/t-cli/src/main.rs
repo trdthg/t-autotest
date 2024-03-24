@@ -97,11 +97,10 @@ fn main() {
             }
         }
         Commands::Record {} => {
-            let _vnc = &config.console.vnc;
-            if !_vnc.enable {
+            let Some(_vnc) = &config.vnc else {
                 warn!("Please enable vnc in your config.toml");
                 return;
-            }
+            };
 
             let builder = ServerBuilder::new(config);
             match builder.build() {
@@ -115,8 +114,8 @@ fn main() {
             }
         }
         Commands::VncDo { action } => {
-            config.console.ssh.enable = false;
-            config.console.serial.enable = false;
+            config.ssh = None;
+            config.serial = None;
             let builder = ServerBuilder::new(config);
             match builder.build() {
                 Ok((server, stop_tx)) => {
