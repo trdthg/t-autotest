@@ -7,29 +7,14 @@ on:
   push:
     branches:
       - main
+    tags:
+      - '*'
   pull_request:
   workflow_dispatch:
 
 jobs:
-  create_release:
-    name: Create release
-    runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-    steps:
-      - name: Create release
-        id: create_release
-        uses: actions/create-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-
   build:
     name: build
-    needs: create_release
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -85,7 +70,7 @@ jobs:
         if: matrix.build == 'linux' || matrix.build == 'macos'
         run: strip "target/${{ matrix.target }}/release/autotest"
 
-      - name: Build archive
+      - name: Build binary
         shell: bash
         run: |
           mkdir archive
@@ -102,29 +87,25 @@ jobs:
       - name: Build python wheel
         run: |
           maturin build --features pyo3/extension-module -m ./crates/t-binding/lang/py/Cargo.toml
-          mv ./target/wheels/*.whl ./target/wheels/pyautotest-${{ matrix.build }}.whl
 
-      - name: Upload Artifact
+      - name: Upload artifact binary
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.archive-name }}
           path: |
             archive/${{ matrix.archive-name }}
 
-      - name: Upload Artifact Whl
+      - name: Upload artifact Whl
         uses: actions/upload-artifact@v4
         with:
           name: pyautotest-${{ matrix.build }}.whl
           path: |
             ./target/wheels/pyautotest-${{ matrix.build }}.whl
 
-      - name: Upload Release
-        uses: actions/upload-release-asset@v1
+      - name: Upload release
+        uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ needs.create_release.outputs.upload_url }}
-          asset_path: archive/${{ matrix.archive-name }}
-          asset_name: ${{ matrix.archive-name }}
-          asset_content_type: application/zip
+          files: |
+            archive/${{ matrix.archive-name }}
+            ./target/wheels/*.whl
