@@ -87,7 +87,7 @@ impl JSEngine {
                 // general console
                 ctx.globals()
                     .set(
-                        "assert_script_run_global",
+                        "assert_script_run",
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> rquickjs::Result<String> {
@@ -99,7 +99,7 @@ impl JSEngine {
                     .unwrap();
                 ctx.globals()
                     .set(
-                        "script_run_global",
+                        "script_run",
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> Option<String> {
@@ -110,15 +110,52 @@ impl JSEngine {
                     .unwrap();
                 ctx.globals()
                     .set(
-                        "write_string",
+                        "write",
                         Function::new(ctx.clone(), move |s: String| api::write(s).ok()),
+                    )
+                    .unwrap();
+
+                ctx.globals()
+                    .set(
+                        "writeln",
+                        Function::new(ctx.clone(), move |s: String| {
+                            api::write(format!("{s}\n")).ok()
+                        }),
+                    )
+                    .unwrap();
+
+                ctx.globals()
+                    .set(
+                        "wait_string_ntimes",
+                        Function::new(
+                            ctx.clone(),
+                            move |s: String, n: i32, timeout: i32| -> rquickjs::Result<bool> {
+                                api::wait_string_ntimes(s, n, timeout).map_err(into_jserr)
+                            },
+                        ),
+                    )
+                    .unwrap();
+
+                ctx.globals()
+                    .set(
+                        "assert_wait_string_ntimes",
+                        Function::new(
+                            ctx.clone(),
+                            move |s: String, n: i32, timeout: i32| -> rquickjs::Result<bool> {
+                                if !api::wait_string_ntimes(s, n, timeout).map_err(into_jserr)? {
+                                    Err(rquickjs::Error::Exception)
+                                } else {
+                                    Ok(true)
+                                }
+                            },
+                        ),
                     )
                     .unwrap();
 
                 // ssh
                 ctx.globals()
                     .set(
-                        "ssh_assert_script_run_global",
+                        "ssh_assert_script_run",
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> rquickjs::Result<String> {
@@ -129,7 +166,7 @@ impl JSEngine {
                     .unwrap();
                 ctx.globals()
                     .set(
-                        "ssh_script_run_global",
+                        "ssh_script_run",
                         Function::new(ctx.clone(), |cmd, timeout| -> rquickjs::Result<String> {
                             api::ssh_script_run(cmd, timeout)
                                 .map(|v| v.1)
@@ -151,7 +188,7 @@ impl JSEngine {
                     .unwrap();
                 ctx.globals()
                     .set(
-                        "ssh_write_string",
+                        "ssh_write",
                         Function::new(ctx.clone(), move |s: String| -> rquickjs::Result<()> {
                             api::ssh_write(s).map_err(into_jserr)
                         }),
@@ -161,7 +198,7 @@ impl JSEngine {
                 // serial
                 ctx.globals()
                     .set(
-                        "serial_assert_script_run_global",
+                        "serial_assert_script_run",
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> rquickjs::Result<String> {
@@ -172,7 +209,7 @@ impl JSEngine {
                     .unwrap();
                 ctx.globals()
                     .set(
-                        "serial_script_run_global",
+                        "serial_script_run",
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> Option<String> {
@@ -183,7 +220,7 @@ impl JSEngine {
                     .unwrap();
                 ctx.globals()
                     .set(
-                        "serial_write_string",
+                        "serial_write",
                         Function::new(ctx.clone(), move |s: String| -> rquickjs::Result<()> {
                             api::serial_write(s).map_err(into_jserr)
                         }),
@@ -196,8 +233,8 @@ impl JSEngine {
                         "assert_screen",
                         Function::new(
                             ctx.clone(),
-                            move |tag: String, timeout: i32| -> rquickjs::Result<bool> {
-                                api::vnc_check_screen(tag.clone(), timeout).map_err(into_jserr)
+                            move |tag: String, timeout: i32| -> rquickjs::Result<()> {
+                                api::vnc_assert_screen(tag.clone(), timeout).map_err(into_jserr)
                             },
                         ),
                     )
@@ -227,6 +264,14 @@ impl JSEngine {
                         "mouse_move",
                         Function::new(ctx.clone(), move |x, y| -> rquickjs::Result<()> {
                             api::vnc_mouse_move(x, y).map_err(into_jserr)
+                        }),
+                    )
+                    .unwrap();
+                ctx.globals()
+                    .set(
+                        "mouse_drag",
+                        Function::new(ctx.clone(), move |x, y| -> rquickjs::Result<()> {
+                            api::vnc_mouse_drag(x, y).map_err(into_jserr)
                         }),
                     )
                     .unwrap();

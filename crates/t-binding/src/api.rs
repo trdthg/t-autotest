@@ -1,5 +1,5 @@
 use super::error::{ApiError, Result};
-use crate::{get_global_sender, msg::TextConsole, MsgReq, MsgRes};
+use crate::{get_global_sender, msg::TextConsole, MsgReq, MsgRes, MsgResError};
 use std::{sync::mpsc, time::Duration};
 use tracing::{info, trace, Level};
 
@@ -61,14 +61,15 @@ fn _wait_string_ntimes(
     s: String,
     n: i32,
     timeout: i32,
-) -> Result<()> {
+) -> Result<bool> {
     match req(MsgReq::WaitString {
         console,
         s,
         n,
         timeout: Duration::from_secs(timeout as u64),
     })? {
-        MsgRes::Done => Ok(()),
+        MsgRes::Done => Ok(true),
+        MsgRes::Error(MsgResError::Timeout) => Ok(false),
         MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),
     }
@@ -109,7 +110,7 @@ pub fn write(s: String) -> Result<()> {
     _write(s, None)
 }
 
-pub fn wait_string_ntimes(s: String, n: i32, timeout: i32) -> Result<()> {
+pub fn wait_string_ntimes(s: String, n: i32, timeout: i32) -> Result<bool> {
     _wait_string_ntimes(None, s, n, timeout)
 }
 
