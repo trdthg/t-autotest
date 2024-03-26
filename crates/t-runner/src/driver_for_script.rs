@@ -125,9 +125,7 @@ impl DriverForScript {
         if let Some(ssh) = self.config.ssh.clone() {
             SSH::new(ssh.clone()).map_err(DriverError::ConsoleError)
         } else {
-            Err(DriverError::ConsoleError(
-                t_console::ConsoleError::ConnectionBroken("no ssh config".to_string()),
-            ))
+            Err(DriverError::ConsoleError(t_console::ConsoleError::Timeout))
         }
     }
 }

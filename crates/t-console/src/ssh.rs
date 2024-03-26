@@ -1,5 +1,4 @@
 use crate::base::evloop::EvLoopCtl;
-use crate::base::evloop::Req;
 use crate::base::tty::Tty;
 use crate::term::Term;
 use crate::ConsoleError;
@@ -9,7 +8,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::thread::sleep;
 use std::time::Duration;
-use tracing::error;
 use tracing::{debug, info};
 
 type Result<T> = std::result::Result<T, ConsoleError>;
@@ -21,9 +19,7 @@ pub enum SSHAuthAuth<P: AsRef<Path>> {
 }
 
 pub struct SSH {
-    c: t_config::ConsoleSSH,
     inner: SSHClient<crate::Xterm>,
-    history: String,
 }
 
 impl SSH {
@@ -31,37 +27,23 @@ impl SSH {
         let mut inner = Self::connect_from_ssh_config(&c)?;
 
         debug!(msg = "ssh getting tty...");
-        let (code, tty) = inner
-            .pts
-            .exec_global(Duration::from_secs(10), "tty")
-            .map_err(|e| ConsoleError::ConnectionBroken(format!("ssh get tty failed, {}", e)))?;
+        let (code, tty) = inner.pts.exec(Duration::from_secs(10), "tty")?;
 
         if code != 0 {
-            return Err(ConsoleError::ConnectionBroken(
-                "run tty command failed".to_string(),
-            ));
+            return Err(ConsoleError::NoBashSupport(format!(
+                "run tty command failed, code: {}, tty: {}",
+                code, tty
+            )));
         }
 
         inner.pts_file = tty;
         info!(msg = "ssh client tty", tty = inner.pts_file.trim());
 
-        Ok(Self {
-            c,
-            inner,
-            history: "".to_string(),
-        })
+        Ok(Self { inner })
     }
 
     pub fn stop(&self) {
-        if self.inner.pts.send(Req::Stop).is_err() {
-            error!("ssh evloop stopped failed");
-        }
-    }
-
-    pub fn reconnect(&mut self) -> Result<()> {
-        self.history.push_str(self.inner.history().as_str());
-        self.inner = Self::connect_from_ssh_config(&self.c)?;
-        Ok(())
+        self.inner.pts.stop()
     }
 
     fn connect_from_ssh_config(c: &t_config::ConsoleSSH) -> Result<SSHClient<crate::Xterm>> {
@@ -87,16 +69,10 @@ impl SSH {
             format!("{}:{}", c.host, c.port),
             c.log_file.clone(),
         )
-        .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))
     }
 
     pub fn tty(&self) -> String {
         self.inner.pts_file.clone()
-    }
-
-    pub fn history(&mut self) -> String {
-        self.history.push_str(self.inner.history().as_str());
-        self.history.clone()
     }
 
     // TODO: may blocking
@@ -118,39 +94,15 @@ impl SSH {
         Ok((code.parse::<i32>().unwrap(), buffer))
     }
 
-    fn do_with_reconnect<T>(&mut self, f: impl Fn(&mut Self) -> Result<T>) -> Result<T> {
-        let mut retry = 3;
-        loop {
-            retry -= 1;
-            if retry == 0 {
-                return Err(ConsoleError::ConnectionBroken(
-                    "reconnect exceed max time".to_string(),
-                ));
-            }
-
-            match f(self) {
-                Ok(v) => return Ok(v),
-                Err(e) => match e {
-                    ConsoleError::ConnectionBroken(_) => {
-                        let _ = self.reconnect();
-                        continue;
-                    }
-                    _ => return Err(ConsoleError::Timeout),
-                },
-            }
-        }
-    }
-
-    pub fn write_string(&mut self, s: &str) -> Result<()> {
+    pub fn write_string(&mut self, s: &str, timeout: Duration) -> Result<()> {
         sleep(Duration::from_millis(100));
-        self.do_with_reconnect(|c| c.inner.pts.write_string(s))?;
-        Ok(())
+        self.inner.pts.write_string(s, timeout)
     }
 
     pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
         // "echo {}\n", \n may lost if no sleep
         sleep(Duration::from_millis(100));
-        self.do_with_reconnect(|c| c.inner.pts.exec_global(timeout, cmd))
+        self.inner.pts.exec(timeout, cmd)
     }
 
     pub fn wait_string_ntimes(
@@ -159,7 +111,7 @@ impl SSH {
         pattern: &str,
         repeat: usize,
     ) -> Result<String> {
-        self.do_with_reconnect(|c| c.inner.pts.wait_string_ntimes(timeout, pattern, repeat))
+        self.inner.pts.wait_string_ntimes(timeout, pattern, repeat)
     }
 
     pub fn upload_file(&mut self, remote_path: impl AsRef<Path>) {
@@ -189,46 +141,48 @@ where
         user: impl Into<String>,
         addrs: A,
         log_file: Option<PathBuf>,
-    ) -> std::result::Result<Self, std::io::Error> {
-        let tcp = TcpStream::connect(addrs)?;
-        let mut sess = ssh2::Session::new()?;
+    ) -> std::result::Result<Self, ConsoleError> {
+        let tcp = TcpStream::connect(addrs).map_err(ConsoleError::IO)?;
+        let mut sess = ssh2::Session::new().map_err(ConsoleError::SSH2)?;
         sess.set_tcp_stream(tcp);
-        sess.handshake()?;
+        sess.handshake().map_err(ConsoleError::SSH2)?;
 
         // never disconnect auto
         sess.set_timeout(timeout.map(|x| x.as_millis() as u32).unwrap_or(5000));
 
         match auth {
             SSHAuthAuth::PrivateKey(private_key) => {
-                sess.userauth_pubkey_file(&user.into(), None, private_key.as_ref(), None)?;
+                sess.userauth_pubkey_file(&user.into(), None, private_key.as_ref(), None)
+                    .map_err(ConsoleError::SSH2)?;
             }
             SSHAuthAuth::Password(password) => {
-                sess.userauth_password(&user.into(), password.as_str())?;
+                sess.userauth_password(&user.into(), password.as_str())
+                    .map_err(ConsoleError::SSH2)?;
             }
         }
         assert!(sess.authenticated());
         debug!(msg = "ssh auth success");
 
-        // build shell channel
-        let mut channel = sess.channel_session()?;
-        channel
-            .request_pty("xterm", None, Some((80, 24, 0, 0)))
-            .unwrap();
-        channel.shell().unwrap();
-
         sleep(Duration::from_secs(3));
 
         let res = Self {
-            session: sess,
-            pts: Tty::new(EvLoopCtl::new(channel, log_file)),
+            session: sess.clone(),
+            pts: Tty::new(EvLoopCtl::new(
+                move || {
+                    // build shell channel
+                    let mut channel = sess.channel_session().map_err(ConsoleError::SSH2)?;
+                    channel
+                        .request_pty("xterm", None, Some((80, 24, 0, 0)))
+                        .map_err(ConsoleError::SSH2)?;
+                    channel.shell().map_err(ConsoleError::SSH2)?;
+                    Ok(channel)
+                },
+                log_file,
+            )?),
             pts_file: "".to_string(),
         };
 
         Ok(res)
-    }
-
-    pub fn history(&self) -> String {
-        Tm::parse_and_strip(&self.pts.history())
     }
 }
 

@@ -49,7 +49,11 @@ fn _assert_script_run(cmd: String, console: Option<TextConsole>, timeout: i32) -
 }
 
 fn _write(s: String, console: Option<TextConsole>) -> Result<()> {
-    match req(MsgReq::WriteString { s, console })? {
+    match req(MsgReq::WriteString {
+        s,
+        console,
+        timeout: Duration::from_secs(60),
+    })? {
         MsgRes::Done => Ok(()),
         MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),

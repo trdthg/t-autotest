@@ -100,11 +100,11 @@ impl ServerBuilder {
             .clone()
             .map(|vnc| {
                 let addr = format!("{}:{}", vnc.host, vnc.port).parse().map_err(|e| {
-                    ConsoleError::ConnectionBroken(format!("vnc addr is not valid, {}", e))
+                    ConsoleError::NoConnection(format!("vnc addr is not valid, {}", e))
                 })?;
 
                 let vnc_client = VNC::connect(addr, vnc.password.clone(), self.tx2)
-                    .map_err(|e| ConsoleError::ConnectionBroken(e.to_string()))?;
+                    .map_err(|e| ConsoleError::NoConnection(e.to_string()))?;
 
                 info!(msg = "init vnc done");
                 Ok(vnc_client)
@@ -155,7 +155,6 @@ impl Server {
         } = self;
 
         let _ssh_tty = ssh_client.map_ref(|c| c.tty());
-        let serial_tty = serial_client.map_ref(|c| c.tty());
 
         let nmg = NeedleManager::new(
             config
@@ -178,12 +177,10 @@ impl Server {
             }
 
             // handle msg
-            let res = self.msg_rx.recv_timeout(Duration::from_secs(10));
-            if res.is_err() {
-                continue;
-            }
+            let Ok((req, tx)) = self.msg_rx.recv() else {
+                break;
+            };
 
-            let (req, tx) = res.unwrap();
             trace!(msg = "recv request", req = ?req);
             let res = match req {
                 // common
@@ -209,42 +206,6 @@ impl Server {
                     timeout,
                 } => {
                     let res = match (console, ssh_client.is_some(), serial_client.is_some()) {
-                        (None, true, true) => {
-                            let serial_tty = serial_tty.as_ref().unwrap();
-                            let key = nanoid::nanoid!(6);
-                            ssh_client
-                                .map_mut(|c| {
-                                    c.write_string(&format!(
-                                        "echo {} > {}; {} &> {}; echo $?{} > {}\n",
-                                        &key, serial_tty, cmd, serial_tty, &key, serial_tty
-                                    ))
-                                })
-                                .unwrap()
-                                .map_err(|_| MsgResError::Timeout)
-                                .unwrap();
-                            let res = serial_client
-                                .map_mut(|c| c.wait_string_ntimes(timeout, &key, 2))
-                                .map(|v| match v {
-                                    Ok(v) => {
-                                        let catched =
-                                            t_util::assert_capture_between(&v, &key, &key)
-                                                .unwrap()
-                                                .unwrap();
-                                        match catched.rsplit_once('\n') {
-                                            Some((res, flag)) => match flag.parse::<i32>() {
-                                                Ok(flag) => Ok((flag, res.to_string())),
-                                                Err(_e) => Ok((-1, catched.to_string())),
-                                            },
-                                            None => Ok((-1, catched)),
-                                        }
-                                    }
-                                    Err(e) => Err(e),
-                                })
-                                .unwrap_or(Ok((1, "no serial".to_string())))
-                                .map_err(|_e| MsgResError::Timeout);
-                            res
-                        }
-                        // None if ssh_client.is_some() && serial_client.is_some() => {}
                         (None | Some(t_binding::TextConsole::Serial), _, true) => serial_client
                             .map_mut(|c| c.exec_global(timeout, &cmd))
                             .unwrap_or(Ok((1, "no serial".to_string())))
@@ -260,14 +221,18 @@ impl Server {
                         Err(e) => MsgRes::Error(e),
                     }
                 }
-                MsgReq::WriteString { console, s } => {
+                MsgReq::WriteString {
+                    console,
+                    s,
+                    timeout,
+                } => {
                     if let Err(e) = match (console, ssh_client.is_some(), serial_client.is_some()) {
                         (None | Some(t_binding::TextConsole::Serial), _, true) => serial_client
-                            .map_mut(|c| c.write_string(&s))
+                            .map_mut(|c| c.write_string(&s, timeout))
                             .expect("no serial")
                             .map_err(|_| MsgResError::Timeout),
                         (None | Some(t_binding::TextConsole::SSH), true, _) => ssh_client
-                            .map_mut(|c| c.write_string(&s))
+                            .map_mut(|c| c.write_string(&s, timeout))
                             .expect("no ssh")
                             .map_err(|_| MsgResError::Timeout),
                         _ => Err(MsgResError::String("no console supported".to_string())),

@@ -29,6 +29,7 @@ pub enum MsgReq {
     WriteString {
         console: Option<TextConsole>,
         s: String,
+        timeout: Duration,
     },
     WaitString {
         console: Option<TextConsole>,
