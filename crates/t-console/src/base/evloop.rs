@@ -180,14 +180,14 @@ where
                         }
                     },
                 },
-                None => loop {
+                None => {
                     if let Ok(conn) = self.make_conn.as_mut()() {
                         self.conn = Some(conn);
                     } else {
                         thread::sleep(Duration::from_millis(20));
                     }
                     continue 'out;
-                },
+                }
             };
         }
     }
