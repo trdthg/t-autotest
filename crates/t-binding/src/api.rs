@@ -19,7 +19,7 @@ fn req(req: MsgReq) -> Result<MsgRes> {
 }
 
 fn _script_run(cmd: String, console: Option<TextConsole>, timeout: i32) -> Result<(i32, String)> {
-    match req(MsgReq::ScriptRunGlobal {
+    match req(MsgReq::ScriptRun {
         cmd,
         console,
         timeout: Duration::from_secs(timeout as u64),
@@ -31,7 +31,7 @@ fn _script_run(cmd: String, console: Option<TextConsole>, timeout: i32) -> Resul
 }
 
 fn _assert_script_run(cmd: String, console: Option<TextConsole>, timeout: i32) -> Result<String> {
-    match req(MsgReq::ScriptRunGlobal {
+    match req(MsgReq::ScriptRun {
         cmd,
         console,
         timeout: Duration::from_secs(timeout as u64),
@@ -49,7 +49,11 @@ fn _assert_script_run(cmd: String, console: Option<TextConsole>, timeout: i32) -
 }
 
 fn _write(s: String, console: Option<TextConsole>) -> Result<()> {
-    match req(MsgReq::WriteString { s, console })? {
+    match req(MsgReq::WriteString {
+        s,
+        console,
+        timeout: Duration::from_secs(60),
+    })? {
         MsgRes::Done => Ok(()),
         MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),

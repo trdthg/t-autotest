@@ -2,7 +2,6 @@ use super::evloop::{EvLoopCtl, Req, Res};
 use crate::{term::Term, ConsoleError};
 use std::{
     marker::PhantomData,
-    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
@@ -39,28 +38,20 @@ where
         }
     }
 
-    pub fn history(&self) -> Vec<u8> {
-        match self.ctl.send(Req::Dump) {
-            Ok(Res::Value(v)) => v,
-            Ok(_v) => self.history.clone(),
-            Err(_e) => self.history.clone(),
-        }
+    pub fn stop(&self) {
+        self.ctl.stop();
     }
 
-    pub fn send(&self, req: Req) -> std::result::Result<Res, mpsc::RecvError> {
-        self.ctl.send(req)
-    }
-
-    pub fn write(&mut self, s: &[u8]) -> Result<()> {
+    pub fn write(&mut self, s: &[u8], timeout: Duration) -> Result<()> {
         self.ctl
-            .send(Req::Write(s.to_vec()))
-            .map_err(|_| ConsoleError::ConnectionBroken("io loop closed unexpected".to_string()))?;
+            .send_timeout(Req::Write(s.to_vec()), timeout)
+            .map_err(|_| ConsoleError::Timeout)?;
         Ok(())
     }
 
-    pub fn write_string(&mut self, s: &str) -> Result<()> {
+    pub fn write_string(&mut self, s: &str, timeout: Duration) -> Result<()> {
         info!(msg = "write_string", s = s);
-        self.write(s.as_bytes())?;
+        self.write(s.as_bytes(), timeout)?;
         Ok(())
     }
 
@@ -70,6 +61,7 @@ where
         pattern: &str,
         repeat: usize,
     ) -> Result<String> {
+        info!(msg = "wait_string_ntimes", pattern = pattern);
         self.comsume_buffer_and_map(timeout, |buffer, new| {
             {
                 let buffer_str = Tm::parse_and_strip(buffer);
@@ -88,18 +80,20 @@ where
         })
     }
 
-    pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
+    pub fn exec(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
+        info!(msg = "exec", cmd = cmd);
         // wait for prompt show, cmd may write too fast before prompt show, which will broken regex
         std::thread::sleep(Duration::from_millis(70));
 
         let nanoid = nanoid::nanoid!(6);
         let cmd = format!("{cmd}; echo $?{nanoid}{}", Tm::enter_input(),);
-        self.write_string(&cmd)?;
+        let deadline = Instant::now() + timeout;
+        self.write_string(&cmd, timeout)?;
 
         let match_left = &format!("{nanoid}{}{}", Tm::linebreak(), Tm::enter_input());
         let match_right = &format!("{nanoid}{}", Tm::linebreak());
 
-        self.comsume_buffer_and_map(timeout, |buffer, new| {
+        self.comsume_buffer_and_map(deadline - Instant::now(), |buffer, new| {
             // find target pattern from buffer
             let buffer_str = Tm::parse_and_strip(buffer);
             let new_str = Tm::parse_and_strip(new);
@@ -153,18 +147,21 @@ where
 
         let mut buffer_len = 0;
         loop {
-            tracing::warn!(msg = "deadline", deadline = ?(deadline - Instant::now()));
+            tracing::info!(msg = "deadline", deadline = ?(deadline - Instant::now()));
             // handle timeout
             if Instant::now() > deadline {
                 break;
             }
 
+            thread::sleep(Duration::from_millis(1000));
+
             // read buffer
-            let res = self.ctl.send(Req::Read);
+            let res = self
+                .ctl
+                .send_timeout(Req::Read, Duration::from_millis(1000));
             match res {
                 Ok(Res::Value(ref recv)) => {
                     if recv.is_empty() {
-                        thread::sleep(Duration::from_millis(200));
                         continue;
                     }
 
@@ -196,19 +193,20 @@ where
                         }
                     }
                 }
-                Ok(t) => {
-                    error!(msg = "invalid msg varient", t = ?t);
+                Ok(res) => {
+                    error!(msg = "invalid msg varient", res = ?res);
                     break;
                 }
-                Err(_) => {
-                    error!(msg = "recv failed");
-                    break;
-                }
+                Err(e) => match e {
+                    std::sync::mpsc::RecvTimeoutError::Timeout => {}
+                    std::sync::mpsc::RecvTimeoutError::Disconnected => {
+                        error!(msg = "recv failed");
+                        break;
+                    }
+                },
             }
         }
-        Err(ConsoleError::ConnectionBroken(
-            "handle req timeout".to_string(),
-        ))
+        Err(ConsoleError::Timeout)
     }
 }
 

@@ -1,4 +1,5 @@
 use pyo3::Python;
+use std::thread;
 use std::{sync::mpsc, time::Duration};
 use t_binding::error::{ApiError, Result};
 use t_binding::{
@@ -28,6 +29,7 @@ fn req(py: Python<'_>, req: MsgReq) -> Result<MsgRes> {
             Err(mpsc::TryRecvError::Disconnected) => return Err(ApiError::ServerStopped),
         }
         py.check_signals().map_err(|_| ApiError::Interrupt)?;
+        thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -39,7 +41,7 @@ fn _script_run(
 ) -> Result<(i32, String)> {
     match req(
         py,
-        MsgReq::ScriptRunGlobal {
+        MsgReq::ScriptRun {
             cmd,
             console,
             timeout: Duration::from_secs(timeout as u64),
@@ -59,7 +61,7 @@ fn _assert_script_run(
 ) -> Result<String> {
     match req(
         py,
-        MsgReq::ScriptRunGlobal {
+        MsgReq::ScriptRun {
             cmd,
             console,
             timeout: Duration::from_secs(timeout as u64),
@@ -78,7 +80,14 @@ fn _assert_script_run(
 }
 
 fn _write_string(py: Python<'_>, s: String, console: Option<TextConsole>) -> Result<()> {
-    match req(py, MsgReq::WriteString { s, console })? {
+    match req(
+        py,
+        MsgReq::WriteString {
+            s,
+            console,
+            timeout: Duration::from_secs(60),
+        },
+    )? {
         MsgRes::Done => Ok(()),
         MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),

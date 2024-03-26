@@ -115,7 +115,7 @@ impl Driver {
             SSH::new(ssh).map_err(DriverError::ConsoleError)
         } else {
             Err(DriverError::ConsoleError(
-                t_console::ConsoleError::ConnectionBroken("no ssh config".to_string()),
+                t_console::ConsoleError::NoConnection("no ssh config".to_string()),
             ))
         }
     }

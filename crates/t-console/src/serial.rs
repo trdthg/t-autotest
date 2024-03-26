@@ -1,40 +1,21 @@
-use crate::base::evloop::{EvLoopCtl, Req};
+use crate::base::evloop::EventLoop;
 use crate::base::tty::Tty;
 use crate::term::Term;
 use crate::ConsoleError;
+use crate::Result;
 use std::path::PathBuf;
 use std::{thread::sleep, time::Duration};
 use tracing::error;
 
 pub struct Serial {
-    _config: t_config::ConsoleSerial,
     inner: SerialClient<crate::VT102>,
-    history: String,
 }
-
-type Result<T> = std::result::Result<T, ConsoleError>;
 
 impl Serial {
     pub fn new(c: t_config::ConsoleSerial) -> Result<Self> {
         let inner = Self::connect_from_serial_config(&c)?;
 
-        Ok(Self {
-            _config: c,
-            inner,
-            history: String::new(),
-        })
-    }
-
-    pub fn stop(&self) {
-        if self.inner.tty.send(Req::Stop).is_err() {
-            error!("serial evloop stopped failed");
-        }
-    }
-
-    pub fn reconnect(&mut self) -> Result<()> {
-        self.history.push_str(self.inner.history().as_str());
-        self.inner = Self::connect_from_serial_config(&self._config)?;
-        Ok(())
+        Ok(Self { inner })
     }
 
     fn connect_from_serial_config(
@@ -44,50 +25,17 @@ impl Serial {
         Ok(ssh_client)
     }
 
-    pub fn tty(&self) -> String {
-        self.inner.path.clone()
+    pub fn stop(&self) {
+        self.inner.tty.stop();
+    }
+    pub fn write_string(&mut self, s: &str, timeout: Duration) -> Result<()> {
+        self.inner.tty.write_string(s, timeout)
     }
 
-    pub fn history(&mut self) -> String {
-        self.history.push_str(self.inner.history().as_str());
-        self.inner.history()
-    }
-
-    fn do_with_reconnect<T>(
-        &mut self,
-        f: impl Fn(&mut Self) -> std::result::Result<T, crate::ConsoleError>,
-    ) -> Result<T> {
-        let mut retry = 3;
-        loop {
-            retry -= 1;
-            if retry == 0 {
-                return Err(ConsoleError::Timeout);
-            }
-
-            match f(self) {
-                Ok(v) => return Ok(v),
-                Err(e) => match e {
-                    crate::ConsoleError::ConnectionBroken(_) => {
-                        let _ = self.reconnect();
-                        continue;
-                    }
-                    _ => {
-                        return Err(ConsoleError::Timeout);
-                    }
-                },
-            }
-        }
-    }
-
-    pub fn write_string(&mut self, s: &str) -> Result<()> {
-        self.do_with_reconnect(|c| c.inner.tty.write_string(s))?;
-        Ok(())
-    }
-
-    pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
+    pub fn exec(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
         // wait for prompt show, cmd may write too fast before prompt show, which will broken regex
         sleep(Duration::from_millis(70));
-        self.do_with_reconnect(|c| c.inner.tty.exec_global(timeout, cmd))
+        self.inner.tty.exec(timeout, cmd)
     }
 
     pub fn wait_string_ntimes(
@@ -96,7 +44,7 @@ impl Serial {
         pattern: &str,
         repeat: usize,
     ) -> Result<String> {
-        self.do_with_reconnect(|c| c.inner.tty.wait_string_ntimes(timeout, pattern, repeat))
+        self.inner.tty.wait_string_ntimes(timeout, pattern, repeat)
     }
 }
 
@@ -117,13 +65,19 @@ where
         // .map_err(ConsoleError::Stty)?;
 
         // connect serial
-        let port = serialport::new(file, bund_rate).open().map_err(|e| {
-            error!("{}", e);
-            ConsoleError::ConnectionBroken(format!("serialport open failed, {}", e))
-        })?;
+        let file = file.to_string();
+        let evloop = EventLoop::spawn(
+            move || {
+                serialport::new(&file, bund_rate).open().map_err(|e| {
+                    error!("serial conn failed: {}", e);
+                    ConsoleError::Serial(e)
+                })
+            },
+            log_file,
+        );
 
         Ok(Self {
-            tty: Tty::new(EvLoopCtl::new(port, log_file)),
+            tty: Tty::new(evloop?),
             path: "".to_string(),
         })
     }
@@ -131,10 +85,6 @@ where
     #[allow(unused)]
     pub fn tty(&self) -> String {
         self.path.to_owned()
-    }
-
-    pub fn history(&self) -> String {
-        T::parse_and_strip(&self.tty.history())
     }
 }
 
@@ -164,7 +114,7 @@ mod test {
         };
 
         let port = serialport::new(serial.serial_file, serial.bund_rate)
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_millis(10))
             .open_native();
         if port.is_err() {
             return;
@@ -200,7 +150,7 @@ mod test {
     }
 
     #[test]
-    fn test_exec_global() {
+    fn test_exec() {
         let Some(c) = get_config_from_file() else {
             return;
         };
@@ -218,10 +168,7 @@ mod test {
 
         (0..10).for_each(|_| {
             for cmd in cmds.iter() {
-                let res = serial
-                    .tty
-                    .exec_global(Duration::from_secs(1), cmd.0)
-                    .unwrap();
+                let res = serial.tty.exec(Duration::from_secs(1), cmd.0).unwrap();
                 assert_eq!(res.0, 0);
                 assert_eq!(res.1, cmd.1);
             }

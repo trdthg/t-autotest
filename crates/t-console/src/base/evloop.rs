@@ -4,18 +4,16 @@ use std::{
     path::PathBuf,
     sync::mpsc::{self, channel, Receiver, Sender},
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-use image::EncodableLayout;
-use tracing::{debug, error, info, warn};
+use crate::{ConsoleError, Result};
+use tracing::{debug, error, warn};
 
 #[derive(Debug)]
 pub enum Req {
     Write(Vec<u8>),
     Read,
-    Dump,
-    Stop,
 }
 
 #[derive(Debug)]
@@ -26,27 +24,35 @@ pub enum Res {
 
 pub struct EvLoopCtl {
     req_tx: Sender<(Req, Sender<Res>)>,
+    stop_tx: Sender<()>,
 }
 
 impl EvLoopCtl {
-    pub fn new<T: Read + Write + Send + 'static>(conn: T, log_file: Option<PathBuf>) -> Self {
-        let req_tx = EventLoop::spawn(conn, log_file);
-        Self { req_tx }
-    }
-
-    pub fn send(&self, req: Req) -> Result<Res, mpsc::RecvError> {
+    pub fn send_timeout(
+        &self,
+        req: Req,
+        timeout: Duration,
+    ) -> std::result::Result<Res, mpsc::RecvTimeoutError> {
         let (tx, rx) = channel();
         if let Err(e) = self.req_tx.send((req, tx)) {
             error!("evloop receiver closed, connection may be lost: {}", e);
-            return Err(mpsc::RecvError {});
+            return Err(mpsc::RecvTimeoutError::Disconnected);
         }
-        rx.recv()
+        rx.recv_timeout(timeout)
+    }
+
+    pub fn stop(&self) {
+        if self.stop_tx.send(()).is_err() {
+            error!("evloop closed");
+        }
     }
 }
 
-struct EventLoop<T> {
-    conn: T,
+pub struct EventLoop<T> {
+    make_conn: Box<dyn Fn() -> Result<T>>,
+    conn: Option<T>,
     req_rx: Receiver<(Req, Sender<Res>)>,
+    stop_rx: Receiver<()>,
     history: Vec<u8>,
     log_file: Option<File>,
     last_read_index: usize,
@@ -57,7 +63,12 @@ impl<T> EventLoop<T>
 where
     T: Read + Write + Send + 'static,
 {
-    pub fn spawn(conn: T, log_file: Option<PathBuf>) -> Sender<(Req, Sender<Res>)> {
+    pub fn spawn(
+        make_conn: impl Fn() -> Result<T> + Send + 'static,
+        log_file: Option<PathBuf>,
+    ) -> Result<EvLoopCtl> {
+        let conn = make_conn()?;
+
         let log_file = if let Some(ref log_file) = log_file {
             let file = OpenOptions::new()
                 .create(true)
@@ -71,11 +82,14 @@ where
         };
 
         let (req_tx, req_rx) = mpsc::channel();
+        let (stop_tx, stop_rx) = mpsc::channel();
 
         thread::spawn(move || {
             Self {
-                conn,
+                conn: Some(conn),
+                make_conn: Box::new(make_conn),
                 req_rx,
+                stop_rx,
                 log_file,
                 history: Vec::new(),
                 last_read_index: 0,
@@ -83,37 +97,38 @@ where
             }
             .pool();
         });
-        req_tx
+        Ok(EvLoopCtl { req_tx, stop_tx })
     }
 
     fn pool(&mut self) {
-        let min_interval = Duration::from_millis(1000);
-        let mut next_round = Instant::now() + min_interval;
         'out: loop {
-            // handle tty output
-            if let Err(e) = self.try_read_buffer() {
-                error!(msg="evloop can't continue", reason = ?e);
+            if self.stop_rx.try_recv().is_ok() {
                 break 'out;
             }
 
-            // don't return too fast
-            if Instant::now() < next_round {
-                thread::sleep(Duration::from_millis(10));
-                continue;
+            // handle tty output
+            if let Err(e) = self.try_read_buffer() {
+                error!(msg="connection lost", reason = ?e);
+                break 'out;
             }
-            next_round = Instant::now() + min_interval;
+
+            thread::sleep(Duration::from_millis(10));
 
             // handle user read, write request
             match self.req_rx.try_recv() {
                 Ok((req, tx)) => {
                     // handle stop
-                    if matches!(req, Req::Stop) {
-                        let _ = tx.send(Res::Done);
-                        break 'out;
-                    }
-                    let Ok(res) = self.handle_req(req) else {
-                        info!("stopped while blocking");
-                        break 'out;
+                    // block until receive new buffer, try receive only once
+                    let res = match req {
+                        Req::Write(msg) => {
+                            if let Err(e) = self.write_buffer(&msg) {
+                                error!(msg="connection lost", reason = ?e);
+                                break 'out;
+                            }
+                            debug!(msg = "write done");
+                            Res::Done
+                        }
+                        Req::Read => Res::Value(self.consume_buffer()),
                     };
                     if let Err(e) = tx.send(res) {
                         warn!("req sender side closed before recv response: {}", e);
@@ -131,52 +146,96 @@ where
         }
     }
 
-    // block until receive new buffer, try receive only once
-    fn handle_req(&mut self, req: Req) -> Result<Res, ()> {
-        match req {
-            Req::Stop => {
-                // should be handled before
-                Ok(Res::Done)
-            }
-            Req::Write(msg) => {
-                if let Err(e) = self.conn.write_all(msg.as_bytes()) {
-                    error!(msg = "write failed, connection may be broken", reason = ?e);
-                    return Err(());
+    fn try_read_buffer(&mut self) -> Result<Vec<u8>> {
+        'out: loop {
+            match &mut self.conn {
+                Some(conn) => match conn.read(&mut self.buffer) {
+                    Ok(n) => {
+                        if n == 0 {
+                            return Ok(Vec::new());
+                        }
+                        let received = &self.buffer[0..n];
+                        self.history.extend(received);
+
+                        if let Some(ref mut log_file) = self.log_file {
+                            if let Err(e) = log_file.write_all(received) {
+                                warn!(msg = "unable write to log", reason = ?e);
+                                self.log_file = None;
+                            }
+                        }
+                        return Ok(received.to_vec());
+                    }
+                    Err(e) => match e.kind() {
+                        io::ErrorKind::ConnectionRefused
+                        | io::ErrorKind::ConnectionReset
+                        | io::ErrorKind::BrokenPipe => {
+                            // drop conn, relese fd, release /dev/ttyUSB0
+                            self.conn = None;
+                            continue;
+                        }
+                        io::ErrorKind::TimedOut => return Ok(Vec::new()),
+                        _ => {
+                            error!(msg = "read failed, connection may be broken", reason = ?e);
+                            return Err(ConsoleError::IO(e));
+                        }
+                    },
+                },
+                None => {
+                    if let Ok(conn) = self.make_conn.as_mut()() {
+                        self.conn = Some(conn);
+                    } else {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    continue 'out;
                 }
-                if let Err(e) = self.conn.flush() {
-                    error!(msg = "flush failed, connection may be broken", reason = ?e);
-                }
-                debug!(msg = "write done");
-                Ok(Res::Done)
-            }
-            Req::Read => Ok(Res::Value(self.consume_buffer())),
-            Req::Dump => Ok(Res::Value(self.history.clone())),
+            };
         }
     }
 
-    fn try_read_buffer(&mut self) -> Result<Vec<u8>, io::Error> {
-        match self.conn.read(&mut self.buffer) {
-            Ok(n) => {
-                if n != 0 {
-                    let received = &self.buffer[0..n];
-                    self.history.extend(received);
-
-                    if let Some(ref mut log_file) = self.log_file {
-                        log_file
-                            .write_all(received)
-                            .expect("unable to store console output");
+    fn write_buffer(&mut self, bytes: &[u8]) -> Result<()> {
+        'out: loop {
+            match self.conn.as_mut() {
+                Some(conn) => {
+                    if let Err(e) = conn.write_all(bytes) {
+                        match e.kind() {
+                            io::ErrorKind::ConnectionRefused
+                            | io::ErrorKind::ConnectionReset
+                            | io::ErrorKind::BrokenPipe => {
+                                self.conn = None;
+                                continue;
+                            }
+                            io::ErrorKind::TimedOut => continue,
+                            _ => {
+                                error!(msg = "write failed, connection may be broken", reason = ?e);
+                                return Err(ConsoleError::IO(e));
+                            }
+                        }
                     }
-                    return Ok(received.to_vec());
+                    if let Err(e) = conn.flush() {
+                        match e.kind() {
+                            io::ErrorKind::ConnectionRefused
+                            | io::ErrorKind::ConnectionReset
+                            | io::ErrorKind::BrokenPipe => {
+                                self.conn = None;
+                                continue;
+                            }
+                            io::ErrorKind::TimedOut => continue,
+                            _ => {
+                                error!(msg = "flush failed, connection may be broken", reason = ?e);
+                                return Err(ConsoleError::IO(e));
+                            }
+                        }
+                    }
+                    return Ok(());
                 }
-                Ok(Vec::new())
-            }
-            Err(e) if e.kind() == io::ErrorKind::TimedOut => {
-                // ignore timeout
-                Ok(Vec::new())
-            }
-            Err(e) => {
-                error!(msg = "connection may be broken", reason = ?e);
-                Err(e)
+                None => {
+                    if let Ok(conn) = self.make_conn.as_mut()() {
+                        self.conn = Some(conn);
+                    } else {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    continue 'out;
+                }
             }
         }
     }
