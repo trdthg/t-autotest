@@ -19,7 +19,7 @@ fn req(req: MsgReq) -> Result<MsgRes> {
 }
 
 fn _script_run(cmd: String, console: Option<TextConsole>, timeout: i32) -> Result<(i32, String)> {
-    match req(MsgReq::ScriptRunGlobal {
+    match req(MsgReq::ScriptRun {
         cmd,
         console,
         timeout: Duration::from_secs(timeout as u64),
@@ -31,7 +31,7 @@ fn _script_run(cmd: String, console: Option<TextConsole>, timeout: i32) -> Resul
 }
 
 fn _assert_script_run(cmd: String, console: Option<TextConsole>, timeout: i32) -> Result<String> {
-    match req(MsgReq::ScriptRunGlobal {
+    match req(MsgReq::ScriptRun {
         cmd,
         console,
         timeout: Duration::from_secs(timeout as u64),

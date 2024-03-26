@@ -1,4 +1,4 @@
-use crate::base::evloop::EvLoopCtl;
+use crate::base::evloop::EventLoop;
 use crate::base::tty::Tty;
 use crate::term::Term;
 use crate::ConsoleError;
@@ -32,7 +32,7 @@ impl Serial {
         self.inner.tty.write_string(s, timeout)
     }
 
-    pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
+    pub fn exec(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
         // wait for prompt show, cmd may write too fast before prompt show, which will broken regex
         sleep(Duration::from_millis(70));
         self.inner.tty.exec(timeout, cmd)
@@ -66,7 +66,7 @@ where
 
         // connect serial
         let file = file.to_string();
-        let evloop = EvLoopCtl::new(
+        let evloop = EventLoop::spawn(
             move || {
                 serialport::new(&file, bund_rate).open().map_err(|e| {
                     error!("serial conn failed: {}", e);
@@ -150,7 +150,7 @@ mod test {
     }
 
     #[test]
-    fn test_exec_global() {
+    fn test_exec() {
         let Some(c) = get_config_from_file() else {
             return;
         };

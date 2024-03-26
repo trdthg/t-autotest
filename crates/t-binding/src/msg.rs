@@ -21,7 +21,7 @@ pub enum MsgReq {
         cmd: String,
         timeout: Duration,
     },
-    ScriptRunGlobal {
+    ScriptRun {
         console: Option<TextConsole>,
         cmd: String,
         timeout: Duration,

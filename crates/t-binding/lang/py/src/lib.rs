@@ -264,7 +264,7 @@ impl DriverSSH {
     }
 
     fn assert_script_run(&mut self, cmd: String, timeout: u64) -> PyResult<String> {
-        let Ok(v) = self.inner.exec_global(Duration::from_secs(timeout), &cmd) else {
+        let Ok(v) = self.inner.exec(Duration::from_secs(timeout), &cmd) else {
             return Err(TimeoutException::new_err("assert script run timeout"));
         };
         if v.0 != 0 {

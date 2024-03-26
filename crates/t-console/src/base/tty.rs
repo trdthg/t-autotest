@@ -81,7 +81,7 @@ where
     }
 
     pub fn exec(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
-        info!(msg = "exec_global", cmd = cmd);
+        info!(msg = "exec", cmd = cmd);
         // wait for prompt show, cmd may write too fast before prompt show, which will broken regex
         std::thread::sleep(Duration::from_millis(70));
 

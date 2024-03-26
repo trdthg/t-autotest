@@ -41,7 +41,7 @@ fn _script_run(
 ) -> Result<(i32, String)> {
     match req(
         py,
-        MsgReq::ScriptRunGlobal {
+        MsgReq::ScriptRun {
             cmd,
             console,
             timeout: Duration::from_secs(timeout as u64),
@@ -61,7 +61,7 @@ fn _assert_script_run(
 ) -> Result<String> {
     match req(
         py,
-        MsgReq::ScriptRunGlobal {
+        MsgReq::ScriptRun {
             cmd,
             console,
             timeout: Duration::from_secs(timeout as u64),

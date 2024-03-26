@@ -200,18 +200,18 @@ impl Server {
                         Err(e) => MsgRes::Error(e),
                     }
                 }
-                MsgReq::ScriptRunGlobal {
+                MsgReq::ScriptRun {
                     cmd,
                     console,
                     timeout,
                 } => {
                     let res = match (console, ssh_client.is_some(), serial_client.is_some()) {
                         (None | Some(t_binding::TextConsole::Serial), _, true) => serial_client
-                            .map_mut(|c| c.exec_global(timeout, &cmd))
+                            .map_mut(|c| c.exec(timeout, &cmd))
                             .unwrap_or(Ok((1, "no serial".to_string())))
                             .map_err(|_| MsgResError::Timeout),
                         (None | Some(t_binding::TextConsole::SSH), true, _) => ssh_client
-                            .map_mut(|c| c.exec_global(timeout, &cmd))
+                            .map_mut(|c| c.exec(timeout, &cmd))
                             .unwrap_or(Ok((-1, "no ssh".to_string())))
                             .map_err(|_| MsgResError::Timeout),
                         _ => Err(MsgResError::String("no console supported".to_string())),

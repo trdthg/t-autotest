@@ -1,4 +1,4 @@
-use crate::base::evloop::EvLoopCtl;
+use crate::base::evloop::EventLoop;
 use crate::base::tty::Tty;
 use crate::term::Term;
 use crate::ConsoleError;
@@ -99,7 +99,7 @@ impl SSH {
         self.inner.pts.write_string(s, timeout)
     }
 
-    pub fn exec_global(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
+    pub fn exec(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
         // "echo {}\n", \n may lost if no sleep
         sleep(Duration::from_millis(100));
         self.inner.pts.exec(timeout, cmd)
@@ -167,7 +167,7 @@ where
 
         let res = Self {
             session: sess.clone(),
-            pts: Tty::new(EvLoopCtl::new(
+            pts: Tty::new(EventLoop::spawn(
                 move || {
                     // build shell channel
                     let mut channel = sess.channel_session().map_err(ConsoleError::SSH2)?;
@@ -258,7 +258,7 @@ mod test {
             ("export A=2;echo A=$A", "A=2\n"),
         ];
         for cmd in cmds {
-            let res = ssh.exec_global(Duration::from_secs(1), cmd.0).unwrap();
+            let res = ssh.exec(Duration::from_secs(1), cmd.0).unwrap();
             assert_eq!(res.1, cmd.1);
         }
     }

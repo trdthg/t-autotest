@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
     sync::mpsc::{self, channel, Receiver, Sender},
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use crate::{ConsoleError, Result};
@@ -28,13 +28,6 @@ pub struct EvLoopCtl {
 }
 
 impl EvLoopCtl {
-    pub fn new<T: Read + Write + Send + 'static>(
-        conn: impl Fn() -> Result<T> + Send + 'static,
-        log_file: Option<PathBuf>,
-    ) -> Result<Self> {
-        Ok(EventLoop::spawn(conn()?, conn, log_file))
-    }
-
     pub fn send_timeout(
         &self,
         req: Req,
@@ -55,9 +48,9 @@ impl EvLoopCtl {
     }
 }
 
-struct EventLoop<T> {
+pub struct EventLoop<T> {
     make_conn: Box<dyn Fn() -> Result<T>>,
-    conn: T,
+    conn: Option<T>,
     req_rx: Receiver<(Req, Sender<Res>)>,
     stop_rx: Receiver<()>,
     history: Vec<u8>,
@@ -71,10 +64,11 @@ where
     T: Read + Write + Send + 'static,
 {
     pub fn spawn(
-        conn: T,
         make_conn: impl Fn() -> Result<T> + Send + 'static,
         log_file: Option<PathBuf>,
-    ) -> EvLoopCtl {
+    ) -> Result<EvLoopCtl> {
+        let conn = make_conn()?;
+
         let log_file = if let Some(ref log_file) = log_file {
             let file = OpenOptions::new()
                 .create(true)
@@ -92,7 +86,7 @@ where
 
         thread::spawn(move || {
             Self {
-                conn,
+                conn: Some(conn),
                 make_conn: Box::new(make_conn),
                 req_rx,
                 stop_rx,
@@ -103,7 +97,7 @@ where
             }
             .pool();
         });
-        EvLoopCtl { req_tx, stop_tx }
+        Ok(EvLoopCtl { req_tx, stop_tx })
     }
 
     fn pool(&mut self) {
@@ -154,95 +148,96 @@ where
 
     fn try_read_buffer(&mut self) -> Result<Vec<u8>> {
         'out: loop {
-            thread::sleep(Duration::from_millis(10));
-            if self.stop_rx.try_recv().is_ok() {
-                return Err(ConsoleError::NoConnection("reconnect failed".to_string()));
-            }
-            match self.conn.read(&mut self.buffer) {
-                Ok(n) => {
-                    if n == 0 {
-                        return Ok(Vec::new());
-                    }
-                    let received = &self.buffer[0..n];
-                    self.history.extend(received);
+            match &mut self.conn {
+                Some(conn) => match conn.read(&mut self.buffer) {
+                    Ok(n) => {
+                        if n == 0 {
+                            return Ok(Vec::new());
+                        }
+                        let received = &self.buffer[0..n];
+                        self.history.extend(received);
 
-                    if let Some(ref mut log_file) = self.log_file {
-                        if let Err(e) = log_file.write_all(received) {
-                            warn!(msg = "unable write to log", reason = ?e);
-                            self.log_file = None;
+                        if let Some(ref mut log_file) = self.log_file {
+                            if let Err(e) = log_file.write_all(received) {
+                                warn!(msg = "unable write to log", reason = ?e);
+                                self.log_file = None;
+                            }
                         }
+                        return Ok(received.to_vec());
                     }
-                    return Ok(received.to_vec());
-                }
-                Err(e) => match e.kind() {
-                    io::ErrorKind::ConnectionRefused
-                    | io::ErrorKind::ConnectionReset
-                    | io::ErrorKind::BrokenPipe => loop {
-                        if let Ok(conn) = self.make_conn.as_mut()() {
-                            self.conn = conn;
+                    Err(e) => match e.kind() {
+                        io::ErrorKind::ConnectionRefused
+                        | io::ErrorKind::ConnectionReset
+                        | io::ErrorKind::BrokenPipe => {
+                            // drop conn, relese fd, release /dev/ttyUSB0
+                            self.conn = None;
+                            continue;
                         }
-                        continue 'out;
+                        io::ErrorKind::TimedOut => return Ok(Vec::new()),
+                        _ => {
+                            error!(msg = "read failed, connection may be broken", reason = ?e);
+                            return Err(ConsoleError::IO(e));
+                        }
                     },
-                    io::ErrorKind::TimedOut => return Ok(Vec::new()),
-                    _ => {
-                        error!(msg = "read failed, connection may be broken", reason = ?e);
-                        return Err(ConsoleError::IO(e));
-                    }
                 },
-            }
+                None => loop {
+                    if let Ok(conn) = self.make_conn.as_mut()() {
+                        self.conn = Some(conn);
+                    } else {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    continue 'out;
+                },
+            };
         }
     }
 
     fn write_buffer(&mut self, bytes: &[u8]) -> Result<()> {
         'out: loop {
-            self.try_read_buffer()?;
-            if self.stop_rx.try_recv().is_ok() {
-                return Err(ConsoleError::NoConnection("reconnect failed".to_string()));
-            }
-            if let Err(e) = self.conn.write_all(bytes) {
-                match e.kind() {
-                    io::ErrorKind::ConnectionRefused
-                    | io::ErrorKind::ConnectionReset
-                    | io::ErrorKind::BrokenPipe => loop {
-                        if let Ok(conn) = self.make_conn.as_mut()() {
-                            self.conn = conn;
+            match self.conn.as_mut() {
+                Some(conn) => {
+                    if let Err(e) = conn.write_all(bytes) {
+                        match e.kind() {
+                            io::ErrorKind::ConnectionRefused
+                            | io::ErrorKind::ConnectionReset
+                            | io::ErrorKind::BrokenPipe => {
+                                self.conn = None;
+                                continue;
+                            }
+                            io::ErrorKind::TimedOut => continue,
+                            _ => {
+                                error!(msg = "write failed, connection may be broken", reason = ?e);
+                                return Err(ConsoleError::IO(e));
+                            }
                         }
-                        continue 'out;
-                    },
-                    io::ErrorKind::TimedOut => continue 'out,
-                    _ => {
-                        error!(msg = "write failed, connection may be broken", reason = ?e);
-                        return Err(ConsoleError::IO(e));
                     }
+                    if let Err(e) = conn.flush() {
+                        match e.kind() {
+                            io::ErrorKind::ConnectionRefused
+                            | io::ErrorKind::ConnectionReset
+                            | io::ErrorKind::BrokenPipe => {
+                                self.conn = None;
+                                continue;
+                            }
+                            io::ErrorKind::TimedOut => continue,
+                            _ => {
+                                error!(msg = "flush failed, connection may be broken", reason = ?e);
+                                return Err(ConsoleError::IO(e));
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+                None => {
+                    if let Ok(conn) = self.make_conn.as_mut()() {
+                        self.conn = Some(conn);
+                    } else {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    continue 'out;
                 }
             }
-            break;
         }
-        'out: loop {
-            self.try_read_buffer()?;
-            if self.stop_rx.try_recv().is_ok() {
-                return Err(ConsoleError::NoConnection("reconnect failed".to_string()));
-            }
-            if let Err(e) = self.conn.flush() {
-                match e.kind() {
-                    io::ErrorKind::ConnectionRefused
-                    | io::ErrorKind::ConnectionReset
-                    | io::ErrorKind::BrokenPipe => loop {
-                        if let Ok(conn) = self.make_conn.as_mut()() {
-                            self.conn = conn;
-                        }
-                        continue 'out;
-                    },
-                    io::ErrorKind::TimedOut => continue 'out,
-                    _ => {
-                        error!(msg = "flush failed, connection may be broken", reason = ?e);
-                        return Err(ConsoleError::IO(e));
-                    }
-                }
-            }
-            break;
-        }
-        Ok(())
     }
 
     fn consume_buffer(&mut self) -> Vec<u8> {
