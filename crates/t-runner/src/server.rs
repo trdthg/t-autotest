@@ -185,7 +185,10 @@ impl Server {
             let res = match req {
                 // common
                 MsgReq::GetConfig { key } => {
-                    let v = config.env.get(&key).map(|v| v.to_string());
+                    let v = config
+                        .env
+                        .as_ref()
+                        .and_then(|e| e.get(&key).map(|v| v.to_string()));
                     MsgRes::ConfigValue(v)
                 }
                 // ssh

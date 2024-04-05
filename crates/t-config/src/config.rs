@@ -8,7 +8,7 @@ pub struct Config {
     pub os: Option<String>,
 
     pub log_dir: Option<String>,
-    pub env: HashMap<String, toml::Value>,
+    pub env: Option<HashMap<String, toml::Value>>,
 
     pub ssh: Option<ConsoleSSH>,
     pub serial: Option<ConsoleSerial>,

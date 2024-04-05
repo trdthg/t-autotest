@@ -22,9 +22,6 @@ enum Commands {
     Run {
         #[clap(short, long)]
         script: String,
-
-        #[clap(long)]
-        env: Vec<String>,
     },
     Record {},
     VncDo {
@@ -72,15 +69,7 @@ fn main() {
 
     info!(msg = "current config", config = ?config);
     match cli.command {
-        Commands::Run { script, env } => {
-            for e in env {
-                if let Some((key, value)) = e.split_once('=') {
-                    config
-                        .env
-                        .insert(key.to_string(), toml::Value::String(value.to_string()));
-                }
-            }
-
+        Commands::Run { script } => {
             let ext = Path::new(script.as_str())
                 .extension()
                 .unwrap()
