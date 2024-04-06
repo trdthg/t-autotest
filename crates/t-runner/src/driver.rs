@@ -90,7 +90,7 @@ impl Driver {
 
     pub fn start(&mut self) -> &mut Self {
         if let Some(server) = self.server.take() {
-            server.start();
+            server.start_non_blocking();
         }
         self
     }

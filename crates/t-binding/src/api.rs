@@ -94,6 +94,13 @@ pub fn sleep(secs: u64) {
     std::thread::sleep(Duration::from_secs(secs));
 }
 
+pub fn set_config(toml_str: String) -> Result<Option<String>> {
+    match req(MsgReq::SetConfig { toml_str })? {
+        MsgRes::Done => Ok(None),
+        _ => Err(ApiError::ServerInvalidResponse),
+    }
+}
+
 pub fn get_env(key: String) -> Result<Option<String>> {
     match req(MsgReq::GetConfig { key })? {
         MsgRes::ConfigValue(res) => Ok(res),

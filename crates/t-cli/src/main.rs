@@ -94,7 +94,7 @@ fn main() {
             let builder = ServerBuilder::new(config);
             match builder.build() {
                 Ok((server, stop_tx)) => {
-                    server.start();
+                    server.start_non_blocking();
                     recorder::RecorderBuilder::new(stop_tx).build().start();
                 }
                 Err(e) => {
@@ -108,7 +108,7 @@ fn main() {
             let builder = ServerBuilder::new(config);
             match builder.build() {
                 Ok((server, stop_tx)) => {
-                    server.start();
+                    server.start_non_blocking();
                     if let Err(e) = match action {
                         VNCAction::Move { x, y } => api::vnc_mouse_move(x, y),
                         VNCAction::Click => api::vnc_mouse_click(),

@@ -13,6 +13,9 @@ pub enum TextConsole {
 #[derive(Debug)]
 pub enum MsgReq {
     // runner
+    SetConfig {
+        toml_str: String,
+    },
     GetConfig {
         key: String,
     },

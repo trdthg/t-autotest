@@ -54,9 +54,9 @@ pub struct Server {
 
     stop_rx: mpsc::Receiver<()>,
 
-    ssh_client: AMOption<SSH>,
-    serial_client: AMOption<Serial>,
-    vnc_client: AMOption<VNC>,
+    ssh: AMOption<SSH>,
+    serial: AMOption<Serial>,
+    vnc: AMOption<VNC>,
 
     screenshot_tx: Option<Sender<PNG>>,
 }
@@ -89,10 +89,67 @@ impl ServerBuilder {
     pub fn build(self) -> Result<(Server, mpsc::Sender<()>), ConsoleError> {
         let c = self.config;
 
+        // init api request channel
+        let (tx, msg_rx) = mpsc::channel();
+        t_binding::init(tx);
+
+        // init server
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let server = Server {
+            config: c,
+            msg_rx,
+            stop_rx,
+            screenshot_tx: self.tx,
+
+            ssh: AMOption::new(None),
+            serial: AMOption::new(None),
+            vnc: AMOption::new(None),
+        };
+
+        server.connect()?;
+
+        Ok((server, stop_tx))
+    }
+}
+
+impl Server {
+    pub fn start_non_blocking(self) {
+        thread::spawn(move || {
+            let mut s = self;
+            s.pool();
+        });
+    }
+
+    pub fn connect(&self) -> Result<(), ConsoleError> {
+        self.connect_with_config(&self.config)
+    }
+
+    fn connect_with_config(&self, c: &Config) -> Result<(), ConsoleError> {
         // init serial
-        let serial_client = c.serial.clone().map(Serial::new).transpose()?;
+        match c.serial.clone().map(Serial::new) {
+            Some(Ok(s)) => {
+                self.serial.map_mut(|c| {
+                    *c = s;
+                });
+            }
+            Some(Err(e)) => {
+                error!(msg="serial connect failed", reason = ?e);
+            }
+            None => {}
+        }
+
         // init ssh
-        let ssh_client = c.ssh.clone().map(SSH::new).transpose()?;
+        match c.ssh.clone().map(SSH::new) {
+            Some(Ok(s)) => {
+                self.ssh.map_mut(|c| {
+                    *c = s;
+                });
+            }
+            Some(Err(e)) => {
+                error!(msg="ssh connect failed", reason = ?e);
+            }
+            None => {}
+        }
 
         // init vnc
         let vnc_client = c
@@ -103,61 +160,27 @@ impl ServerBuilder {
                     ConsoleError::NoConnection(format!("vnc addr is not valid, {}", e))
                 })?;
 
-                let vnc_client = VNC::connect(addr, vnc.password.clone(), self.tx2)
+                let vnc_client = VNC::connect(addr, vnc.password.clone(), None)
                     .map_err(|e| ConsoleError::NoConnection(e.to_string()))?;
 
                 info!(msg = "init vnc done");
                 Ok(vnc_client)
             })
             .transpose()?;
-
-        // init api request channel
-        let (tx, msg_rx) = mpsc::channel();
-        t_binding::init(tx);
-
-        // init server
-        let (stop_tx, stop_rx) = mpsc::channel();
-        Ok((
-            Server {
-                config: c,
-                msg_rx,
-                stop_rx,
-                screenshot_tx: self.tx,
-
-                ssh_client: AMOption::new(ssh_client),
-                serial_client: AMOption::new(serial_client),
-                vnc_client: AMOption::new(vnc_client),
-            },
-            stop_tx,
-        ))
-    }
-}
-
-impl Server {
-    pub fn start(self) {
-        thread::spawn(move || {
-            self.pool();
-        });
+        if let Some(s) = vnc_client {
+            self.vnc.map_mut(|c| {
+                *c = s;
+            });
+        }
+        Ok(())
     }
 
-    fn pool(&self) {
+    fn pool(&mut self) {
         // start script engine if in case mode
         info!(msg = "start msg handler thread");
 
-        let Self {
-            config,
-            msg_rx: _,
-            stop_rx: _,
-            ssh_client,
-            serial_client,
-            vnc_client,
-            screenshot_tx,
-        } = self;
-
-        let _ssh_tty = ssh_client.map_ref(|c| c.tty());
-
         let nmg = NeedleManager::new(
-            config
+            self.config
                 .vnc
                 .as_ref()
                 .map_or(current_dir().ok(), |c| {
@@ -184,8 +207,25 @@ impl Server {
             trace!(msg = "recv request", req = ?req);
             let res = match req {
                 // common
+                MsgReq::SetConfig { toml_str } => match Config::from_toml_str(&toml_str) {
+                    Ok(c) => match &mut self.connect_with_config(&c) {
+                        Ok(()) => {
+                            self.config = c;
+                            MsgRes::Done
+                        }
+                        Err(e) => MsgRes::Error(MsgResError::String(format!(
+                            "connect failed, reason = {}",
+                            e
+                        ))),
+                    },
+                    Err(e) => MsgRes::Error(MsgResError::String(format!(
+                        "config invalid, reason = {}",
+                        e
+                    ))),
+                },
                 MsgReq::GetConfig { key } => {
-                    let v = config
+                    let v = self
+                        .config
                         .env
                         .as_ref()
                         .and_then(|e| e.get(&key).map(|v| v.to_string()));
@@ -193,7 +233,7 @@ impl Server {
                 }
                 // ssh
                 MsgReq::SSHScriptRunSeperate { cmd, timeout: _ } => {
-                    let client = ssh_client;
+                    let client = &self.ssh;
                     let res = client
                         .map_mut(|c| c.exec_seperate(&cmd))
                         .unwrap_or(Ok((-1, "no ssh".to_string())))
@@ -208,12 +248,14 @@ impl Server {
                     console,
                     timeout,
                 } => {
-                    let res = match (console, ssh_client.is_some(), serial_client.is_some()) {
-                        (None | Some(t_binding::TextConsole::Serial), _, true) => serial_client
+                    let res = match (console, self.ssh.is_some(), self.serial.is_some()) {
+                        (None | Some(t_binding::TextConsole::Serial), _, true) => self
+                            .serial
                             .map_mut(|c| c.exec(timeout, &cmd))
                             .unwrap_or(Ok((1, "no serial".to_string())))
                             .map_err(|_| MsgResError::Timeout),
-                        (None | Some(t_binding::TextConsole::SSH), true, _) => ssh_client
+                        (None | Some(t_binding::TextConsole::SSH), true, _) => self
+                            .ssh
                             .map_mut(|c| c.exec(timeout, &cmd))
                             .unwrap_or(Ok((-1, "no ssh".to_string())))
                             .map_err(|_| MsgResError::Timeout),
@@ -229,12 +271,14 @@ impl Server {
                     s,
                     timeout,
                 } => {
-                    if let Err(e) = match (console, ssh_client.is_some(), serial_client.is_some()) {
-                        (None | Some(t_binding::TextConsole::Serial), _, true) => serial_client
+                    if let Err(e) = match (console, self.ssh.is_some(), self.serial.is_some()) {
+                        (None | Some(t_binding::TextConsole::Serial), _, true) => self
+                            .serial
                             .map_mut(|c| c.write_string(&s, timeout))
                             .expect("no serial")
                             .map_err(|_| MsgResError::Timeout),
-                        (None | Some(t_binding::TextConsole::SSH), true, _) => ssh_client
+                        (None | Some(t_binding::TextConsole::SSH), true, _) => self
+                            .ssh
                             .map_mut(|c| c.write_string(&s, timeout))
                             .expect("no ssh")
                             .map_err(|_| MsgResError::Timeout),
@@ -251,12 +295,14 @@ impl Server {
                     n,
                     timeout,
                 } => {
-                    if let Err(e) = match (console, ssh_client.is_some(), serial_client.is_some()) {
-                        (None | Some(t_binding::TextConsole::Serial), _, true) => serial_client
+                    if let Err(e) = match (console, self.ssh.is_some(), self.serial.is_some()) {
+                        (None | Some(t_binding::TextConsole::Serial), _, true) => self
+                            .serial
                             .map_mut(|c| c.wait_string_ntimes(timeout, &s, n as usize))
                             .expect("no serial")
                             .map_err(|_| MsgResError::Timeout),
-                        (None | Some(t_binding::TextConsole::SSH), true, _) => ssh_client
+                        (None | Some(t_binding::TextConsole::SSH), true, _) => self
+                            .ssh
                             .map_mut(|c| c.wait_string_ntimes(timeout, &s, n as usize))
                             .expect("no ssh")
                             .map_err(|_| MsgResError::Timeout),
@@ -270,7 +316,7 @@ impl Server {
                 MsgReq::TakeScreenShot => {
                     let (tx, rx) = mpsc::channel();
 
-                    vnc_client
+                    self.vnc
                         .map_ref(|c| c.event_tx.send((VNCEventReq::TakeScreenShot, tx)))
                         .expect("no vnc")
                         .unwrap();
@@ -282,7 +328,7 @@ impl Server {
                 MsgReq::Refresh => {
                     let (tx, rx) = mpsc::channel();
 
-                    vnc_client
+                    self.vnc
                         .map_ref(|c| c.event_tx.send((VNCEventReq::Refresh, tx)))
                         .expect("no vnc")
                         .unwrap();
@@ -305,7 +351,7 @@ impl Server {
                             }
 
                             let (tx, rx) = mpsc::channel();
-                            vnc_client
+                            self.vnc
                                 .map_ref(|c| c.event_tx.send((VNCEventReq::TakeScreenShot, tx)))
                                 .expect("no vnc")
                                 .unwrap();
@@ -342,7 +388,7 @@ impl Server {
                         }
                     };
                     if let Ok((similarity, same, png)) = res {
-                        if let (Some(tx), Some(png)) = (&screenshot_tx, png) {
+                        if let (Some(tx), Some(png)) = (&self.screenshot_tx, png) {
                             if tx.send(png).is_err() {
                                 // TODO: handle ch close
                             }
@@ -360,7 +406,7 @@ impl Server {
                 }
                 MsgReq::MouseMove { x, y } => {
                     let (tx, rx) = mpsc::channel();
-                    vnc_client
+                    self.vnc
                         .map_ref(|c| c.event_tx.send((VNCEventReq::MouseMove(x, y), tx)))
                         .unwrap()
                         .unwrap();
@@ -369,7 +415,7 @@ impl Server {
                 }
                 MsgReq::MouseDrag { x, y } => {
                     let (tx, rx) = mpsc::channel();
-                    vnc_client
+                    self.vnc
                         .map_ref(|c| c.event_tx.send((VNCEventReq::MouseDrag(x, y), tx)))
                         .unwrap()
                         .unwrap();
@@ -378,7 +424,7 @@ impl Server {
                 }
                 MsgReq::MouseKeyDown(down) => {
                     let (tx, rx) = mpsc::channel();
-                    vnc_client
+                    self.vnc
                         .map_ref(|c| {
                             c.event_tx.send((
                                 if down {
@@ -401,7 +447,7 @@ impl Server {
                         _ => unreachable!(),
                     };
                     let (tx, rx) = mpsc::channel();
-                    vnc_client
+                    self.vnc
                         .map_ref(|c| c.event_tx.send((VNCEventReq::MoveDown(button), tx)))
                         .unwrap()
                         .unwrap();
@@ -409,7 +455,7 @@ impl Server {
 
                     let (tx, rx) = mpsc::channel();
 
-                    vnc_client
+                    self.vnc
                         .map_ref(|c| c.event_tx.send((VNCEventReq::MoveUp(button), tx)))
                         .unwrap()
                         .unwrap();
@@ -418,7 +464,7 @@ impl Server {
                 }
                 MsgReq::MouseHide => {
                     let (tx, rx) = mpsc::channel();
-                    vnc_client
+                    self.vnc
                         .map_ref(|c| c.event_tx.send((VNCEventReq::MouseHide, tx)))
                         .unwrap()
                         .unwrap();
@@ -434,7 +480,7 @@ impl Server {
                         }
                     }
                     let (tx, rx) = mpsc::channel();
-                    vnc_client
+                    self.vnc
                         .map_ref(|c| c.event_tx.send((VNCEventReq::SendKey { keys }, tx)))
                         .unwrap()
                         .unwrap();
@@ -443,7 +489,7 @@ impl Server {
                 }
                 MsgReq::TypeString(s) => {
                     let (tx, rx) = mpsc::channel();
-                    vnc_client
+                    self.vnc
                         .map_ref(|c| c.event_tx.send((VNCEventReq::TypeString(s), tx)))
                         .unwrap()
                         .unwrap();
@@ -453,7 +499,7 @@ impl Server {
             };
 
             // if handle req, take a screenshot
-            Self::send_screenshot(vnc_client, screenshot_tx);
+            Self::send_screenshot(&self.vnc, &self.screenshot_tx);
 
             trace!(msg = format!("sending res: {:?}", res));
             if let Err(e) = tx.send(res) {
@@ -485,9 +531,9 @@ impl Server {
     }
 
     pub fn stop(&self) {
-        self.ssh_client.map_mut(|c| c.stop());
-        self.serial_client.map_mut(|s| s.stop());
-        self.vnc_client.map_mut(|s| s.stop());
+        self.ssh.map_mut(|c| c.stop());
+        self.serial.map_mut(|s| s.stop());
+        self.vnc.map_mut(|s| s.stop());
     }
 }
 
