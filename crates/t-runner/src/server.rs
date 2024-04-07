@@ -28,6 +28,10 @@ impl<T> AMOption<T> {
         }
     }
 
+    fn set(&mut self, val: Option<T>) {
+        self.inner = Arc::new(Mutex::new(val));
+    }
+
     fn map_mut<R, F>(&self, f: F) -> Option<R>
     where
         F: FnOnce(&mut T) -> R,
@@ -95,8 +99,8 @@ impl ServerBuilder {
 
         // init server
         let (stop_tx, stop_rx) = mpsc::channel();
-        let server = Server {
-            config: c,
+        let mut server = Server {
+            config: c.clone(),
             msg_rx,
             stop_rx,
             screenshot_tx: self.tx,
@@ -106,7 +110,7 @@ impl ServerBuilder {
             vnc: AMOption::new(None),
         };
 
-        server.connect()?;
+        server.connect_with_config(&c)?;
 
         Ok((server, stop_tx))
     }
@@ -120,17 +124,12 @@ impl Server {
         });
     }
 
-    pub fn connect(&self) -> Result<(), ConsoleError> {
-        self.connect_with_config(&self.config)
-    }
-
-    fn connect_with_config(&self, c: &Config) -> Result<(), ConsoleError> {
+    fn connect_with_config<'a>(&'a mut self, c: &'a Config) -> Result<(), ConsoleError> {
         // init serial
         match c.serial.clone().map(Serial::new) {
             Some(Ok(s)) => {
-                self.serial.map_mut(|c| {
-                    *c = s;
-                });
+                self.serial.set(Some(s));
+                info!("serial connect success");
             }
             Some(Err(e)) => {
                 error!(msg="serial connect failed", reason = ?e);
@@ -142,9 +141,8 @@ impl Server {
         // init ssh
         match c.ssh.clone().map(SSH::new) {
             Some(Ok(s)) => {
-                self.ssh.map_mut(|c| {
-                    *c = s;
-                });
+                self.ssh.set(Some(s));
+                info!("ssh connect success");
             }
             Some(Err(e)) => {
                 error!(msg="ssh connect failed", reason = ?e);
@@ -154,25 +152,24 @@ impl Server {
         }
 
         // init vnc
-        let vnc_client = c
-            .vnc
-            .clone()
-            .map(|vnc| {
-                let addr = format!("{}:{}", vnc.host, vnc.port).parse().map_err(|e| {
-                    ConsoleError::NoConnection(format!("vnc addr is not valid, {}", e))
-                })?;
+        match c.vnc.clone().map(|vnc| {
+            let addr = format!("{}:{}", vnc.host, vnc.port)
+                .parse()
+                .map_err(|e| ConsoleError::NoConnection(format!("vnc addr is not valid, {}", e)))?;
 
-                let vnc_client = VNC::connect(addr, vnc.password.clone(), None)
-                    .map_err(|e| ConsoleError::NoConnection(e.to_string()))?;
-
-                info!(msg = "init vnc done");
-                Ok(vnc_client)
-            })
-            .transpose()?;
-        if let Some(s) = vnc_client {
-            self.vnc.map_mut(|c| {
-                *c = s;
-            });
+            let vnc_client = VNC::connect(addr, vnc.password.clone(), None)
+                .map_err(|e| ConsoleError::NoConnection(e.to_string()))?;
+            Ok::<VNC, ConsoleError>(vnc_client)
+        }) {
+            Some(Ok(s)) => {
+                self.vnc.set(Some(s));
+                info!("vnc connect success");
+            }
+            Some(Err(e)) => {
+                error!(msg="ssh connect failed", reason = ?e);
+                return Err(e);
+            }
+            None => {}
         }
         Ok(())
     }

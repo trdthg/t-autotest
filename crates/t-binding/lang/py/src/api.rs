@@ -216,6 +216,7 @@ pub fn vnc_check_screen(py: Python<'_>, tag: String, timeout: i32) -> Result<boo
         },
     )? {
         MsgRes::AssertScreen { similarity: _, ok } => Ok(ok),
+        MsgRes::Error(MsgResError::Timeout) => Ok(false),
         MsgRes::Error(e) => Err(e.into()),
         _ => Err(ApiError::ServerInvalidResponse),
     }
