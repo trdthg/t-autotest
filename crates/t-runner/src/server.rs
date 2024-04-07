@@ -14,7 +14,7 @@ use std::{
 use t_binding::{MsgReq, MsgRes, MsgResError};
 use t_config::Config;
 use t_console::{key, ConsoleError, Serial, VNCEventReq, VNCEventRes, PNG, SSH, VNC};
-use tracing::{error, info, trace, warn};
+use tracing::{error, info, warn};
 
 #[derive(Clone)]
 struct AMOption<T> {
@@ -134,6 +134,7 @@ impl Server {
             }
             Some(Err(e)) => {
                 error!(msg="serial connect failed", reason = ?e);
+                return Err(e);
             }
             None => {}
         }
@@ -147,6 +148,7 @@ impl Server {
             }
             Some(Err(e)) => {
                 error!(msg="ssh connect failed", reason = ?e);
+                return Err(e);
             }
             None => {}
         }
@@ -200,311 +202,330 @@ impl Server {
             }
 
             // handle msg
-            let Ok((req, tx)) = self.msg_rx.recv() else {
-                break;
-            };
-
-            trace!(msg = "recv request", req = ?req);
-            let res = match req {
-                // common
-                MsgReq::SetConfig { toml_str } => match Config::from_toml_str(&toml_str) {
-                    Ok(c) => match &mut self.connect_with_config(&c) {
-                        Ok(()) => {
-                            self.config = c;
-                            MsgRes::Done
+            match self.msg_rx.try_recv() {
+                Ok((req, tx)) => {
+                    info!(msg = "recv request", req = ?req);
+                    let res = match req {
+                        // common
+                        MsgReq::SetConfig { toml_str } => match Config::from_toml_str(&toml_str) {
+                            Ok(c) => match &mut self.connect_with_config(&c) {
+                                Ok(()) => {
+                                    self.config = c;
+                                    MsgRes::Done
+                                }
+                                Err(e) => MsgRes::Error(MsgResError::String(format!(
+                                    "connect failed, reason = {}",
+                                    e
+                                ))),
+                            },
+                            Err(e) => MsgRes::Error(MsgResError::String(format!(
+                                "config invalid, reason = {}",
+                                e
+                            ))),
+                        },
+                        MsgReq::GetConfig { key } => {
+                            let v = self
+                                .config
+                                .env
+                                .as_ref()
+                                .and_then(|e| e.get(&key).map(|v| v.to_string()));
+                            MsgRes::ConfigValue(v)
                         }
-                        Err(e) => MsgRes::Error(MsgResError::String(format!(
-                            "connect failed, reason = {}",
-                            e
-                        ))),
-                    },
-                    Err(e) => MsgRes::Error(MsgResError::String(format!(
-                        "config invalid, reason = {}",
-                        e
-                    ))),
-                },
-                MsgReq::GetConfig { key } => {
-                    let v = self
-                        .config
-                        .env
-                        .as_ref()
-                        .and_then(|e| e.get(&key).map(|v| v.to_string()));
-                    MsgRes::ConfigValue(v)
-                }
-                // ssh
-                MsgReq::SSHScriptRunSeperate { cmd, timeout: _ } => {
-                    let client = &self.ssh;
-                    let res = client
-                        .map_mut(|c| c.exec_seperate(&cmd))
-                        .unwrap_or(Ok((-1, "no ssh".to_string())))
-                        .map_err(|_| MsgResError::Timeout);
-                    match res {
-                        Ok((code, value)) => MsgRes::ScriptRun { code, value },
-                        Err(e) => MsgRes::Error(e),
-                    }
-                }
-                MsgReq::ScriptRun {
-                    cmd,
-                    console,
-                    timeout,
-                } => {
-                    let res = match (console, self.ssh.is_some(), self.serial.is_some()) {
-                        (None | Some(t_binding::TextConsole::Serial), _, true) => self
-                            .serial
-                            .map_mut(|c| c.exec(timeout, &cmd))
-                            .unwrap_or(Ok((1, "no serial".to_string())))
-                            .map_err(|_| MsgResError::Timeout),
-                        (None | Some(t_binding::TextConsole::SSH), true, _) => self
-                            .ssh
-                            .map_mut(|c| c.exec(timeout, &cmd))
-                            .unwrap_or(Ok((-1, "no ssh".to_string())))
-                            .map_err(|_| MsgResError::Timeout),
-                        _ => Err(MsgResError::String("no console supported".to_string())),
-                    };
-                    match res {
-                        Ok((code, value)) => MsgRes::ScriptRun { code, value },
-                        Err(e) => MsgRes::Error(e),
-                    }
-                }
-                MsgReq::WriteString {
-                    console,
-                    s,
-                    timeout,
-                } => {
-                    if let Err(e) = match (console, self.ssh.is_some(), self.serial.is_some()) {
-                        (None | Some(t_binding::TextConsole::Serial), _, true) => self
-                            .serial
-                            .map_mut(|c| c.write_string(&s, timeout))
-                            .expect("no serial")
-                            .map_err(|_| MsgResError::Timeout),
-                        (None | Some(t_binding::TextConsole::SSH), true, _) => self
-                            .ssh
-                            .map_mut(|c| c.write_string(&s, timeout))
-                            .expect("no ssh")
-                            .map_err(|_| MsgResError::Timeout),
-                        _ => Err(MsgResError::String("no console supported".to_string())),
-                    } {
-                        MsgRes::Error(e)
-                    } else {
-                        MsgRes::Done
-                    }
-                }
-                MsgReq::WaitString {
-                    console,
-                    s,
-                    n,
-                    timeout,
-                } => {
-                    if let Err(e) = match (console, self.ssh.is_some(), self.serial.is_some()) {
-                        (None | Some(t_binding::TextConsole::Serial), _, true) => self
-                            .serial
-                            .map_mut(|c| c.wait_string_ntimes(timeout, &s, n as usize))
-                            .expect("no serial")
-                            .map_err(|_| MsgResError::Timeout),
-                        (None | Some(t_binding::TextConsole::SSH), true, _) => self
-                            .ssh
-                            .map_mut(|c| c.wait_string_ntimes(timeout, &s, n as usize))
-                            .expect("no ssh")
-                            .map_err(|_| MsgResError::Timeout),
-                        _ => Err(MsgResError::String("no console supported".to_string())),
-                    } {
-                        MsgRes::Error(e)
-                    } else {
-                        MsgRes::Done
-                    }
-                }
-                MsgReq::TakeScreenShot => {
-                    let (tx, rx) = mpsc::channel();
-
-                    self.vnc
-                        .map_ref(|c| c.event_tx.send((VNCEventReq::TakeScreenShot, tx)))
-                        .expect("no vnc")
-                        .unwrap();
-                    match rx.recv() {
-                        Ok(VNCEventRes::Screen(res)) => MsgRes::Screenshot(res),
-                        _ => MsgRes::Error(MsgResError::Timeout),
-                    }
-                }
-                MsgReq::Refresh => {
-                    let (tx, rx) = mpsc::channel();
-
-                    self.vnc
-                        .map_ref(|c| c.event_tx.send((VNCEventReq::Refresh, tx)))
-                        .expect("no vnc")
-                        .unwrap();
-                    match rx.recv() {
-                        Ok(VNCEventRes::Done) => MsgRes::Done,
-                        _ => MsgRes::Error(MsgResError::Timeout),
-                    }
-                }
-                MsgReq::AssertScreen {
-                    tag,
-                    threshold: _,
-                    timeout,
-                } => {
-                    let res: Result<(f32, bool, Option<t_console::PNG>), MsgResError> = {
-                        let deadline = time::Instant::now() + timeout;
-                        let mut similarity: f32 = 0.;
-                        'res: loop {
-                            if Instant::now() > deadline {
-                                break 'res Ok((similarity, false, None));
+                        // ssh
+                        MsgReq::SSHScriptRunSeperate { cmd, timeout: _ } => {
+                            let client = &self.ssh;
+                            let res = client
+                                .map_mut(|c| c.exec_seperate(&cmd))
+                                .unwrap_or(Ok((-1, "no ssh".to_string())))
+                                .map_err(|_| MsgResError::Timeout);
+                            match res {
+                                Ok((code, value)) => MsgRes::ScriptRun { code, value },
+                                Err(e) => MsgRes::Error(e),
                             }
-
+                        }
+                        MsgReq::ScriptRun {
+                            cmd,
+                            console,
+                            timeout,
+                        } => {
+                            let res = match (console, self.ssh.is_some(), self.serial.is_some()) {
+                                (None | Some(t_binding::TextConsole::Serial), _, true) => self
+                                    .serial
+                                    .map_mut(|c| c.exec(timeout, &cmd))
+                                    .unwrap_or(Ok((1, "no serial".to_string())))
+                                    .map_err(|_| MsgResError::Timeout),
+                                (None | Some(t_binding::TextConsole::SSH), true, _) => self
+                                    .ssh
+                                    .map_mut(|c| c.exec(timeout, &cmd))
+                                    .unwrap_or(Ok((-1, "no ssh".to_string())))
+                                    .map_err(|_| MsgResError::Timeout),
+                                _ => Err(MsgResError::String("no console supported".to_string())),
+                            };
+                            match res {
+                                Ok((code, value)) => MsgRes::ScriptRun { code, value },
+                                Err(e) => MsgRes::Error(e),
+                            }
+                        }
+                        MsgReq::WriteString {
+                            console,
+                            s,
+                            timeout,
+                        } => {
+                            if let Err(e) =
+                                match (console, self.ssh.is_some(), self.serial.is_some()) {
+                                    (None | Some(t_binding::TextConsole::Serial), _, true) => self
+                                        .serial
+                                        .map_mut(|c| c.write_string(&s, timeout))
+                                        .expect("no serial")
+                                        .map_err(|_| MsgResError::Timeout),
+                                    (None | Some(t_binding::TextConsole::SSH), true, _) => self
+                                        .ssh
+                                        .map_mut(|c| c.write_string(&s, timeout))
+                                        .expect("no ssh")
+                                        .map_err(|_| MsgResError::Timeout),
+                                    _ => {
+                                        Err(MsgResError::String("no console supported".to_string()))
+                                    }
+                                }
+                            {
+                                MsgRes::Error(e)
+                            } else {
+                                MsgRes::Done
+                            }
+                        }
+                        MsgReq::WaitString {
+                            console,
+                            s,
+                            n,
+                            timeout,
+                        } => {
+                            if let Err(e) =
+                                match (console, self.ssh.is_some(), self.serial.is_some()) {
+                                    (None | Some(t_binding::TextConsole::Serial), _, true) => self
+                                        .serial
+                                        .map_mut(|c| c.wait_string_ntimes(timeout, &s, n as usize))
+                                        .expect("no serial")
+                                        .map_err(|_| MsgResError::Timeout),
+                                    (None | Some(t_binding::TextConsole::SSH), true, _) => self
+                                        .ssh
+                                        .map_mut(|c| c.wait_string_ntimes(timeout, &s, n as usize))
+                                        .expect("no ssh")
+                                        .map_err(|_| MsgResError::Timeout),
+                                    _ => {
+                                        Err(MsgResError::String("no console supported".to_string()))
+                                    }
+                                }
+                            {
+                                MsgRes::Error(e)
+                            } else {
+                                MsgRes::Done
+                            }
+                        }
+                        MsgReq::TakeScreenShot => {
                             let (tx, rx) = mpsc::channel();
+
                             self.vnc
                                 .map_ref(|c| c.event_tx.send((VNCEventReq::TakeScreenShot, tx)))
                                 .expect("no vnc")
                                 .unwrap();
                             match rx.recv() {
-                                Ok(VNCEventRes::Screen(s)) => {
-                                    let Some((res_similarity, res)) = nmg.cmp(&s, &tag, None)
-                                    else {
-                                        error!(msg = "Needle file not found", tag = tag);
-                                        break 'res Ok((similarity, false, Some(s)));
-                                    };
-                                    similarity = res_similarity;
+                                Ok(VNCEventRes::Screen(res)) => MsgRes::Screenshot(res),
+                                _ => MsgRes::Error(MsgResError::Timeout),
+                            }
+                        }
+                        MsgReq::Refresh => {
+                            let (tx, rx) = mpsc::channel();
 
-                                    if !res {
-                                        warn!(
-                                            msg = "match failed",
-                                            tag = tag,
-                                            similarity = similarity
-                                        );
-                                    } else {
-                                        info!(
-                                            msg = "match success",
-                                            tag = tag,
-                                            similarity = similarity
-                                        );
-                                        break 'res Ok((similarity, res, Some(s)));
+                            self.vnc
+                                .map_ref(|c| c.event_tx.send((VNCEventReq::Refresh, tx)))
+                                .expect("no vnc")
+                                .unwrap();
+                            match rx.recv() {
+                                Ok(VNCEventRes::Done) => MsgRes::Done,
+                                _ => MsgRes::Error(MsgResError::Timeout),
+                            }
+                        }
+                        MsgReq::AssertScreen {
+                            tag,
+                            threshold: _,
+                            timeout,
+                        } => {
+                            let res: Result<(f32, bool, Option<t_console::PNG>), MsgResError> = {
+                                let deadline = time::Instant::now() + timeout;
+                                let mut similarity: f32 = 0.;
+                                'res: loop {
+                                    if Instant::now() > deadline {
+                                        break 'res Ok((similarity, false, None));
+                                    }
+
+                                    let (tx, rx) = mpsc::channel();
+                                    self.vnc
+                                        .map_ref(|c| {
+                                            c.event_tx.send((VNCEventReq::TakeScreenShot, tx))
+                                        })
+                                        .expect("no vnc")
+                                        .unwrap();
+                                    match rx.recv() {
+                                        Ok(VNCEventRes::Screen(s)) => {
+                                            let Some((res_similarity, res)) =
+                                                nmg.cmp(&s, &tag, None)
+                                            else {
+                                                error!(msg = "Needle file not found", tag = tag);
+                                                break 'res Ok((similarity, false, Some(s)));
+                                            };
+                                            similarity = res_similarity;
+
+                                            if !res {
+                                                warn!(
+                                                    msg = "match failed",
+                                                    tag = tag,
+                                                    similarity = similarity
+                                                );
+                                            } else {
+                                                info!(
+                                                    msg = "match success",
+                                                    tag = tag,
+                                                    similarity = similarity
+                                                );
+                                                break 'res Ok((similarity, res, Some(s)));
+                                            }
+                                        }
+                                        Ok(_) => {
+                                            warn!(msg = "invalid msg type");
+                                        }
+                                        Err(_e) => break Err(MsgResError::Timeout),
+                                    }
+                                    thread::sleep(Duration::from_millis(200));
+                                }
+                            };
+                            if let Ok((similarity, same, png)) = res {
+                                if let (Some(tx), Some(png)) = (&self.screenshot_tx, png) {
+                                    if tx.send(png).is_err() {
+                                        // TODO: handle ch close
                                     }
                                 }
-                                Ok(_) => {
-                                    warn!(msg = "invalid msg type");
+                                MsgRes::AssertScreen {
+                                    similarity,
+                                    ok: same,
                                 }
-                                Err(_e) => break Err(MsgResError::Timeout),
-                            }
-                            thread::sleep(Duration::from_millis(200));
-                        }
-                    };
-                    if let Ok((similarity, same, png)) = res {
-                        if let (Some(tx), Some(png)) = (&self.screenshot_tx, png) {
-                            if tx.send(png).is_err() {
-                                // TODO: handle ch close
+                            } else {
+                                MsgRes::AssertScreen {
+                                    similarity: 0.,
+                                    ok: false,
+                                }
                             }
                         }
-                        MsgRes::AssertScreen {
-                            similarity,
-                            ok: same,
+                        MsgReq::MouseMove { x, y } => {
+                            let (tx, rx) = mpsc::channel();
+                            self.vnc
+                                .map_ref(|c| c.event_tx.send((VNCEventReq::MouseMove(x, y), tx)))
+                                .unwrap()
+                                .unwrap();
+                            assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+                            MsgRes::Done
                         }
-                    } else {
-                        MsgRes::AssertScreen {
-                            similarity: 0.,
-                            ok: false,
+                        MsgReq::MouseDrag { x, y } => {
+                            let (tx, rx) = mpsc::channel();
+                            self.vnc
+                                .map_ref(|c| c.event_tx.send((VNCEventReq::MouseDrag(x, y), tx)))
+                                .unwrap()
+                                .unwrap();
+                            assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+                            MsgRes::Done
                         }
-                    }
-                }
-                MsgReq::MouseMove { x, y } => {
-                    let (tx, rx) = mpsc::channel();
-                    self.vnc
-                        .map_ref(|c| c.event_tx.send((VNCEventReq::MouseMove(x, y), tx)))
-                        .unwrap()
-                        .unwrap();
-                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
-                    MsgRes::Done
-                }
-                MsgReq::MouseDrag { x, y } => {
-                    let (tx, rx) = mpsc::channel();
-                    self.vnc
-                        .map_ref(|c| c.event_tx.send((VNCEventReq::MouseDrag(x, y), tx)))
-                        .unwrap()
-                        .unwrap();
-                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
-                    MsgRes::Done
-                }
-                MsgReq::MouseKeyDown(down) => {
-                    let (tx, rx) = mpsc::channel();
-                    self.vnc
-                        .map_ref(|c| {
-                            c.event_tx.send((
-                                if down {
-                                    VNCEventReq::MoveDown(1)
-                                } else {
-                                    VNCEventReq::MoveUp(1)
-                                },
-                                tx,
-                            ))
-                        })
-                        .unwrap()
-                        .unwrap();
-                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
-                    MsgRes::Done
-                }
-                MsgReq::MouseClick | MsgReq::MouseRClick => {
-                    let button = match req {
-                        MsgReq::MouseClick => 1,
-                        MsgReq::MouseRClick => 1 << 2,
-                        _ => unreachable!(),
+                        MsgReq::MouseKeyDown(down) => {
+                            let (tx, rx) = mpsc::channel();
+                            self.vnc
+                                .map_ref(|c| {
+                                    c.event_tx.send((
+                                        if down {
+                                            VNCEventReq::MoveDown(1)
+                                        } else {
+                                            VNCEventReq::MoveUp(1)
+                                        },
+                                        tx,
+                                    ))
+                                })
+                                .unwrap()
+                                .unwrap();
+                            assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+                            MsgRes::Done
+                        }
+                        MsgReq::MouseClick | MsgReq::MouseRClick => {
+                            let button = match req {
+                                MsgReq::MouseClick => 1,
+                                MsgReq::MouseRClick => 1 << 2,
+                                _ => unreachable!(),
+                            };
+                            let (tx, rx) = mpsc::channel();
+                            self.vnc
+                                .map_ref(|c| c.event_tx.send((VNCEventReq::MoveDown(button), tx)))
+                                .unwrap()
+                                .unwrap();
+                            assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+
+                            let (tx, rx) = mpsc::channel();
+
+                            self.vnc
+                                .map_ref(|c| c.event_tx.send((VNCEventReq::MoveUp(button), tx)))
+                                .unwrap()
+                                .unwrap();
+                            assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+                            MsgRes::Done
+                        }
+                        MsgReq::MouseHide => {
+                            let (tx, rx) = mpsc::channel();
+                            self.vnc
+                                .map_ref(|c| c.event_tx.send((VNCEventReq::MouseHide, tx)))
+                                .unwrap()
+                                .unwrap();
+                            assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+                            MsgRes::Done
+                        }
+                        MsgReq::SendKey(s) => {
+                            let parts = s.split('-');
+                            let mut keys = Vec::new();
+                            for part in parts {
+                                if let Some(key) = key::from_str(part) {
+                                    keys.push(key);
+                                }
+                            }
+                            let (tx, rx) = mpsc::channel();
+                            self.vnc
+                                .map_ref(|c| c.event_tx.send((VNCEventReq::SendKey { keys }, tx)))
+                                .unwrap()
+                                .unwrap();
+                            assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+                            MsgRes::Done
+                        }
+                        MsgReq::TypeString(s) => {
+                            let (tx, rx) = mpsc::channel();
+                            self.vnc
+                                .map_ref(|c| c.event_tx.send((VNCEventReq::TypeString(s), tx)))
+                                .unwrap()
+                                .unwrap();
+                            assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
+                            MsgRes::Done
+                        }
                     };
-                    let (tx, rx) = mpsc::channel();
-                    self.vnc
-                        .map_ref(|c| c.event_tx.send((VNCEventReq::MoveDown(button), tx)))
-                        .unwrap()
-                        .unwrap();
-                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
 
-                    let (tx, rx) = mpsc::channel();
+                    // if handle req, take a screenshot
+                    Self::send_screenshot(&self.vnc, &self.screenshot_tx);
 
-                    self.vnc
-                        .map_ref(|c| c.event_tx.send((VNCEventReq::MoveUp(button), tx)))
-                        .unwrap()
-                        .unwrap();
-                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
-                    MsgRes::Done
-                }
-                MsgReq::MouseHide => {
-                    let (tx, rx) = mpsc::channel();
-                    self.vnc
-                        .map_ref(|c| c.event_tx.send((VNCEventReq::MouseHide, tx)))
-                        .unwrap()
-                        .unwrap();
-                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
-                    MsgRes::Done
-                }
-                MsgReq::SendKey(s) => {
-                    let parts = s.split('-');
-                    let mut keys = Vec::new();
-                    for part in parts {
-                        if let Some(key) = key::from_str(part) {
-                            keys.push(key);
-                        }
+                    info!(msg = format!("sending res: {:?}", res));
+                    if let Err(e) = tx.send(res) {
+                        info!(msg = "script engine receiver closed", reason = ?e);
+                        break;
                     }
-                    let (tx, rx) = mpsc::channel();
-                    self.vnc
-                        .map_ref(|c| c.event_tx.send((VNCEventReq::SendKey { keys }, tx)))
-                        .unwrap()
-                        .unwrap();
-                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
-                    MsgRes::Done
                 }
-                MsgReq::TypeString(s) => {
-                    let (tx, rx) = mpsc::channel();
-                    self.vnc
-                        .map_ref(|c| c.event_tx.send((VNCEventReq::TypeString(s), tx)))
-                        .unwrap()
-                        .unwrap();
-                    assert!(matches!(rx.recv().unwrap(), VNCEventRes::Done));
-                    MsgRes::Done
-                }
-            };
-
-            // if handle req, take a screenshot
-            Self::send_screenshot(&self.vnc, &self.screenshot_tx);
-
-            trace!(msg = format!("sending res: {:?}", res));
-            if let Err(e) = tx.send(res) {
-                info!(msg = "script engine receiver closed", reason = ?e);
-                break;
+                Err(e) => match e {
+                    mpsc::TryRecvError::Empty => {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    mpsc::TryRecvError::Disconnected => {
+                        break;
+                    }
+                },
             }
         }
         info!(msg = "Runner loop stopped")
