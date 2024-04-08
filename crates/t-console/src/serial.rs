@@ -3,12 +3,27 @@ use crate::base::tty::Tty;
 use crate::term::Term;
 use crate::ConsoleError;
 use crate::Result;
+use std::ops::Deref;
+use std::ops::DerefMut;
 use std::path::PathBuf;
-use std::{thread::sleep, time::Duration};
 use tracing::error;
 
 pub struct Serial {
     inner: SerialClient<crate::VT102>,
+}
+
+impl Deref for Serial {
+    type Target = Tty<crate::VT102>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner.tty
+    }
+}
+
+impl DerefMut for Serial {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner.tty
+    }
 }
 
 impl Serial {
@@ -23,28 +38,6 @@ impl Serial {
     ) -> Result<SerialClient<crate::VT102>> {
         let ssh_client = SerialClient::connect(&c.serial_file, c.bund_rate, c.log_file.clone())?;
         Ok(ssh_client)
-    }
-
-    pub fn stop(&self) {
-        self.inner.tty.stop();
-    }
-    pub fn write_string(&mut self, s: &str, timeout: Duration) -> Result<()> {
-        self.inner.tty.write_string(s, timeout)
-    }
-
-    pub fn exec(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
-        // wait for prompt show, cmd may write too fast before prompt show, which will broken regex
-        sleep(Duration::from_millis(70));
-        self.inner.tty.exec(timeout, cmd)
-    }
-
-    pub fn wait_string_ntimes(
-        &mut self,
-        timeout: Duration,
-        pattern: &str,
-        repeat: usize,
-    ) -> Result<String> {
-        self.inner.tty.wait_string_ntimes(timeout, pattern, repeat)
     }
 }
 

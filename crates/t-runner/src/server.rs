@@ -12,7 +12,7 @@ use std::{
     time::{self, Duration, Instant},
 };
 use t_binding::{MsgReq, MsgRes, MsgResError};
-use t_config::Config;
+use t_config::{Config, ConsoleVNC};
 use t_console::{key, ConsoleError, Serial, VNCEventReq, VNCEventRes, PNG, SSH, VNC};
 use tracing::{error, info, warn};
 
@@ -152,7 +152,7 @@ impl Server {
         }
 
         // init vnc
-        match c.vnc.clone().map(|vnc| {
+        let build_vnc = move |vnc: ConsoleVNC| {
             let addr = format!("{}:{}", vnc.host, vnc.port)
                 .parse()
                 .map_err(|e| ConsoleError::NoConnection(format!("vnc addr is not valid, {}", e)))?;
@@ -160,7 +160,8 @@ impl Server {
             let vnc_client = VNC::connect(addr, vnc.password.clone(), None)
                 .map_err(|e| ConsoleError::NoConnection(e.to_string()))?;
             Ok::<VNC, ConsoleError>(vnc_client)
-        }) {
+        };
+        match c.vnc.clone().map(build_vnc) {
             Some(Ok(s)) => {
                 self.vnc.set(Some(s));
                 info!("vnc connect success");

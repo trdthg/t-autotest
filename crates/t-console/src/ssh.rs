@@ -4,6 +4,8 @@ use crate::term::Term;
 use crate::ConsoleError;
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
+use std::ops::Deref;
+use std::ops::DerefMut;
 use std::path::Path;
 use std::path::PathBuf;
 use std::thread::sleep;
@@ -22,28 +24,38 @@ pub struct SSH {
     inner: SSHClient<crate::Xterm>,
 }
 
+impl Deref for SSH {
+    type Target = Tty<crate::Xterm>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner.pts
+    }
+}
+
+impl DerefMut for SSH {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner.pts
+    }
+}
+
 impl SSH {
     pub fn new(c: t_config::ConsoleSSH) -> Result<Self> {
-        let mut inner = Self::connect_from_ssh_config(&c)?;
+        let inner = Self::connect_from_ssh_config(&c)?;
 
-        debug!(msg = "ssh getting tty...");
-        let (code, tty) = inner.pts.exec(Duration::from_secs(10), "tty")?;
+        // debug!(msg = "ssh getting tty...");
+        // let (code, tty) = inner.pts.exec(Duration::from_secs(10), "tty")?;
 
-        if code != 0 {
-            return Err(ConsoleError::NoBashSupport(format!(
-                "run tty command failed, code: {}, tty: {}",
-                code, tty
-            )));
-        }
+        // if code != 0 {
+        //     return Err(ConsoleError::NoBashSupport(format!(
+        //         "run tty command failed, code: {}, tty: {}",
+        //         code, tty
+        //     )));
+        // }
 
-        inner.pts_file = tty;
-        info!(msg = "ssh client tty", tty = inner.pts_file.trim());
+        // inner.pts_file = tty;
+        // info!(msg = "ssh client tty", tty = inner.pts_file.trim());
 
         Ok(Self { inner })
-    }
-
-    pub fn stop(&self) {
-        self.inner.pts.stop()
     }
 
     fn connect_from_ssh_config(c: &t_config::ConsoleSSH) -> Result<SSHClient<crate::Xterm>> {
@@ -92,26 +104,6 @@ impl SSH {
         exec_ch.read_to_string(&mut code)?;
 
         Ok((code.parse::<i32>().unwrap(), buffer))
-    }
-
-    pub fn write_string(&mut self, s: &str, timeout: Duration) -> Result<()> {
-        sleep(Duration::from_millis(100));
-        self.inner.pts.write_string(s, timeout)
-    }
-
-    pub fn exec(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
-        // "echo {}\n", \n may lost if no sleep
-        sleep(Duration::from_millis(100));
-        self.inner.pts.exec(timeout, cmd)
-    }
-
-    pub fn wait_string_ntimes(
-        &mut self,
-        timeout: Duration,
-        pattern: &str,
-        repeat: usize,
-    ) -> Result<String> {
-        self.inner.pts.wait_string_ntimes(timeout, pattern, repeat)
     }
 
     pub fn upload_file(&mut self, remote_path: impl AsRef<Path>) {
