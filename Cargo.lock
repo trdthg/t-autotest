@@ -608,7 +608,7 @@ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 
 [[package]]
 name = "autotest"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "chrono",
  "clap",
@@ -3208,7 +3208,7 @@ dependencies = [
 
 [[package]]
 name = "pyautotest"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "ctrlc",
  "pyo3",
@@ -4129,7 +4129,7 @@ dependencies = [
 
 [[package]]
 name = "t-binding"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "regex",
  "rquickjs",
@@ -4140,7 +4140,7 @@ dependencies = [
 
 [[package]]
 name = "t-config"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "serde",
  "toml 0.8.8",
@@ -4148,7 +4148,7 @@ dependencies = [
 
 [[package]]
 name = "t-console"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "byteorder",
  "console",
@@ -4168,7 +4168,7 @@ dependencies = [
 
 [[package]]
 name = "t-runner"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "home",
  "image 0.25.0",
@@ -4188,7 +4188,7 @@ dependencies = [
 
 [[package]]
 name = "t-util"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "regex",
  "tracing",
