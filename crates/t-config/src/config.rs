@@ -17,7 +17,7 @@ pub struct Config {
 
 impl Config {
     pub fn from_toml_str(s: &str) -> Result<Self, toml::de::Error> {
-        let mut config: Config = toml::from_str(s).unwrap();
+        let mut config: Config = toml::from_str(s)?;
         config.init();
         Ok(config)
     }
@@ -48,7 +48,7 @@ impl Config {
 #[derive(Deserialize, Debug, Clone)]
 pub struct ConsoleSSH {
     pub host: String,
-    pub port: u16,
+    pub port: Option<u16>,
     pub username: String,
     pub password: Option<String>,
     pub private_key: Option<String>,

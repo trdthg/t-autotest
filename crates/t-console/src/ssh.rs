@@ -78,7 +78,7 @@ impl SSH {
             c.timeout,
             &auth,
             c.username.clone(),
-            format!("{}:{}", c.host, c.port),
+            format!("{}:{}", c.host, c.port.unwrap_or(22)),
             c.log_file.clone(),
         )
     }

@@ -28,7 +28,7 @@ fn main() {
     // Session is a wrapper around a russh client, defined down below
     match SSH::new(ConsoleSSH {
         host: cli.host,
-        port: cli.port,
+        port: Some(cli.port),
         username: cli.username.unwrap_or_else(|| "root".to_string()),
         private_key: cli
             .private_key
