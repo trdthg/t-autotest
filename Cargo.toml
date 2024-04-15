@@ -58,15 +58,16 @@ parking_lot        = { version = "0.12.1" }
 unescaper          = { version = "0.1.4" }
 rquickjs           = { version = "0.5.1", features = ["macro"] }
 mlua               = { version = "0.9.1", features = ["lua54", "vendored"] }
-pyo3               = { version = "0.20.0", features = ["auto-initialize", "abi3-py37"] }
+pyo3               = { version = "0.21.1", features = ["auto-initialize", "abi3-py37"] }
 ctrlc              = { version = "3.4.2" }
-eframe             = { version = "0.26.2", features = ["x11", "wayland"] }
-egui_extras        = { version = "0.26.2" }
+eframe             = { version = "0.27.2", features = ["x11", "wayland"] }
+egui_extras        = { version = "0.27.2" }
 rfd                = { version = "0.14.0" }
-egui-notify        = { version = "0.13.0" }
-egui_tiles         = { version = "0.7.2" }
+egui-notify        = { version = "0.14.0" }
+egui_tiles         = { version = "0.8.0" }
 chrono             = { version = "0.4.35" }
 rayon              = { version = "1.9.0" }
+notify             = { version = "6.1.1" }
 
 [profile.dev]
 incremental = true
