@@ -1,6 +1,6 @@
 use std::sync::mpsc;
 
-use t_binding::{JSEngine, ScriptEngine};
+use t_binding::{JSEngine, MsgReq, MsgRes, ScriptEngine};
 
 pub enum Msg {
     Stop(mpsc::Sender<()>),
@@ -27,26 +27,26 @@ impl EngineClient {
 pub struct Engine {
     ext: String,
     script_rx: mpsc::Receiver<Msg>,
+    msg_tx: mpsc::Sender<(MsgReq, mpsc::Sender<MsgRes>)>,
 }
 
 impl Engine {
-    pub fn new(ext: &str) -> (Self, EngineClient) {
+    pub fn new(
+        ext: &str,
+        msg_tx: mpsc::Sender<(MsgReq, mpsc::Sender<MsgRes>)>,
+    ) -> (Self, EngineClient) {
         let (tx, rx) = mpsc::channel();
         (
             Self {
                 ext: ext.to_string(),
                 script_rx: rx,
+                msg_tx,
             },
             EngineClient { msg_tx: tx },
         )
     }
 
     pub fn start(&mut self) {
-        let _e: Box<dyn ScriptEngine> = match self.ext.as_str() {
-            "js" => Box::new(JSEngine::new()),
-            _ => unimplemented!(),
-        };
-
         while let Ok(msg) = self.script_rx.recv() {
             match msg {
                 Msg::Stop(tx) => {
@@ -62,7 +62,7 @@ impl Engine {
 
     fn run_file(&mut self, file: &str) {
         let mut e: Box<dyn ScriptEngine> = match self.ext.as_str() {
-            "js" => Box::new(JSEngine::new()),
+            "js" => Box::new(JSEngine::new(self.msg_tx.clone())),
             _ => unimplemented!(),
         };
         e.run_file(file);

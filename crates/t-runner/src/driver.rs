@@ -8,57 +8,46 @@ use std::sync::mpsc::Sender;
 use std::thread;
 use std::time;
 use std::time::UNIX_EPOCH;
+use t_binding::api::ApiTx;
 use t_config::Config;
 use t_console::PNG;
 use t_console::SSH;
 use tracing::warn;
 
 pub struct Driver {
-    pub config: Config,
+    pub config: Option<Config>,
     server: Option<Server>,
     stop_tx: mpsc::Sender<()>,
+    pub msg_tx: ApiTx,
     screenshot_save_done_rx: Option<mpsc::Receiver<()>>,
 }
 
 type Result<T> = std::result::Result<T, DriverError>;
 
 impl Driver {
-    pub fn new(config: Config) -> Result<Self> {
+    pub fn new(config: Option<Config>) -> Result<Self> {
         let mut builder = ServerBuilder::new(config.clone());
 
         let mut stop_rx = None::<Receiver<()>>;
-        if let Some(vnc) = config.vnc.as_ref() {
+        if let Some(vnc) = config.as_ref().and_then(|c| c.vnc.as_ref()) {
             if let Some(ref dir) = vnc.screenshot_dir {
                 let (screenshot_tx, screenshot_rx) = mpsc::channel();
-                let (screenshot_tx2, screenshot_rx2) = mpsc::channel();
-                builder = builder
-                    .with_vnc_screenshot_subscriber(screenshot_tx)
-                    .with_latest_vnc_screenshot_subscriber(screenshot_tx2);
+                builder = builder.with_vnc_screenshot_subscriber(screenshot_tx);
                 let (done_tx, donw_rx) = mpsc::channel();
                 Self::save_screenshots(screenshot_rx, dir.clone(), done_tx);
                 stop_rx = Some(donw_rx);
-
-                let mut latest_screenshot_path = dir.clone();
-                latest_screenshot_path.push("latest.png");
-                thread::spawn(move || {
-                    while let Ok(screen) = screenshot_rx2.recv() {
-                        let p = screen.into_img();
-                        if let Err(e) = p.save(&latest_screenshot_path) {
-                            warn!(msg="screenshot save failed", reason=?e);
-                        }
-                    }
-                });
             }
         }
-        let (server, stop_tx) = builder.build().map_err(DriverError::ConsoleError)?;
+        let (server, msg_tx, stop_tx) = builder.build().map_err(DriverError::ConsoleError)?;
 
-        let res = Self {
+        let driver = Self {
             config,
             server: Some(server),
             stop_tx,
+            msg_tx,
             screenshot_save_done_rx: stop_rx,
         };
-        Ok(res)
+        Ok(driver)
     }
 
     fn save_screenshots(screenshot_rx: Receiver<PNG>, dir: PathBuf, stop_tx: Sender<()>) {
@@ -111,7 +100,7 @@ impl Driver {
     }
 
     pub fn new_ssh(&mut self) -> Result<SSH> {
-        if let Some(ssh) = self.config.ssh.clone() {
+        if let Some(ssh) = self.config.as_ref().and_then(|c| c.ssh.clone()) {
             SSH::new(ssh).map_err(DriverError::ConsoleError)
         } else {
             Err(DriverError::ConsoleError(

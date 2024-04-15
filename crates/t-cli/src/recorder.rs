@@ -3,87 +3,104 @@
 use self::deque::Deque;
 use chrono::{DateTime, Local};
 use eframe::egui::{
-    self, Color32, ColorImage, Margin, Pos2, RichText, Sense, Stroke, TextureHandle, TextureOptions,
+    self,
+    ahash::{HashMap, HashMapExt},
+    text::CursorRange,
+    Color32, Margin, Pos2, Rect, RichText, Sense, TextEdit, TextureHandle, TextureOptions, Vec2,
+    Widget,
 };
 use egui_notify::Toast;
+use helper::*;
 use image::DynamicImage;
 use std::{
-    collections::VecDeque,
     fs,
     path::{Path, PathBuf},
-    sync::mpsc::{Receiver, Sender},
+    str::FromStr,
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        Arc,
+    },
     thread,
     time::{self, Duration, Instant, UNIX_EPOCH},
 };
-use t_binding::api;
+use t_binding::api::{Api, ApiTx, RustApi};
 use t_console::PNG;
 use t_runner::needle::NeedleConfig;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use tracing_core::Level;
 mod deque;
 mod helper;
 
+#[derive(Debug, PartialEq)]
 enum RecordMode {
     Edit,
     Interact,
     View,
 }
 
+#[derive(Debug, PartialEq)]
+enum Tab {
+    Vnc,
+    Serial,
+    Ssh,
+}
+
 struct Screenshot {
     recv_time: DateTime<Local>,
     source: PNG,
-    image: Option<TextureHandle>,
+    image: TextureHandle,
     #[allow(unused)]
     thumbnail: Option<TextureHandle>,
 }
 
 impl Screenshot {
-    pub fn new(source: PNG, recv_time: DateTime<Local>) -> Self {
+    pub fn new(
+        source: PNG,
+        ctx: &egui::Context,
+        use_rayon: bool,
+        recv_time: DateTime<Local>,
+    ) -> Self {
+        // update screenshot
+        let color_image = to_egui_rgb_color_image(&source, use_rayon);
+        let handle = ctx.load_texture(
+            "current screenshot",
+            color_image,
+            TextureOptions {
+                ..Default::default()
+            },
+        );
         Self {
             recv_time,
             source,
-            image: None,
+            image: handle,
             thumbnail: None,
         }
     }
 
-    fn clone_source(&self) -> Self {
+    fn clone(&self) -> Self {
         Self {
             recv_time: self.recv_time,
             source: self.source.clone(),
-            image: None,
+            image: self.image.clone(),
             thumbnail: None,
         }
     }
 
-    fn image(&mut self, ctx: &egui::Context, use_rayon: bool) -> egui::Image {
-        let sized_image = match &self.image {
-            None => {
-                // update screenshot
-                let color_image = to_egui_rgb_color_image(&self.source, use_rayon);
-                let handle = ctx.load_texture(
-                    "current screenshot",
-                    color_image,
-                    TextureOptions {
-                        ..Default::default()
-                    },
-                );
-                let sized_image = egui::load::SizedTexture::new(handle.id(), handle.size_vec2());
-                self.image = Some(handle);
-                sized_image
-            }
-            Some(handle) => egui::load::SizedTexture::new(handle.id(), handle.size_vec2()),
-        };
-        egui::Image::from_texture(sized_image)
+    fn image(&self) -> egui::Image {
+        egui::Image::from_texture(egui::load::SizedTexture::new(
+            self.image.id(),
+            self.image.size_vec2(),
+        ))
     }
 
-    fn thumbnail(&mut self, ctx: &egui::Context, use_rayon: bool) -> egui::Image {
+    #[allow(unused)]
+    fn thumbnail(&self) -> egui::Image {
         if let Some(thumbnail) = self.thumbnail.as_ref() {
             let sized_image = egui::load::SizedTexture::new(thumbnail.id(), thumbnail.size_vec2());
             egui::Image::from_texture(sized_image)
         } else {
             // generate thumbnail looks too slow, so commented now
-            return self.image(ctx, use_rayon);
+            return self.image();
 
             // let default_shrink_scale = 200. / self.source.height as f32;
             // let src = &self.source;
@@ -141,18 +158,23 @@ struct SampleStatus {
 
 impl SampleStatus {
     pub fn update(&mut self) {
+        // update every second
         self.start += self.samply_rate;
+        // vnc fps = screenshot received times in this second
         self.vnc_fps = self.screenshot_count;
 
+        // gui fps = egui frame render times in this second
+        self.gui_fps = self.frame_renders.len();
+
+        // frame render is the mean of all frame render times in this second
         let mut sum = Duration::ZERO;
         for frame in &self.frame_renders {
             sum += *frame;
         }
-        sum /= self.frame_renders.len() as u32;
-        self.frame_render = sum;
+        let mean = sum / self.frame_renders.len() as u32;
+        self.frame_render = mean;
 
-        self.gui_fps = self.frame_renders.len();
-
+        // refresh to zero
         self.screenshot_count = 0;
         self.frame_renders.clear();
     }
@@ -186,14 +208,84 @@ impl Default for EguiFrameStatus {
         let now = Instant::now();
         Self {
             screenshot_interval: Some(Duration::from_secs_f32(1. / 10.)),
-            egui_interval: Some(Duration::from_secs_f32(1. / 30.)),
+            egui_interval: Some(Duration::from_secs_f32(1. / 60.)),
             egui_start: now,
             last_screenshot: now,
         }
     }
 }
 
+pub struct FileWatcher {
+    cache: Arc<parking_lot::RwLock<HashMap<PathBuf, String>>>,
+    watchers: parking_lot::Mutex<Vec<notify::RecommendedWatcher>>,
+}
+
+impl Default for FileWatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FileWatcher {
+    pub fn new() -> Self {
+        Self {
+            cache: Arc::new(parking_lot::RwLock::new(HashMap::new())),
+            watchers: parking_lot::Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn try_watch(&self, path: impl AsRef<Path>) {
+        let path = path.as_ref().to_path_buf();
+        // let path_clone = path.as_ref().to_path_buf();
+        let cache = self.cache.clone();
+        if cache.read().get(path.as_path()).is_none() {
+            if let Ok(file) = fs::read_to_string(path.as_path()) {
+                let mut lock = cache.write();
+                // double check
+                if lock.get(path.as_path()).is_some() {
+                    return;
+                }
+                lock.insert(path.clone(), file);
+                // lock.insert(path.clone(), file.lines().map(|s| s.to_string()).collect());
+                drop(lock);
+
+                // spawn watcher
+                use notify::Watcher;
+                let path_clone = path.clone();
+                let mut watcher = notify::recommended_watcher(
+                    move |res: Result<notify::Event, notify::Error>| match res {
+                        Ok(_event) => {
+                            let content = fs::read_to_string(&path_clone).unwrap_or_default();
+                            let stripped = console::strip_ansi_codes(&content);
+                            cache.write().insert(
+                                path_clone.clone(),
+                                // stripped.lines().map(|s| s.to_string()).collect(),
+                                stripped.to_string(),
+                            );
+                        }
+                        Err(e) => {
+                            println!("watch error: {:?}", e);
+                        }
+                    },
+                )
+                .unwrap();
+                let cfg = notify::Config::default();
+                cfg.with_poll_interval(Duration::from_secs(1));
+                watcher.configure(cfg).unwrap();
+
+                let pathname = path.as_path().display();
+                warn!(msg = "watcher started", path = ?pathname);
+                watcher
+                    .watch(path.as_path(), notify::RecursiveMode::NonRecursive)
+                    .unwrap();
+                self.watchers.lock().push(watcher);
+            }
+        }
+    }
+}
+
 pub struct Recorder {
+    api: RustApi,
     show_confirmation_dialog: bool,
     allowed_to_close: bool,
     stop_tx: Sender<()>,
@@ -202,27 +294,30 @@ pub struct Recorder {
     use_rayon: bool,
 
     // frame evenv count
-    frame_status: EguiFrameStatus,
-    sample_status: SampleStatus,
+    frame_status: Arc<parking_lot::RwLock<EguiFrameStatus>>,
+    sample_status: Arc<parking_lot::RwLock<SampleStatus>>,
+
+    // file
+    file_watcher: FileWatcher,
 
     // screenshot
     mode: RecordMode,
+    tab: Tab,
+    show_config_edit_window: bool,
+    config: Option<t_config::Config>,
+    config_str: String,
+    code_str: String,
+    code_receiver: Option<Receiver<Result<(), String>>>,
+    cursor_range: Option<CursorRange>,
 
     // screenshots
     max_screenshot_num: usize,
     #[allow(unused)]
     screenshot_rx: Option<Receiver<PNG>>,
-    screenshots: std::collections::VecDeque<Screenshot>,
-
-    // edit mode
-    type_string: String,
-    send_key: String,
+    screenshots: Arc<parking_lot::RwLock<std::collections::VecDeque<Screenshot>>>,
 
     // interact mode
-    needle_dir: PathBuf,
     needle_name: String,
-    mouse_click_mode: bool,
-    mouse_click_point: Option<(bool, f32, f32)>,
     drag_pos: Pos2,
     drag_rect: Option<RectF32>,
     drag_rects: Option<Vec<DragedRect>>,
@@ -231,7 +326,8 @@ pub struct Recorder {
 
     // logs
     toasts: egui_notify::Toasts,
-    logs: Deque<(tracing_core::Level, String)>,
+    logs_toasts: Deque<(tracing_core::Level, String)>,
+    logs_history: Deque<(tracing_core::Level, String)>,
 }
 
 struct NeedleSource {
@@ -267,13 +363,17 @@ impl NeedleSource {
 
     pub fn save_json(&self, p: impl AsRef<Path>) -> Result<(), ()> {
         let mut areas = Vec::new();
-        for DragedRect { hover: _, rect } in &self.rects {
+        for DragedRect { rect, click, .. } in &self.rects {
             let area = t_runner::needle::Area {
                 type_field: "match".to_string(),
                 left: rect.left as u16,
                 top: rect.top as u16,
                 width: rect.width as u16,
                 height: rect.height as u16,
+                click: click.map(|(x, y)| t_runner::needle::AreaClick {
+                    left: x as u16,
+                    top: y as u16,
+                }),
             };
             areas.push(area);
         }
@@ -282,7 +382,7 @@ impl NeedleSource {
             properties: Vec::new(),
             tags: vec![self.name.clone()],
         };
-        let s = serde_json::to_string(&cfg).map_err(|_| ())?;
+        let s = serde_json::to_string_pretty(&cfg).map_err(|_| ())?;
         fs::write(p, s).map_err(|_| ())?;
         Ok(())
     }
@@ -292,6 +392,7 @@ pub struct RecorderBuilder {
     // required
     stop_tx: Sender<()>,
     screenshot_rx: Option<Receiver<PNG>>,
+    api: ApiTx,
 
     // option
     max_screenshot_num: usize,
@@ -299,10 +400,11 @@ pub struct RecorderBuilder {
 }
 
 impl RecorderBuilder {
-    pub fn new(stop_tx: Sender<()>) -> Self {
+    pub fn new(stop_tx: Sender<()>, api: ApiTx) -> Self {
         Self {
             stop_tx,
             screenshot_rx: None,
+            api,
             max_screenshot_num: 60,
             needle_dir: None,
         }
@@ -325,9 +427,11 @@ impl RecorderBuilder {
 
     pub fn build(self) -> Recorder {
         Recorder {
+            api: RustApi::new(self.api),
             show_confirmation_dialog: false,
             allowed_to_close: false,
 
+            // only used in PNG to egui::ColorImage, take more cpu usage
             use_rayon: false,
 
             frame_status: Default::default(),
@@ -336,20 +440,61 @@ impl RecorderBuilder {
             stop_tx: self.stop_tx,
             screenshot_rx: self.screenshot_rx,
             mode: RecordMode::Interact,
+            tab: Tab::Vnc,
+            show_config_edit_window: true,
+            config: None,
+            config_str: r#"log_dir = "./logs"
 
+# [serial]
+# serial_file = "/dev/ttyUSB0"
+# bund_rate   = 115200
+
+# [ssh]
+# host        = "127.0.0.1"
+# port        = 22
+# username    = "root"
+# one of password or private_key
+# if both are set, private_key will be used first
+# if none, ~/.ssh/id_rsa will be used
+# password    = ""
+# private_key = ""
+
+# [vnc]
+# host = "127.0.0.1"
+# port = 5901
+# password = "123456" # optional
+# needle_dir = "./needles" # optional
+"#
+            .to_string(),
+            code_receiver: None,
+            code_str: r#"
+export function prehook() {
+    // TODO:
+}
+
+// entry point
+export function main() {
+    // TODO:
+    writeln("ls")
+}
+
+export function afterhook() {
+    // TODO:
+}
+"#
+            .to_string(),
+            cursor_range: None,
+
+            // file
+            file_watcher: FileWatcher::new(),
+
+            // screenshots buffer
             max_screenshot_num: self.max_screenshot_num,
-            screenshots: VecDeque::new(),
-
-            // control
-            type_string: String::new(),
-            send_key: String::new(),
+            screenshots: Arc::new(parking_lot::RwLock::new(std::collections::VecDeque::new())),
 
             // edit
             current_screenshot: None,
-            needle_dir: PathBuf::new(),
             needle_name: String::new(),
-            mouse_click_mode: false,
-            mouse_click_point: None,
             drag_pos: Pos2 { x: 0., y: 0. },
             drag_rects: None,
             drag_rect: None,
@@ -359,144 +504,9 @@ impl RecorderBuilder {
             toasts: egui_notify::Toasts::new()
                 .with_anchor(egui_notify::Anchor::BottomRight) // 10 units from the bottom right corner
                 .with_margin((-10.0, -10.0).into()),
-            logs: Deque::new(100),
+            logs_toasts: Deque::new(50),
+            logs_history: Deque::new(1000),
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct RectF32 {
-    left: f32,
-    top: f32,
-    width: f32,
-    height: f32,
-}
-
-impl RectF32 {
-    #[allow(unused)]
-    pub fn add_delta_f32_noreverse(&mut self, x: f32, y: f32) -> &mut Self {
-        self.width += x;
-        self.height += y;
-        self
-    }
-
-    pub fn reverse_if_needed(&mut self) -> &mut Self {
-        if self.width < 0. {
-            let new_left = self.left + self.width;
-            let new_left = if new_left < 0. { 0. } else { new_left };
-            self.width = self.left - new_left;
-            self.left = new_left;
-        }
-
-        if self.height < 0. {
-            let new_top = self.top + self.height;
-            let new_top = if new_top < 0. { 0. } else { new_top };
-            self.height = self.top - new_top;
-            self.top = new_top;
-        }
-
-        self
-    }
-
-    #[allow(unused)]
-    fn add_delta_f32(&mut self, x: f32, y: f32) {
-        let Self {
-            left,
-            top,
-            width,
-            height,
-        } = self;
-        Self::add_delta_f32_one_side(left, width, x);
-        Self::add_delta_f32_one_side(top, height, y);
-    }
-
-    fn add_delta_f32_one_side(left: &mut f32, width: &mut f32, x: f32) {
-        let l = *left;
-        let mut r = l + *width;
-        r += x;
-
-        let mut new_l = l.min(r);
-        let new_r = l.max(r);
-        if new_l < 0. {
-            new_l = 0.;
-        }
-        *left = new_l;
-        *width = new_r - new_l;
-    }
-
-    fn add_delta_egui_rect(&self, delta: &egui::Rect) -> egui::Rect {
-        egui::Rect {
-            min: Pos2 {
-                x: self.left + delta.left(),
-                y: self.top + delta.top(),
-            },
-            max: Pos2 {
-                x: self.left + self.width + delta.left(),
-                y: self.top + self.height + delta.top(),
-            },
-        }
-    }
-}
-
-#[test]
-fn test_transform_one() {
-    let mut r = RectF32 {
-        left: 2.,
-        top: 2.,
-        width: 0.,
-        height: 0.,
-    };
-    r.add_delta_f32(-1., -1.);
-    assert_eq!(r.left, 1.);
-    assert_eq!(r.top, 1.);
-    assert_eq!(r.width, 1.);
-    assert_eq!(r.height, 1.);
-
-    r.add_delta_f32_noreverse(5., 5.);
-
-    assert_eq!(r.left, 1.);
-    assert_eq!(r.top, 1.);
-    assert_eq!(r.width, 6.);
-    assert_eq!(r.height, 6.);
-
-    r.add_delta_f32_noreverse(-7., -7.);
-    assert_eq!(r.left, 1.);
-    assert_eq!(r.top, 1.);
-    assert_eq!(r.width, -1.);
-    assert_eq!(r.height, -1.);
-
-    r.reverse_if_needed();
-    assert_eq!(r.left, 0.);
-    assert_eq!(r.top, 0.);
-    assert_eq!(r.width, 1.);
-    assert_eq!(r.height, 1.);
-}
-
-#[derive(Debug, Clone, Copy)]
-struct DragedRect {
-    pub hover: bool,
-    pub rect: RectF32,
-}
-
-fn to_egui_rgb_color_image(image: &PNG, use_rayon: bool) -> ColorImage {
-    // NOTE: load image too slow, use rayon speed up 3x
-    let pixels = if use_rayon {
-        use rayon::prelude::*;
-        image
-            .data
-            .par_chunks_exact(3)
-            .map(|p| Color32::from_rgb(p[0], p[1], p[2]))
-            .collect()
-    } else {
-        image
-            .data
-            .chunks_exact(3)
-            .map(|p| Color32::from_rgb(p[0], p[1], p[2]))
-            .collect()
-    };
-    egui::ColorImage {
-        size: [image.width as usize, image.height as usize],
-        pixels,
     }
 }
 
@@ -514,6 +524,41 @@ impl Recorder {
             options,
             Box::new(|cc| {
                 egui_extras::install_image_loaders(&cc.egui_ctx);
+
+                let ctx = cc.egui_ctx.clone();
+                let screenshots = self.screenshots.clone();
+                let frame_status = self.frame_status.clone();
+                let sample_status = self.sample_status.clone();
+                let api = self.api.clone();
+                thread::spawn(move || {
+                    let interval = frame_status.read().screenshot_interval;
+                    loop {
+                        // if already got new screenshot in this egui frame, then skip
+                        if let Some(screenshot_interval) = interval {
+                            if Instant::now()
+                                < frame_status.read().last_screenshot + screenshot_interval
+                            {
+                                continue;
+                            }
+                        }
+
+                        if let Ok(screenshot) = api.vnc_take_screenshot() {
+                            // append new screenshot
+                            // update status
+                            frame_status.write().last_screenshot = Instant::now();
+                            sample_status.write().screenshot_count += 1;
+
+                            // handle too many
+                            if screenshots.read().len() == self.max_screenshot_num {
+                                screenshots.write().pop_front();
+                            }
+
+                            let s = Screenshot::new(screenshot, &ctx, false, Local::now());
+                            screenshots.write().push_back(s);
+                        }
+                        thread::sleep(Duration::from_millis(50));
+                    }
+                });
                 Box::new(self)
             }),
         ) {
@@ -523,59 +568,42 @@ impl Recorder {
 }
 
 impl Recorder {
-    fn pre_frame(&mut self, _ctx: &egui::Context) {
-        self.frame_status.egui_start = Instant::now();
-
-        // if already got new screenshot in this frame, then skip
-        if let Some(screenshot_interval) = self.frame_status.screenshot_interval {
-            if Instant::now() < self.frame_status.last_screenshot + screenshot_interval {
-                return;
-            }
-        }
-        if let Ok(screenshot) = api::vnc_take_screenshot() {
-            // append new screenshot
-            // update status
-            self.frame_status.last_screenshot = Instant::now();
-            self.sample_status.screenshot_count += 1;
-
-            // handle too many
-            if self.screenshots.len() == self.max_screenshot_num {
-                self.screenshots.pop_front();
-            }
-
-            self.screenshots
-                .push_back(Screenshot::new(screenshot, Local::now()));
-        }
+    fn pre_frame(&mut self) {
+        self.frame_status.write().egui_start = Instant::now();
     }
 
     fn after_frame(&mut self, ctx: &egui::Context) {
-        // notify
-        while let Some((level, log)) = self.logs.pop_front() {
-            let mut toast = Toast::custom(log, helper::tracing_level_2_toast_level(level));
+        // handle notify
+        while let Some((level, log)) = self.logs_toasts.pop_front() {
+            let mut toast = Toast::custom(&log, helper::tracing_level_2_toast_level(level));
             toast
                 .set_duration(Some(Duration::from_secs(3)))
                 .set_show_progress_bar(true);
             self.toasts.add(toast);
+            self.logs_history.push_back((level, log));
         }
         self.toasts.show(ctx);
 
-        // calc render time
-        let egui_elasped = Instant::now() - self.frame_status.egui_start;
-        self.sample_status.frame_renders.push(egui_elasped);
+        let mut sample_status = self.sample_status.write();
+        let frame_status = self.frame_status.read();
 
-        // slepp until next frame
-        let elpase_sample = Instant::now() - self.sample_status.start;
-        if elpase_sample > self.sample_status.samply_rate {
-            self.sample_status.update();
+        // calc render time
+        let egui_elasped = Instant::now() - frame_status.egui_start;
+        sample_status.frame_renders.push(egui_elasped);
+
+        // sleep until next frame
+        let elpase_sample = Instant::now() - sample_status.start;
+        if elpase_sample > sample_status.samply_rate {
+            sample_status.update();
             // update phy frame status
             debug!(
                 "receive {} new screenshot in 1s",
-                self.sample_status.screenshot_count
+                sample_status.screenshot_count
             );
         }
 
-        if let Some(internal) = self.frame_status.egui_interval {
-            let elpase = Instant::now() - self.frame_status.egui_start;
+        if let Some(internal) = frame_status.egui_interval {
+            let elpase = Instant::now() - frame_status.egui_start;
             if elpase < internal {
                 thread::sleep(internal - elpase);
             }
@@ -584,542 +612,779 @@ impl Recorder {
         ctx.request_repaint();
     }
 
-    fn render_main(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default()
-            .frame(egui::containers::Frame {
-                // fill: Color32::LIGHT_BLUE,
-                inner_margin: Margin {
-                    left: 10.,
-                    right: 10.,
-                    top: 10.,
-                    bottom: 10.,
-                },
-                stroke: Stroke::new(
-                    2.,
-                    match self.mode {
-                        RecordMode::Edit => Color32::YELLOW,
-                        RecordMode::Interact => Color32::GREEN,
-                        RecordMode::View => Color32::LIGHT_BLUE,
-                    },
-                ),
-                ..Default::default()
-            })
-            .show(ctx, |ui| {
-                egui::ScrollArea::both().show(ui, |ui| {
-                    match self.mode {
-                        RecordMode::Interact => {
-                            if let Some(screenshot) = self.screenshots.back_mut() {
-                                // render current screenshot
-                                let screenshot = ui.add(
-                                    screenshot
-                                        .image(ctx, self.use_rayon)
-                                        .sense(Sense::click_and_drag()),
-                                );
+    fn render_top_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui.button("force refresh").clicked() && self.api.vnc_refresh().is_err() {
+                self.logs_toasts
+                    .push((Level::ERROR, "force refresh failed".to_string()));
+            }
+            let sample_status = self.sample_status.read();
+            ui.colored_label(
+                Color32::RED,
+                RichText::new(format!(
+                    "GUI FPS: {:>2}, {:>3}ms",
+                    sample_status.gui_fps,
+                    sample_status.frame_render.as_millis()
+                ))
+                .heading(),
+            );
 
-                                // if mouse move out of image, do nothing
-                                if let Some(pos) = screenshot.hover_pos() {
-                                    let relative_x = (pos.x as u16)
-                                        .saturating_sub(screenshot.rect.left() as u16);
-                                    let relative_y =
-                                        (pos.y as u16).saturating_sub(screenshot.rect.top() as u16);
+            ui.colored_label(
+                Color32::YELLOW,
+                RichText::new(format!("VNC FPS {:>2}", sample_status.vnc_fps)).heading(),
+            );
+            drop(sample_status);
 
-                                    if let Err(e) = api::vnc_mouse_move(relative_x, relative_y) {
-                                        self.logs.push((
-                                            Level::ERROR,
-                                            format!("mouse move failed, reason = {:?}", e),
-                                        ));
-                                    }
-                                } else {
-                                    return;
-                                }
+            if ui
+                .button(format!(
+                    "rayon: {}",
+                    if self.use_rayon { "on" } else { "off" }
+                ))
+                .clicked()
+            {
+                self.use_rayon = !self.use_rayon;
+            }
 
-                                // TODO: fix drag
-                                if screenshot.drag_started() {
-                                    if let Some(pos) = screenshot.interact_pointer_pos() {
-                                        self.drag_pos = pos;
-                                        if let Err(e) = api::vnc_mouse_keydown() {
-                                            self.logs.push((
-                                                Level::ERROR,
-                                                format!("mouse key down failed, reason = {:?}", e),
-                                            ));
-                                        }
-                                    }
-                                } else if screenshot.dragged() {
-                                    self.drag_pos += screenshot.drag_delta();
-                                    if let Err(e) = api::vnc_mouse_drag(
-                                        self.drag_pos.x as u16,
-                                        self.drag_pos.y as u16,
-                                    ) {
-                                        self.logs.push((
-                                            Level::ERROR,
-                                            format!("mouse drag failed, reason = {:?}", e),
-                                        ));
-                                    }
-                                } else if screenshot.drag_released() {
-                                    if let Err(e) = api::vnc_mouse_keyup() {
-                                        self.logs.push((
-                                            Level::ERROR,
-                                            format!("mouse key down failed, reason = {:?}", e),
-                                        ));
-                                    }
-                                }
+            ui.colored_label(
+                Color32::GREEN,
+                RichText::new(format!(
+                    "vnc no update:{}s",
+                    (Instant::now() - self.frame_status.read().last_screenshot).as_secs()
+                ))
+                .heading(),
+            );
+        });
+    }
 
-                                if screenshot.clicked() {
-                                    if let Err(e) = api::vnc_mouse_click() {
-                                        self.logs.push((
-                                            Level::ERROR,
-                                            format!("mouse click failed, reason = {:?}", e),
-                                        ));
-                                    }
-                                }
+    fn render_vnc(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
+            match self.mode {
+                RecordMode::Interact => {
+                    if let Some(screenshot) = self.screenshots.read().back() {
+                        // render current screenshot
+                        let img = screenshot.image();
+                        let screenshot = ui.add(img.sense(Sense::click_and_drag()));
 
-                                if screenshot.secondary_clicked() {
-                                    if let Err(e) = api::vnc_mouse_rclick() {
-                                        self.logs.push((
-                                            Level::ERROR,
-                                            format!("mouse right click failed, reason = {:?}", e),
-                                        ));
-                                    }
-                                }
+                        // if mouse move out of image, do nothing
+                        if let Some(pos) = screenshot.hover_pos() {
+                            let relative_x =
+                                (pos.x as u16).saturating_sub(screenshot.rect.left() as u16);
+                            let relative_y =
+                                (pos.y as u16).saturating_sub(screenshot.rect.top() as u16);
+
+                            if let Err(e) = self.api.vnc_mouse_move(relative_x, relative_y) {
+                                self.logs_toasts.push((
+                                    Level::ERROR,
+                                    format!("mouse move failed, reason = {:?}", e),
+                                ));
                             }
+                        } else {
+                            return;
                         }
-                        RecordMode::Edit => {
-                            // handle select event
-                            if self.current_screenshot.is_none() {
-                                if let Some(screenshot) = self.screenshots.back() {
-                                    self.current_screenshot = Some(screenshot.clone_source());
-                                }
-                            }
-                            if let Some(screenshot) = &mut self.current_screenshot {
-                                let mut screenshot = ui.add(
-                                    screenshot
-                                        .image(ctx, self.use_rayon)
-                                        .sense(Sense::click_and_drag()),
-                                );
 
-                                if let Some(pos_max) = screenshot.hover_pos() {
-                                    let x = pos_max.x - screenshot.rect.left();
-                                    let y = pos_max.y - screenshot.rect.top();
-                                    screenshot = screenshot.on_hover_text_at_pointer(format!(
-                                        "x: {:.1}, y: {:.1}",
-                                        x, y
+                        // handle drag
+                        if screenshot.drag_started() {
+                            if let Some(pos) = screenshot.interact_pointer_pos() {
+                                self.drag_pos = pos;
+                                if let Err(e) = self.api.vnc_mouse_keydown() {
+                                    self.logs_toasts.push((
+                                        Level::ERROR,
+                                        format!("mouse key down failed, reason = {:?}", e),
                                     ));
                                 }
+                            }
+                        } else if screenshot.dragged() {
+                            self.drag_pos += screenshot.drag_delta();
+                            if let Err(e) = self
+                                .api
+                                .vnc_mouse_drag(self.drag_pos.x as u16, self.drag_pos.y as u16)
+                            {
+                                self.logs_toasts.push((
+                                    Level::ERROR,
+                                    format!("mouse drag failed, reason = {:?}", e),
+                                ));
+                            }
+                        } else if screenshot.drag_stopped() {
+                            if let Err(e) = self.api.vnc_mouse_keyup() {
+                                self.logs_toasts.push((
+                                    Level::ERROR,
+                                    format!("mouse key down failed, reason = {:?}", e),
+                                ));
+                            }
+                        }
 
-                                if self.mouse_click_mode {
-                                    if screenshot.clicked() {
-                                        if let Some(click_point) = screenshot.hover_pos() {
-                                            self.toasts.info("add pos");
-                                            self.mouse_click_point = Some((
-                                                false,
-                                                click_point.x - screenshot.rect.left(),
-                                                click_point.y - screenshot.rect.left(),
-                                            ));
-                                        }
-                                    }
-                                } else {
-                                    if screenshot.drag_started() && self.drag_rect.is_none() {
-                                        if let Some(start_point) = screenshot.interact_pointer_pos()
-                                        {
-                                            let drag_rect = RectF32 {
-                                                left: start_point.x - screenshot.rect.left(),
-                                                top: start_point.y - screenshot.rect.top(),
-                                                width: 0.,
-                                                height: 0.,
-                                            };
-                                            self.drag_rect = Some(drag_rect);
-                                        }
-                                    }
-                                    if screenshot.dragged() {
-                                        if let Some(rect) = self.drag_rect.as_mut() {
-                                            if let Some(pos_max) = screenshot.interact_pointer_pos()
-                                            {
-                                                rect.width =
-                                                    pos_max.x - screenshot.rect.left() - rect.left;
-                                                rect.height =
-                                                    pos_max.y - screenshot.rect.top() - rect.top;
-                                            }
+                        if screenshot.clicked() {
+                            if let Err(e) = self.api.vnc_mouse_click() {
+                                self.logs_toasts.push((
+                                    Level::ERROR,
+                                    format!("mouse click failed, reason = {:?}", e),
+                                ));
+                            }
+                        }
 
-                                            // let delta = screenshot.drag_delta();
-                                            // rect.add_delta_f32_noreverse(delta.x, delta.y);
+                        if screenshot.secondary_clicked() {
+                            if let Err(e) = self.api.vnc_mouse_rclick() {
+                                self.logs_toasts.push((
+                                    Level::ERROR,
+                                    format!("mouse right click failed, reason = {:?}", e),
+                                ));
+                            }
+                        }
+                    }
+                }
+                RecordMode::Edit => {
+                    // handle screenshot
+                    if let Some(screenshot) = self.screenshots.read().back() {
+                        // ---------------------------------------------------------------------------------------------------------
 
-                                            let rect = rect
-                                                .clone()
-                                                .reverse_if_needed()
-                                                .add_delta_egui_rect(&screenshot.rect);
-                                            ui.painter().rect_filled(
-                                                rect,
-                                                0.0,
-                                                Color32::from_rgba_premultiplied(0, 255, 0, 100),
-                                            );
-                                        }
-                                    }
-                                    if screenshot.drag_released() {
-                                        if let Some(mut rect) = self.drag_rect.take() {
-                                            rect.reverse_if_needed();
-                                            if rect.width != 0. && rect.height != 0. {
-                                                if self.drag_rects.is_none() {
-                                                    self.drag_rects = Some(Vec::new());
-                                                }
-                                                if let Some(rects) = self.drag_rects.as_mut() {
-                                                    rects.push(DragedRect { hover: false, rect });
-                                                }
-                                            }
-                                        }
-                                    }
+                        let mut screenshot =
+                            ui.add(screenshot.image().sense(Sense::click_and_drag()));
+
+                        if let Some(pos_max) = screenshot.hover_pos() {
+                            let x = pos_max.x - screenshot.rect.left();
+                            let y = pos_max.y - screenshot.rect.top();
+                            screenshot = screenshot
+                                .on_hover_text_at_pointer(format!("x: {:.1}, y: {:.1}", x, y));
+                        }
+
+                        // ---------------------------------------------------------------------------------------------------------
+
+                        // handle rect drag
+                        if screenshot.drag_started() && self.drag_rect.is_none() {
+                            if let Some(start_point) = screenshot.interact_pointer_pos() {
+                                let drag_rect = RectF32 {
+                                    left: start_point.x - screenshot.rect.left(),
+                                    top: start_point.y - screenshot.rect.top(),
+                                    width: 0.,
+                                    height: 0.,
+                                };
+                                self.drag_rect = Some(drag_rect);
+                            }
+                        }
+                        if screenshot.dragged() {
+                            if let Some(rect) = self.drag_rect.as_mut() {
+                                if let Some(pos_max) = screenshot.interact_pointer_pos() {
+                                    rect.width = pos_max.x - screenshot.rect.left() - rect.left;
+                                    rect.height = pos_max.y - screenshot.rect.top() - rect.top;
                                 }
 
-                                // draw selected rect
-                                if let Some(rects) = self.drag_rects.as_ref() {
-                                    for DragedRect { hover, rect } in rects.iter() {
-                                        let rect = rect.add_delta_egui_rect(&screenshot.rect);
-                                        // mesh.add_colored_rect(rect, Color32::LIGHT_BLUE);
-                                        ui.painter().rect_filled(
+                                // let delta = screenshot.drag_delta();
+                                // rect.add_delta_f32_noreverse(delta.x, delta.y);
+
+                                let rect = rect
+                                    .clone()
+                                    .reverse_if_needed()
+                                    .add_delta_egui_rect(&screenshot.rect);
+                                ui.painter().rect_filled(
+                                    rect,
+                                    0.0,
+                                    Color32::from_rgba_premultiplied(0, 255, 0, 100),
+                                );
+                            }
+                        }
+                        if screenshot.drag_stopped() {
+                            if let Some(mut rect) = self.drag_rect.take() {
+                                rect.reverse_if_needed();
+                                if rect.width != 0. && rect.height != 0. {
+                                    if self.drag_rects.is_none() {
+                                        self.drag_rects = Some(Vec::new());
+                                    }
+                                    if let Some(rects) = self.drag_rects.as_mut() {
+                                        rects.push(DragedRect {
+                                            hover: false,
                                             rect,
-                                            0.0,
-                                            if *hover {
-                                                Color32::from_rgba_premultiplied(255, 0, 0, 30)
-                                            } else {
-                                                Color32::from_rgba_premultiplied(0, 255, 0, 100)
-                                            },
-                                        );
+                                            click: None,
+                                        });
                                     }
-                                }
-
-                                // draw selected rect
-                                if let Some((hover, x, y)) = &self.mouse_click_point {
-                                    ui.painter().circle_filled(
-                                        Pos2 {
-                                            x: x + screenshot.rect.left(),
-                                            y: y + screenshot.rect.left(),
-                                        },
-                                        10.,
-                                        if *hover {
-                                            Color32::from_rgba_premultiplied(255, 0, 0, 30)
-                                        } else {
-                                            Color32::from_rgba_premultiplied(0, 0, 255, 30)
-                                        },
-                                    );
                                 }
                             }
                         }
-                        RecordMode::View => {
-                            if self.current_screenshot.is_none() {
-                                if let Some(screenshot) = self.screenshots.back() {
-                                    self.current_screenshot = Some(screenshot.clone_source());
+
+                        // ---------------------------------------------------------------------------------------------------------
+
+                        // handle rects
+                        if let Some(rects) = self.drag_rects.as_mut() {
+                            for DragedRect { hover, rect, click } in rects.iter_mut() {
+                                // draw rect
+                                let draw_rect = rect.add_delta_egui_rect(&screenshot.rect);
+                                let rect_res = ui.allocate_rect(draw_rect, Sense::click_and_drag());
+                                ui.painter().rect_filled(
+                                    draw_rect,
+                                    0.0,
+                                    if *hover {
+                                        Color32::from_rgba_premultiplied(120, 0, 0, 30)
+                                    } else {
+                                        Color32::from_rgba_premultiplied(0, 120, 0, 30)
+                                    },
+                                );
+
+                                // draw click point
+                                if let Some((x, y)) = click {
+                                    let point = ui.add(|ui: &mut egui::Ui| {
+                                        let circle_pos = Pos2 {
+                                            x: *x + rect_res.rect.left(),
+                                            y: *y + rect_res.rect.top(),
+                                        };
+                                        let radius = 10.;
+                                        let response = ui.allocate_rect(
+                                            Rect {
+                                                min: circle_pos - Vec2::splat(radius),
+                                                max: circle_pos + Vec2::splat(radius),
+                                            },
+                                            Sense::drag(),
+                                        );
+                                        ui.painter().circle_filled(
+                                            response.rect.center(),
+                                            radius,
+                                            if *hover {
+                                                Color32::from_rgba_premultiplied(255, 255, 255, 120)
+                                            } else {
+                                                Color32::from_rgba_premultiplied(255, 255, 255, 30)
+                                            },
+                                        );
+                                        response
+                                    });
+                                    if point.dragged() {
+                                        *x += point.drag_delta().x;
+                                        *y += point.drag_delta().y;
+                                    }
+                                }
+
+                                // draw resize drag button
+                                let resize_button = ui.add(|ui: &mut egui::Ui| {
+                                    let circle_pos = rect_res.rect.max;
+                                    let radius = 10.;
+                                    let response = ui.allocate_rect(
+                                        Rect {
+                                            min: circle_pos - Vec2::splat(radius),
+                                            max: circle_pos + Vec2::splat(radius),
+                                        },
+                                        Sense::drag(),
+                                    );
+                                    ui.painter().circle_filled(
+                                        response.rect.center(),
+                                        radius,
+                                        Color32::from_rgba_premultiplied(255, 255, 255, 30),
+                                    );
+                                    response
+                                });
+
+                                // handle add click point
+                                if rect_res.double_clicked() {
+                                    if let Some(click_point) = rect_res.interact_pointer_pos() {
+                                        self.toasts.info("add pos");
+                                        *click = Some((
+                                            click_point.x - rect_res.rect.left(),
+                                            click_point.y - rect_res.rect.top(),
+                                        ));
+                                    }
+                                }
+                                // handle rect drag
+                                if rect_res.dragged() {
+                                    rect.left += rect_res.drag_delta().x;
+                                    rect.top += rect_res.drag_delta().y;
+                                }
+
+                                // handle rect resize
+                                if resize_button.hover_pos().is_some() {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+                                } else {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+                                }
+                                if resize_button.dragged() {
+                                    rect.width += resize_button.drag_delta().x;
+                                    rect.height += resize_button.drag_delta().y;
                                 }
                             }
-                            if let Some(screenshot) = &mut self.current_screenshot {
-                                ui.add(
-                                    screenshot
-                                        .image(ctx, self.use_rayon)
-                                        .sense(Sense::click_and_drag()),
-                                );
-                            }
+                        }
+                    }
+                }
+                RecordMode::View => {
+                    if self.current_screenshot.is_none() {
+                        if let Some(screenshot) = self.screenshots.read().back() {
+                            self.current_screenshot = Some(screenshot.clone());
+                        }
+                    }
+                    if let Some(screenshot) = &mut self.current_screenshot {
+                        ui.add(screenshot.image().sense(Sense::click_and_drag()));
+                    }
+                }
+            }
+        });
+    }
+
+    fn render_logs(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
+            for (level, log) in self.logs_history.iter().rev() {
+                let color = tracing_level_2_egui_color32(level);
+                ui.colored_label(color, log);
+            }
+        });
+    }
+
+    #[allow(unused)]
+    fn render_screenshorts(&mut self, ui: &mut egui::Ui) {
+        ui.heading(format!(
+            "screenshot buffer count: {}",
+            self.screenshots.read().len()
+        ));
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            let mut deleted = Vec::new();
+            for (i, screenshot) in self.screenshots.read().iter().rev().enumerate() {
+                ui.group(|ui| {
+                    // top control bar
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{}", screenshot.recv_time.format("%H:%M:%S")));
+                        if ui.button("del").clicked() {
+                            deleted.push(i);
+                        }
+                    });
+                    // thumbnail
+                    let thumbnail = ui.add(screenshot.thumbnail().max_height(200.));
+                    if thumbnail.clicked() {
+                        self.mode = RecordMode::View;
+                        self.current_screenshot = Some(screenshot.clone());
+                    }
+                });
+                ui.separator();
+            }
+            let mut index: usize = self.screenshots.read().len();
+            self.screenshots.write().retain(|_| {
+                index -= 1;
+                !deleted.contains(&index)
+            });
+        });
+    }
+
+    fn render_code_editor(&mut self, ui: &mut egui::Ui) {
+        // code editor
+        ui.label(format!(
+            "selected: {:?}",
+            self.cursor_range.map(|r| r.as_sorted_char_range())
+        ));
+        egui::ScrollArea::both().show(ui, |ui| {
+            let script_editor = TextEdit::multiline(&mut self.code_str)
+                .code_editor()
+                .lock_focus(true)
+                .desired_width(f32::INFINITY)
+                .desired_rows(30)
+                .show(ui);
+            if let Some(range) = script_editor.cursor_range {
+                self.cursor_range = Some(range);
+            }
+        });
+
+        if let Some(rx) = self.code_receiver.as_ref() {
+            if let Ok(res) = rx.try_recv() {
+                info!(msg = "run script done", res = ?res);
+                self.code_receiver = None;
+                if let Err(e) = res {
+                    self.logs_toasts
+                        .push((Level::ERROR, format!("script run failed: {:?}", e)));
+                }
+            }
+        }
+        ui.add_enabled_ui(self.code_receiver.is_none(), |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("run script").clicked() {
+                    let code = self.code_str.clone();
+                    let (tx, rx) = channel();
+                    self.code_receiver = Some(rx);
+
+                    let msg_tx = self.api.tx.clone();
+                    info!(msg = "run script");
+                    thread::spawn(move || {
+                        let res = t_binding::JSEngine::new(msg_tx).run_string(code.as_str());
+                        tx.send(res)
+                    });
+                }
+                if self.code_receiver.is_some() {
+                    ui.spinner();
+                }
+            });
+        });
+    }
+
+    fn render_rect(ui: &mut egui::Ui, rects: &mut Vec<DragedRect>) {
+        let mut delete_rects = Vec::new();
+        for (i, DragedRect { hover, rect, click }) in rects.iter_mut().rev().enumerate() {
+            *hover = ui
+                .group(|ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("delete").clicked() {
+                            delete_rects.push(i);
+                        };
+                        ui.label(format!(
+                            "rect : l:{:.1?} t:{:.1?} w:{:.1?} h:{:.1?}",
+                            rect.left, rect.top, rect.width, rect.height
+                        ));
+                    });
+                    if let Some((x, y)) = click {
+                        let mut delated = false;
+                        ui.horizontal(|ui| {
+                            if ui.button("delete").clicked() {
+                                delated = true;
+                            };
+                            ui.label(format!("point: x:{:.1?}, y:{:.1?}", x, y));
+                        });
+                        if delated {
+                            *click = None;
                         }
                     }
                 })
-            });
-    }
-
-    fn render_bottom(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // screenshots
-        egui::TopBottomPanel::bottom("screenshots").show(ctx, |ui| {
-            // ui.set_max_height(ui.available_height() / 4.);
-            ui.set_max_height(200.);
-            ui.heading(format!(
-                "screenshot buffer count: {}",
-                self.screenshots.len()
-            ));
-            egui::ScrollArea::horizontal().show(ui, |ui| {
-                // row of screenshots
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                    let mut deleted = Vec::new();
-                    for (i, screenshot) in self.screenshots.iter_mut().rev().enumerate() {
-                        ui.with_layout(egui::Layout::top_down(egui::Align::TOP), |ui| {
-                            ui.group(|ui| {
-                                // top control bar
-                                ui.with_layout(
-                                    egui::Layout::left_to_right(egui::Align::LEFT),
-                                    |ui| {
-                                        ui.label(format!(
-                                            "{}",
-                                            screenshot.recv_time.format("%H:%M:%S")
-                                        ));
-                                        if ui.button("del").clicked() {
-                                            deleted.push(i);
-                                        }
-                                    },
-                                );
-                                // thumbnail
-                                let thumbnail = ui.add(
-                                    screenshot.thumbnail(ctx, self.use_rayon).max_height(200.),
-                                );
-                                if thumbnail.clicked() {
-                                    self.mode = RecordMode::View;
-                                    self.current_screenshot = Some(screenshot.clone_source());
-                                }
-                            });
-                        });
-                    }
-                    let mut index: usize = self.screenshots.len();
-                    self.screenshots.retain(|_| {
-                        index -= 1;
-                        !deleted.contains(&index)
-                    });
-                });
-            });
+                .response
+                .hovered();
+        }
+        // handle delete action
+        let mut index: usize = rects.len();
+        rects.retain(|_| {
+            index -= 1;
+            !delete_rects.contains(&index)
         });
     }
 
-    fn render_sidebar(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // control bar and needle list
-        egui::SidePanel::right("control panel").show(ctx, |ui| {
-            egui::ScrollArea::vertical()
-                .id_source("control panel")
-                .show(ui, |ui| {
-                    ui.set_height(ui.available_height() / 4.);
-
+    fn render_needles(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.add_enabled_ui(
+                self.config
+                    .as_ref()
+                    .map(|c| c.vnc.is_some())
+                    .unwrap_or_default(),
+                |ui| ui.selectable_value(&mut self.mode, RecordMode::Interact, "Vnc"),
+            );
+            ui.add_enabled_ui(
+                self.config
+                    .as_ref()
+                    .map(|c| c.vnc.is_some())
+                    .unwrap_or_default(),
+                |ui| {
                     if ui
-                        .button(match self.mode {
-                            RecordMode::Edit => "vnc client",
-                            RecordMode::Interact => "edit mode",
-                            RecordMode::View => "vnc client",
-                        })
+                        .selectable_value(&mut self.mode, RecordMode::Edit, "Needle Edit")
                         .clicked()
                     {
-                        match self.mode {
-                            RecordMode::Edit => self.mode = RecordMode::Interact,
-                            RecordMode::Interact => self.mode = RecordMode::Edit,
-                            RecordMode::View => self.mode = RecordMode::Interact,
+                        if let Err(e) = self.api.vnc_mouse_hide() {
+                            self.logs_toasts.push((
+                                Level::ERROR,
+                                format!("mouse hide failed, reason = {:?}", e),
+                            ));
                         }
-                    };
+                    }
+                    self.current_screenshot = self.screenshots.read().back().map(|x| x.clone());
+                },
+            );
+            ui.add_enabled_ui(
+                self.config
+                    .as_ref()
+                    .map(|c| c.serial.is_some())
+                    .unwrap_or_default(),
+                |ui| ui.selectable_value(&mut self.mode, RecordMode::View, "View"),
+            );
+        });
 
-                    match self.mode {
-                        RecordMode::Edit => {}
-                        RecordMode::View => {}
-                        RecordMode::Interact => {
-                            ui.with_layout(egui::Layout::left_to_right(egui::Align::LEFT), |ui| {
-                                if ui.button("send string").clicked()
-                                    && api::vnc_type_string(self.type_string.clone()).is_err()
-                                {
-                                    self.logs
-                                        .push((Level::ERROR, "send text failed".to_string()));
-                                }
-                                ui.text_edit_singleline(&mut self.type_string);
-                            });
-                            ui.with_layout(egui::Layout::left_to_right(egui::Align::LEFT), |ui| {
-                                if ui.button("send key").clicked()
-                                    && api::vnc_send_key(self.send_key.clone()).is_err()
-                                {
-                                    self.logs
-                                        .push((Level::ERROR, "send key failed".to_string()));
-                                }
-                                ui.text_edit_singleline(&mut self.send_key);
-                            });
-                        }
+        match self.mode {
+            RecordMode::Interact => {}
+            RecordMode::Edit => {
+                ui.separator();
+                let needle_dir = self
+                    .config
+                    .as_ref()
+                    .and_then(|c| c.vnc.as_ref().and_then(|c| c.needle_dir.as_ref()))
+                    .and_then(|s| PathBuf::from_str(s).ok());
+
+                let needle_dir_clone = needle_dir.clone();
+                ui.vertical(|ui| {
+                    // needle dir path
+                    if let Some(dir) = needle_dir_clone {
+                        ui.colored_label(
+                            Color32::GREEN,
+                            format!("folder: {}", dir.to_string_lossy()),
+                        );
+                    } else {
+                        ui.colored_label(
+                            Color32::RED,
+                            "folder: Please set needle dir in your config file",
+                        );
                     }
                 });
 
-            // needle list
-            egui::ScrollArea::vertical()
-                .id_source("needle view")
-                .show(ui, |ui| {
-                    if ui
-                        .button(if self.mouse_click_mode {
-                            "needle crate mode: mouse"
-                        } else {
-                            "needle crate mode: rect drag"
-                        })
-                        .clicked()
-                    {
-                        self.mouse_click_mode = !self.mouse_click_mode;
-                    };
-
-                    ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                        // related button
-                        if ui.button("folder").clicked() {
-                            if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                                self.needle_dir = path;
-                            }
-                        }
-                        // needle dir path
-                        let dir = self.needle_dir.to_string_lossy();
-                        ui.label(if dir.is_empty() {"No dir selected".to_string()} else {dir.to_string()});
-                    });
-
-                    ui.group(|ui| {
-                        // needle name
-                        ui.text_edit_singleline(&mut self.needle_name);
-                        // save button
-                        if ui.button("save needle").clicked() {
-                            if let Some(s) = self.current_screenshot.take() {
-                                if !self.needle_name.is_empty() {
-                                    if let Some(rects) = self.drag_rects.take() {
-                                        let needle = NeedleSource {
-                                            screenshot: s.clone_source(),
-                                            rects,
-                                            name: self.needle_name.clone(),
-                                        };
-                                        if needle.save_to_file(self.needle_dir.clone()).is_ok() {
-                                            self.needles.push(needle);
-                                            self.mode = RecordMode::Interact;
+                ui.group(|ui| {
+                    // needle name
+                    ui.text_edit_singleline(&mut self.needle_name);
+                    // save button
+                    if ui.button("save needle").clicked() {
+                        match needle_dir.as_ref() {
+                            Some(needle_dir) => match self.current_screenshot.take() {
+                                Some(s) => {
+                                    if !self.needle_name.is_empty() {
+                                        if let Some(rects) = self.drag_rects.take() {
+                                            let needle = NeedleSource {
+                                                screenshot: s.clone(),
+                                                rects,
+                                                name: self.needle_name.clone(),
+                                            };
+                                            if needle.save_to_file(needle_dir).is_ok() {
+                                                self.needles.push(needle);
+                                                self.mode = RecordMode::Interact;
+                                                self.logs_toasts.push((
+                                                    Level::INFO,
+                                                    "save needle success".to_string(),
+                                                ));
+                                            } else {
+                                                self.drag_rects = Some(needle.rects);
+                                                self.logs_toasts.push((
+                                                    Level::ERROR,
+                                                    "save needle failed".to_string(),
+                                                ));
+                                            }
                                         } else {
-                                            self.drag_rects = Some(needle.rects);
+                                            self.logs_toasts.push((
+                                                Level::ERROR,
+                                                "no area selected".to_string(),
+                                            ));
                                         }
+                                    } else {
+                                        self.logs_toasts.push((
+                                            Level::ERROR,
+                                            "needle name is empty".to_string(),
+                                        ));
                                     }
                                 }
+                                None => todo!(),
+                            },
+                            None => {
+                                self.logs_toasts.push((
+                                    Level::ERROR,
+                                    "folder: Please set needle dir in your config file".to_string(),
+                                ));
                             }
                         }
+                    }
 
-                        if let Some(rects) = self.drag_rects.as_mut() {
-                            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                                let mut delete_rects = Vec::new();
-                                for (i, DragedRect { hover, rect }) in
-                                    rects.iter_mut().rev().enumerate()
-                                {
-                                    ui.with_layout(
-                                        egui::Layout::left_to_right(egui::Align::LEFT),
-                                        |ui| {
-                                            *hover = ui
-                                                .group(|ui| {
-                                                    ui.label(format!(
-                                                        "    rect : l:{:.1?} t:{:.1?} w:{:.1?} h:{:.1?}",
-                                                        rect.left,
-                                                        rect.top,
-                                                        rect.width,
-                                                        rect.height
-                                                    ));
-                                                    if ui.button("delete").clicked() {
-                                                        delete_rects.push(i);
-                                                    };
-                                                })
-                                                .response
-                                                .hovered();
-                                        },
-                                    );
-                                }
-
-                                // handle delete action
-                                let mut index: usize = rects.len();
-                                rects.retain(|_| {
-                                    index -= 1;
-                                    !delete_rects.contains(&index)
-                                });
-                            });
-                        }
-
-                        let mut delated = false;
-                        if let Some((hover, x, y)) = &mut self.mouse_click_point {
-                            ui.with_layout(egui::Layout::left_to_right(egui::Align::LEFT), |ui| {
-                                *hover = ui
-                                    .group(|ui| {
-                                        ui.label(format!(
-                                            "    point: {{x:{:.1?}, y:{:.1?}}}",
-                                            x, y
-                                        ));
-                                        if ui.button("delete").clicked() {
-                                            delated = true;
-                                        };
-                                    })
-                                    .response
-                                    .hovered()
-                            });
-                        }
-                        if delated {
-                            self.mouse_click_point = None;
-                        }
-                    });
-
-                    ui.add_space(20.);
-                    ui.heading("saved needles");
-                    ui.add_space(20.);
-
-                    for NeedleSource {
-                        screenshot: _,
-                        rects,
-                        name,
-                    } in self.needles.iter_mut()
-                    {
-                        ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                            ui.label(
-                                RichText::new(format!("tag: {}", name))
-                                    .text_style(egui::TextStyle::Heading),
-                            );
-
-                            let mut deleted = Vec::new();
-                            for (i, DragedRect { hover, rect }) in
-                                rects.iter_mut().rev().enumerate()
-                            {
-                                ui.with_layout(
-                                    egui::Layout::left_to_right(egui::Align::LEFT),
-                                    |ui| {
-                                        *hover = ui
-                                            .group(|ui| {
-                                                ui.label(format!(
-                                            "    rect: {{l:{:.1?}, t:{:.1?}, w:{:.1?}, h:{:.1?}}}",
-                                            rect.left, rect.top, rect.width, rect.height
-                                        ));
-
-                                                if ui.button("delete").clicked() {
-                                                    deleted.push(i);
-                                                };
-                                            })
-                                            .response
-                                            .hovered();
-                                    },
-                                );
-                            }
-                            // handle delete action
-                            let mut index: usize = rects.len();
-                            rects.retain(|_| {
-                                index -= 1;
-                                !deleted.contains(&index)
-                            });
-                        });
+                    if let Some(rects) = self.drag_rects.as_mut() {
+                        ui.vertical(|ui| Self::render_rect(ui, rects));
                     }
                 });
-        });
+            }
+            RecordMode::View => {}
+        }
+
+        ui.colored_label(
+            Color32::LIGHT_BLUE,
+            RichText::heading(RichText::new("needles")),
+        );
+        for NeedleSource {
+            screenshot: _,
+            rects,
+            name,
+        } in self.needles.iter_mut()
+        {
+            ui.vertical_centered_justified(|ui| {
+                ui.label(
+                    RichText::new(format!("tag: {}", name)).text_style(egui::TextStyle::Heading),
+                );
+                Self::render_rect(ui, rects)
+            });
+        }
+    }
+
+    fn render_file(&mut self, ui: &mut egui::Ui, path: &PathBuf) {
+        self.file_watcher.try_watch(path);
+        if let Some(file_content) = self.file_watcher.cache.read().get(path) {
+            // let pathname = path.as_path().display();
+            // warn!(msg = "watcher received event", path = ?pathname);
+            // let mut file_content = fs::read_to_string(&path).unwrap_or_default();
+            egui::ScrollArea::both().show(ui, |ui| {
+                ui.columns(1, |cols| {
+                    let left = &mut cols[0];
+                    let start = Instant::now();
+
+                    // TableBuilder::new(left)
+                    //     .striped(true)
+                    //     .resizable(true)
+                    //     .column(Column::auto().resizable(true))
+                    //     .column(Column::remainder())
+                    //     .header(20., |mut header| {
+                    //         header.col(|ui| {
+                    //             ui.heading("line");
+                    //         });
+                    //         header.col(|ui| {
+                    //             ui.heading("content");
+                    //         });
+                    //     })
+                    //     .body(|mut body| {
+                    //         for (i, line) in file_content.iter().enumerate() {
+                    //             body.row(20.0, |mut row| {
+                    //                 row.col(|ui| {
+                    //                     ui.label(format!("{}", i + 1));
+                    //                 });
+                    //                 row.col(|ui| {
+                    //                     ui.label(line.as_str());
+                    //                 });
+                    //             });
+                    //         }
+                    //     });
+                    TextEdit::multiline(&mut file_content.as_str())
+                        .desired_width(f32::INFINITY)
+                        .code_editor()
+                        .interactive(false)
+                        .show(left);
+                    debug!("multiline: {:?}", start.elapsed().as_millis());
+                    // let right = &mut cols[1];
+                    // TextEdit::multiline(&mut stripped)
+                    //     .desired_width(f32::INFINITY)
+                    //     .code_editor()
+                    //     .interactive(false)
+                    //     .show(right);
+                })
+            });
+        }
     }
 }
 
 impl eframe::App for Recorder {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // receive new screenshot
-        self.pre_frame(ctx);
+        self.pre_frame();
 
         // render ui
         egui::TopBottomPanel::top("tool bar").show(ctx, |ui| {
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                if ui.button("force refresh").clicked() && api::vnc_refresh().is_err() {
-                    self.logs
-                        .push((Level::ERROR, "force refresh failed".to_string()));
-                }
-                ui.heading(format!("GUI FPS: {:>2}", self.sample_status.gui_fps));
-                ui.heading(format!("VNC FPS {:>2}", self.sample_status.vnc_fps));
-                if ui
-                    .button(format!(
-                        "rayon: {}",
-                        if self.use_rayon { "on" } else { "off" }
-                    ))
-                    .clicked()
-                {
-                    self.use_rayon = !self.use_rayon;
-                }
-                ui.heading(format!(
-                    "last frame:{:>3}ms",
-                    self.sample_status.frame_render.as_millis()
-                ));
-                ui.heading(format!(
-                    "no update:{}s",
-                    (Instant::now() - self.frame_status.last_screenshot).as_secs()
-                ));
-            });
+            self.render_top_bar(ui);
         });
 
-        self.render_main(ctx, frame);
-        self.render_sidebar(ctx, frame);
-        self.render_bottom(ctx, frame);
+        egui::TopBottomPanel::bottom("status bar").show(ctx, |_ui| {
+            //
+        });
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            egui::TopBottomPanel::top("top_panel")
+                .resizable(true)
+                .show_inside(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.heading("Top Panel");
+                        if ui.button("Config").clicked() {
+                            self.show_config_edit_window = true;
+                        }
+
+                        let size = ctx.screen_rect();
+                        egui::Window::new("Config")
+                            .open(&mut self.show_config_edit_window)
+                            .collapsible(false)
+                            .resizable(true)
+                            .movable(true)
+                            .pivot(egui::Align2::CENTER_CENTER)
+                            .default_pos(Pos2 {
+                                x: (size.min.x + size.max.x) / 2.,
+                                y: (size.min.y + size.max.y) / 2.,
+                            })
+                            .show(ctx, |ui| {
+                                TextEdit::multiline(&mut self.config_str)
+                                    .code_editor()
+                                    .lock_focus(true)
+                                    .desired_width(640.)
+                                    .desired_rows(40)
+                                    .ui(ui);
+                                if ui.button("try connect").clicked() {
+                                    if let Err(e) = self.api.set_config(self.config_str.to_string())
+                                    {
+                                        self.logs_toasts
+                                            .push((Level::ERROR, format!("connect failed, {}", e)));
+                                    } else {
+                                        self.config =
+                                            t_config::Config::from_toml_str(&self.config_str).ok();
+                                        self.logs_toasts
+                                            .push((Level::INFO, "connect success!".to_string()));
+                                    }
+                                };
+                            });
+                    })
+                });
+
+            egui::SidePanel::left("left_panel")
+                .resizable(true)
+                .default_width(300.0)
+                .width_range(300.0..)
+                .show_inside(ui, |ui| {
+                    ui.vertical_centered(|ui| self.render_code_editor(ui));
+                });
+
+            egui::SidePanel::right("right_panel")
+                .resizable(true)
+                .default_width(300.)
+                .show_inside(ui, |ui| {
+                    ui.vertical_centered(|ui| self.render_needles(ui));
+                });
+
+            egui::TopBottomPanel::bottom("bottom_panel")
+                .resizable(true)
+                .default_height(220.)
+                .show_inside(ui, |ui| {
+                    egui::ScrollArea::both().show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            // ui.heading("Bottom Panel");
+                            self.render_logs(ui)
+                        });
+                    })
+                });
+
+            egui::CentralPanel::default()
+                .frame(egui::containers::Frame {
+                    // fill: Color32::LIGHT_BLUE,
+                    inner_margin: Margin {
+                        left: 0.,
+                        right: 0.,
+                        top: 0.,
+                        bottom: 0.,
+                    },
+                    ..Default::default()
+                })
+                .show_inside(ui, |ui| {
+                    // ui.heading("Central Panel");
+                    ui.horizontal(|ui| {
+                        ui.add_enabled_ui(
+                            self.config
+                                .as_ref()
+                                .map(|c| c.vnc.is_some())
+                                .unwrap_or_default(),
+                            |ui| ui.selectable_value(&mut self.tab, Tab::Vnc, "Vnc"),
+                        );
+                        ui.add_enabled_ui(
+                            self.config
+                                .as_ref()
+                                .map(|c| c.ssh.is_some())
+                                .unwrap_or_default(),
+                            |ui| ui.selectable_value(&mut self.tab, Tab::Ssh, "Ssh"),
+                        );
+                        ui.add_enabled_ui(
+                            self.config
+                                .as_ref()
+                                .map(|c| c.serial.is_some())
+                                .unwrap_or_default(),
+                            |ui| ui.selectable_value(&mut self.tab, Tab::Serial, "Serial"),
+                        );
+                    });
+                    match self.tab {
+                        Tab::Vnc => self.render_vnc(ui),
+                        Tab::Serial => {
+                            let serial_log_file = self
+                                .config
+                                .as_ref()
+                                .and_then(|c| c.serial.as_ref().and_then(|c| c.log_file.clone()));
+                            if let Some(path) = serial_log_file {
+                                self.render_file(ui, &path)
+                            }
+                        }
+                        Tab::Ssh => {
+                            let serial_log_file = self
+                                .config
+                                .as_ref()
+                                .and_then(|c| c.ssh.as_ref().and_then(|c| c.log_file.clone()));
+                            if let Some(path) = serial_log_file {
+                                self.render_file(ui, &path)
+                            }
+                        }
+                    };
+                });
+        });
 
         // close control
         if ctx.input(|i| i.viewport().close_requested()) {
@@ -1137,7 +1402,7 @@ impl eframe::App for Recorder {
                 .collapsible(false)
                 .resizable(false)
                 .pivot(egui::Align2::CENTER_CENTER)
-                .current_pos(Pos2 {
+                .default_pos(Pos2 {
                     x: (size.min.x + size.max.x) / 2.,
                     y: (size.min.y + size.max.y) / 2.,
                 })

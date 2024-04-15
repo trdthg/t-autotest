@@ -100,6 +100,13 @@ pub struct Area {
     pub top: u16,
     pub width: u16,
     pub height: u16,
+    pub click: Option<AreaClick>,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AreaClick {
+    pub left: u16,
+    pub top: u16,
 }
 
 impl From<&Area> for Rect {
@@ -211,6 +218,7 @@ mod test {
                     top: 0,
                     width: 5,
                     height: 5,
+                    click: None,
                 }],
                 properties: Vec::new(),
                 tags: vec!["output".to_string()]

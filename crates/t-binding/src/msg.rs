@@ -40,10 +40,14 @@ pub enum MsgReq {
         n: i32,
         timeout: Duration,
     },
-    // vnc
+    VNC(VNC),
+}
+
+#[derive(Debug)]
+pub enum VNC {
     TakeScreenShot,
     Refresh,
-    AssertScreen {
+    CheckScreen {
         tag: String,
         threshold: i32,
         timeout: Duration,

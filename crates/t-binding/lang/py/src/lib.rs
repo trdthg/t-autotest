@@ -1,5 +1,8 @@
+#![allow(non_local_definitions)]
 #![allow(unused)]
+
 mod api;
+use api::PyApi;
 use pyo3::{
     exceptions::{self, PyException, PyTypeError},
     prelude::*,
@@ -12,10 +15,13 @@ use std::{
     },
     time::Duration,
 };
-use t_binding::ApiError;
+use t_binding::{
+    api::{Api, ApiTx},
+    ApiError, MsgReq, MsgRes,
+};
 use t_config::{Config, ConsoleSSH};
 use t_console::SSH;
-use t_runner::{Driver as InnerDriver, Server};
+use t_runner::Driver as InnerDriver;
 use tracing::{error, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -40,7 +46,7 @@ fn into_pyerr(e: ApiError) -> PyErr {
 
 /// Entrypoint, A Python module implemented in Rust.
 #[pymodule]
-fn pyautotest(py: Python, m: &PyModule) -> PyResult<()> {
+fn pyautotest(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     init_logger();
 
     tracing::info!("pyautotest module initialized");
@@ -79,6 +85,7 @@ fn init_logger() {
 struct Driver {
     config: Config,
     driver: InnerDriver,
+    tx: ApiTx,
 }
 
 #[pymethods]
@@ -87,11 +94,15 @@ impl Driver {
     fn __init__(config: String) -> PyResult<Self> {
         let config =
             Config::from_toml_str(&config).map_err(|e| DriverException::new_err(e.to_string()))?;
-        let mut driver = InnerDriver::new(config.clone()).map_err(|e| {
+        let mut driver = InnerDriver::new(Some(config.clone())).map_err(|e| {
             DriverException::new_err(format!("driver init failed, reason: [{}]", e))
         })?;
         driver.start();
-        Ok(Self { driver, config })
+        Ok(Self {
+            tx: driver.msg_tx.clone(),
+            driver,
+            config,
+        })
     }
 
     // ssh
@@ -107,27 +118,33 @@ impl Driver {
     }
 
     fn sleep(&self, py: Python<'_>, miles: i32) {
-        api::sleep(py, miles as u64);
+        PyApi::new(&self.tx, py).sleep(miles as u64);
     }
 
     fn get_env(&self, py: Python<'_>, key: String) -> PyResult<Option<String>> {
-        api::get_env(py, key).map_err(into_pyerr)
+        PyApi::new(&self.tx, py).get_env(key).map_err(into_pyerr)
     }
 
     fn assert_script_run(&self, py: Python<'_>, cmd: String, timeout: i32) -> PyResult<String> {
-        api::assert_script_run(py, cmd, timeout).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .assert_script_run(cmd, timeout)
+            .map_err(into_pyerr)
     }
 
     fn script_run(&self, py: Python<'_>, cmd: String, timeout: i32) -> PyResult<(i32, String)> {
-        api::script_run(py, cmd, timeout).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .script_run(cmd, timeout)
+            .map_err(into_pyerr)
     }
 
     fn write(&self, py: Python<'_>, s: String) -> PyResult<()> {
-        api::write(py, s).map_err(into_pyerr)
+        PyApi::new(&self.tx, py).write(s).map_err(into_pyerr)
     }
 
     fn writeln(&self, py: Python<'_>, s: String) -> PyResult<()> {
-        api::write(py, format!("{s}\n")).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .write(format!("{s}\n"))
+            .map_err(into_pyerr)
     }
 
     fn wait_string_ntimes(
@@ -137,7 +154,9 @@ impl Driver {
         n: i32,
         timeout: i32,
     ) -> PyResult<bool> {
-        api::wait_string_ntimes(py, s, n, timeout).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .wait_string_ntimes(s, n, timeout)
+            .map_err(into_pyerr)
     }
 
     fn assert_wait_string_ntimes(
@@ -147,7 +166,10 @@ impl Driver {
         n: i32,
         timeout: i32,
     ) -> PyResult<bool> {
-        if !api::wait_string_ntimes(py, s, n, timeout).map_err(into_pyerr)? {
+        if !PyApi::new(&self.tx, py)
+            .wait_string_ntimes(s, n, timeout)
+            .map_err(into_pyerr)?
+        {
             return Err(AssertException::new_err("wait failed"));
         }
         Ok(true)
@@ -155,15 +177,19 @@ impl Driver {
 
     // ssh
     fn ssh_assert_script_run(&self, py: Python<'_>, cmd: String, timeout: i32) -> PyResult<String> {
-        api::ssh_assert_script_run(py, cmd, timeout).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .ssh_assert_script_run(cmd, timeout)
+            .map_err(into_pyerr)
     }
 
     fn ssh_script_run(&self, py: Python<'_>, cmd: String, timeout: i32) -> PyResult<(i32, String)> {
-        api::ssh_script_run(py, cmd, timeout).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .ssh_script_run(cmd, timeout)
+            .map_err(into_pyerr)
     }
 
     fn ssh_write(&self, py: Python<'_>, s: String) {
-        api::ssh_write(py, s);
+        PyApi::new(&self.tx, py).ssh_write(s);
     }
 
     fn ssh_assert_script_run_seperate(
@@ -172,7 +198,9 @@ impl Driver {
         cmd: String,
         timeout: i32,
     ) -> PyResult<String> {
-        api::ssh_assert_script_run_seperate(py, cmd, timeout).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .ssh_assert_script_run_seperate(cmd, timeout)
+            .map_err(into_pyerr)
     }
 
     // serial
@@ -182,7 +210,9 @@ impl Driver {
         cmd: String,
         timeout: i32,
     ) -> PyResult<String> {
-        api::serial_assert_script_run(py, cmd, timeout).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .serial_assert_script_run(cmd, timeout)
+            .map_err(into_pyerr)
     }
 
     fn serial_script_run(
@@ -191,56 +221,76 @@ impl Driver {
         cmd: String,
         timeout: i32,
     ) -> PyResult<(i32, String)> {
-        api::serial_script_run(py, cmd, timeout).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .serial_script_run(cmd, timeout)
+            .map_err(into_pyerr)
     }
 
     fn serial_write(&self, py: Python<'_>, s: String) {
-        api::serial_write(py, s);
+        PyApi::new(&self.tx, py).serial_write(s);
     }
 
     // vnc
     fn assert_screen(&self, py: Python<'_>, tag: String, timeout: i32) -> PyResult<()> {
-        api::vnc_assert_screen(py, tag, timeout).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .vnc_assert_screen(tag, timeout)
+            .map_err(into_pyerr)
     }
 
     fn vnc_type_string(&self, py: Python<'_>, s: String) -> PyResult<()> {
-        api::vnc_type_string(py, s).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .vnc_type_string(s)
+            .map_err(into_pyerr)
     }
 
     fn vnc_send_key(&self, py: Python<'_>, s: String) -> PyResult<()> {
-        api::vnc_send_key(py, s).map_err(into_pyerr)
+        PyApi::new(&self.tx, py).vnc_send_key(s).map_err(into_pyerr)
     }
 
     fn vnc_refresh(&self, py: Python<'_>) -> PyResult<()> {
-        api::vnc_refresh(py).map_err(into_pyerr)
+        PyApi::new(&self.tx, py).vnc_refresh().map_err(into_pyerr)
     }
 
     fn check_screen(&self, py: Python<'_>, tag: String, timeout: i32) -> PyResult<bool> {
-        api::vnc_check_screen(py, tag, timeout).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .vnc_check_screen(tag, timeout)
+            .map_err(into_pyerr)
     }
 
     fn mouse_click(&self, py: Python<'_>) -> PyResult<()> {
-        api::vnc_mouse_click(py).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .vnc_mouse_click()
+            .map_err(into_pyerr)
     }
 
     fn mouse_rclick(&self, py: Python<'_>) -> PyResult<()> {
-        api::vnc_mouse_rclick(py).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .vnc_mouse_rclick()
+            .map_err(into_pyerr)
     }
 
     fn mouse_keydown(&self, py: Python<'_>) -> PyResult<()> {
-        api::vnc_mouse_keydown(py).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .vnc_mouse_keydown()
+            .map_err(into_pyerr)
     }
 
     fn mouse_keyup(&self, py: Python<'_>) -> PyResult<()> {
-        api::vnc_mouse_keyup(py).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .vnc_mouse_keyup()
+            .map_err(into_pyerr)
     }
 
     fn mouse_move(&self, py: Python<'_>, x: i32, y: i32) -> PyResult<()> {
-        api::vnc_mouse_move(py, x as u16, y as u16).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .vnc_mouse_move(x as u16, y as u16)
+            .map_err(into_pyerr)
     }
 
     fn mouse_hide(&self, py: Python<'_>) -> PyResult<()> {
-        api::vnc_mouse_hide(py).map_err(into_pyerr)
+        PyApi::new(&self.tx, py)
+            .vnc_mouse_hide()
+            .map_err(into_pyerr)
     }
 }
 
@@ -279,30 +329,31 @@ impl DriverSSH {
 
 #[cfg(test)]
 mod test {
-    use pyo3::types::PyModule;
+    use pyo3::types::{PyAnyMethods, PyModule, PyModuleMethods};
+
+    #[pyo3::pyfunction]
+    fn add(a: i64, b: i64) -> i64 {
+        // hello();
+        a + b
+    }
 
     #[test]
     fn test_pyo3() {
-        #[pyo3::pyfunction]
-        fn add(a: i64, b: i64) -> i64 {
-            // hello();
-            a + b
-        }
-
         pyo3::Python::with_gil(|py| -> pyo3::PyResult<()> {
-            let module_testapi_name = "testapi".to_string();
-            let module_testapi = PyModule::new(py, &module_testapi_name)?;
-            module_testapi.add_function(pyo3::wrap_pyfunction!(add, module_testapi)?)?;
+            let module_name = "testapi".to_string();
+            let module = PyModule::new_bound(py, &module_name)?;
+            module.add_function(pyo3::wrap_pyfunction!(add, &module)?)?;
 
             // Import and get sys.modules
-            let sys = PyModule::import(py, "sys")?;
-            let py_modules: &pyo3::types::PyDict = sys.getattr("modules")?.downcast()?;
+            let sys = PyModule::import_bound(py, "sys")?;
+            let modules = sys.getattr("modules")?;
+            let py_modules = modules.downcast::<pyo3::types::PyDict>()?;
 
             // Insert foo into sys.modules
-            py_modules.set_item(&module_testapi_name, module_testapi)?;
+            py_modules.set_item(&module_name, module)?;
 
             // Now we can import + run our python code
-            pyo3::Python::run(py, "import testapi; testapi.add(1, 2)", None, None).unwrap();
+            pyo3::Python::run_bound(py, "import testapi; testapi.add(1, 2)", None, None).unwrap();
 
             // let res = py.eval("import testapi; testapi.add(1, 2)", None, None)?;
             // assert!(res.extract::<i64>()? == 4);

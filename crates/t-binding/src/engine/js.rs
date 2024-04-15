@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Arc};
 
-use crate::{api, ApiError, ScriptEngine};
+use crate::api::{Api, RustApi};
+use crate::{ApiError, MsgReq, MsgRes, ScriptEngine};
 use rquickjs::function::Args;
 use rquickjs::Function;
 use rquickjs::{Context, Runtime};
@@ -17,11 +19,9 @@ impl ScriptEngine for JSEngine {
     fn run_file(&mut self, content: &str) {
         self.run_file(content).unwrap();
     }
-}
 
-impl Default for JSEngine {
-    fn default() -> Self {
-        Self::new()
+    fn run_string(&mut self, content: &str) {
+        self.run_string(content).unwrap();
     }
 }
 
@@ -30,44 +30,52 @@ fn into_jserr(_: ApiError) -> rquickjs::Error {
 }
 
 impl JSEngine {
-    pub fn new() -> Self {
+    pub fn new(tx: mpsc::Sender<(MsgReq, mpsc::Sender<MsgRes>)>) -> Self {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();
 
         context
             .with(|ctx| -> Result<(), ()> {
+                let rustapi = Arc::new(RustApi::new(tx));
+
                 // general
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "print",
                         Function::new(ctx.clone(), move |msg: String| {
-                            api::print(Level::INFO, msg);
+                            api.print(Level::INFO, msg);
                         }),
                     )
                     .unwrap();
+
+                let api = rustapi.clone();
                 ctx.globals()
-                    .set("sleep", Function::new(ctx.clone(), api::sleep))
+                    .set("sleep", Function::new(ctx.clone(), move |s| api.sleep(s)))
                     .unwrap();
 
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "get_env",
                         Function::new(
                             ctx.clone(),
                             move |key| -> rquickjs::Result<Option<String>> {
-                                api::get_env(key).map_err(into_jserr)
+                                api.get_env(key).map_err(into_jserr)
                             },
                         ),
                     )
                     .unwrap();
+
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "__rust_log__",
                         Function::new(ctx.clone(), move |level: String, msg: String| {
                             match level.as_str() {
-                                "log" | "info" => api::print(Level::INFO, msg),
-                                "error" => api::print(Level::ERROR, msg),
-                                "debug" => api::print(Level::DEBUG, msg),
+                                "log" | "info" => api.print(Level::INFO, msg),
+                                "error" => api.print(Level::ERROR, msg),
+                                "debug" => api.print(Level::DEBUG, msg),
                                 _ => {}
                             }
                         }),
@@ -85,64 +93,74 @@ impl JSEngine {
                 .map_err(|_| ())?;
 
                 // general console
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "assert_script_run",
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> rquickjs::Result<String> {
-                                let res = api::assert_script_run(cmd, timeout);
+                                let res = api.assert_script_run(cmd, timeout);
                                 res.map_err(into_jserr)
                             },
                         ),
                     )
                     .unwrap();
+
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "script_run",
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> Option<String> {
-                                api::script_run(cmd, timeout).map(|v| v.1).ok()
+                                api.script_run(cmd, timeout).map(|v| v.1).ok()
                             },
                         ),
                     )
                     .unwrap();
+
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "write",
-                        Function::new(ctx.clone(), move |s: String| api::write(s).ok()),
-                    )
-                    .unwrap();
-
-                ctx.globals()
-                    .set(
-                        "writeln",
-                        Function::new(ctx.clone(), move |s: String| {
-                            api::write(format!("{s}\n")).ok()
+                        Function::new(ctx.clone(), move |s: String| -> rquickjs::Result<()> {
+                            api.write(s).map_err(into_jserr)
                         }),
                     )
                     .unwrap();
 
+                let api = rustapi.clone();
+                ctx.globals()
+                    .set(
+                        "writeln",
+                        Function::new(ctx.clone(), move |s: String| -> rquickjs::Result<()> {
+                            api.write(format!("{s}\n")).map_err(into_jserr)
+                        }),
+                    )
+                    .unwrap();
+
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "wait_string_ntimes",
                         Function::new(
                             ctx.clone(),
                             move |s: String, n: i32, timeout: i32| -> rquickjs::Result<bool> {
-                                api::wait_string_ntimes(s, n, timeout).map_err(into_jserr)
+                                api.wait_string_ntimes(s, n, timeout).map_err(into_jserr)
                             },
                         ),
                     )
                     .unwrap();
 
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "assert_wait_string_ntimes",
                         Function::new(
                             ctx.clone(),
                             move |s: String, n: i32, timeout: i32| -> rquickjs::Result<bool> {
-                                if !api::wait_string_ntimes(s, n, timeout).map_err(into_jserr)? {
+                                if !api.wait_string_ntimes(s, n, timeout).map_err(into_jserr)? {
                                     Err(rquickjs::Error::Exception)
                                 } else {
                                     Ok(true)
@@ -153,134 +171,181 @@ impl JSEngine {
                     .unwrap();
 
                 // ssh
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "ssh_assert_script_run",
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> rquickjs::Result<String> {
-                                api::ssh_assert_script_run(cmd, timeout).map_err(into_jserr)
+                                api.ssh_assert_script_run(cmd, timeout).map_err(into_jserr)
                             },
                         ),
                     )
                     .unwrap();
+
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "ssh_script_run",
-                        Function::new(ctx.clone(), |cmd, timeout| -> rquickjs::Result<String> {
-                            api::ssh_script_run(cmd, timeout)
-                                .map(|v| v.1)
-                                .map_err(into_jserr)
-                        }),
+                        Function::new(
+                            ctx.clone(),
+                            move |cmd, timeout| -> rquickjs::Result<String> {
+                                api.ssh_script_run(cmd, timeout)
+                                    .map(|v| v.1)
+                                    .map_err(into_jserr)
+                            },
+                        ),
                     )
                     .unwrap();
+
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "ssh_assert_script_run_seperate",
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> rquickjs::Result<String> {
-                                api::ssh_assert_script_run_seperate(cmd, timeout)
+                                api.ssh_assert_script_run_seperate(cmd, timeout)
                                     .map_err(into_jserr)
                             },
                         ),
                     )
                     .unwrap();
+
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "ssh_write",
                         Function::new(ctx.clone(), move |s: String| -> rquickjs::Result<()> {
-                            api::ssh_write(s).map_err(into_jserr)
+                            api.ssh_write(s).map_err(into_jserr)
                         }),
                     )
                     .unwrap();
 
                 // serial
+
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "serial_assert_script_run",
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> rquickjs::Result<String> {
-                                api::serial_assert_script_run(cmd, timeout).map_err(into_jserr)
+                                api.serial_assert_script_run(cmd, timeout)
+                                    .map_err(into_jserr)
                             },
                         ),
                     )
                     .unwrap();
+
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "serial_script_run",
                         Function::new(
                             ctx.clone(),
                             move |cmd: String, timeout: i32| -> Option<String> {
-                                api::serial_script_run(cmd, timeout).map(|v| v.1).ok()
+                                api.serial_script_run(cmd, timeout).map(|v| v.1).ok()
                             },
                         ),
                     )
                     .unwrap();
+
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "serial_write",
                         Function::new(ctx.clone(), move |s: String| -> rquickjs::Result<()> {
-                            api::serial_write(s).map_err(into_jserr)
+                            api.serial_write(s).map_err(into_jserr)
                         }),
                     )
                     .unwrap();
 
                 // vnc
+
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "assert_screen",
                         Function::new(
                             ctx.clone(),
                             move |tag: String, timeout: i32| -> rquickjs::Result<()> {
-                                api::vnc_assert_screen(tag.clone(), timeout).map_err(into_jserr)
+                                api.vnc_assert_screen(tag.clone(), timeout)
+                                    .map_err(into_jserr)
                             },
                         ),
                     )
                     .unwrap();
+
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "check_screen",
                         Function::new(
                             ctx.clone(),
                             move |tag: String, timeout: i32| -> rquickjs::Result<bool> {
-                                api::vnc_check_screen(tag.clone(), timeout).map_err(into_jserr)
+                                api.vnc_check_screen(tag.clone(), timeout)
+                                    .map_err(into_jserr)
                             },
                         ),
                     )
                     .unwrap();
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "mouse_click",
                         Function::new(ctx.clone(), move || -> rquickjs::Result<()> {
-                            api::vnc_mouse_click().map_err(into_jserr)
+                            api.vnc_mouse_click().map_err(into_jserr)
                         }),
                     )
                     .unwrap();
 
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "mouse_move",
                         Function::new(ctx.clone(), move |x, y| -> rquickjs::Result<()> {
-                            api::vnc_mouse_move(x, y).map_err(into_jserr)
+                            api.vnc_mouse_move(x, y).map_err(into_jserr)
                         }),
                     )
                     .unwrap();
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "mouse_drag",
                         Function::new(ctx.clone(), move |x, y| -> rquickjs::Result<()> {
-                            api::vnc_mouse_drag(x, y).map_err(into_jserr)
+                            api.vnc_mouse_drag(x, y).map_err(into_jserr)
                         }),
                     )
                     .unwrap();
 
+                let api = rustapi.clone();
                 ctx.globals()
                     .set(
                         "mouse_hide",
                         Function::new(ctx.clone(), move || -> rquickjs::Result<()> {
-                            api::vnc_mouse_hide().map_err(into_jserr)
+                            api.vnc_mouse_hide().map_err(into_jserr)
+                        }),
+                    )
+                    .unwrap();
+
+                let api = rustapi.clone();
+                ctx.globals()
+                    .set(
+                        "send_key",
+                        Function::new(ctx.clone(), move |s| -> rquickjs::Result<()> {
+                            api.vnc_send_key(s).map_err(into_jserr)
+                        }),
+                    )
+                    .unwrap();
+
+                let api = rustapi.clone();
+                ctx.globals()
+                    .set(
+                        "type_string",
+                        Function::new(ctx.clone(), move |s| -> rquickjs::Result<()> {
+                            api.vnc_type_string(s).map_err(into_jserr)
                         }),
                     )
                     .unwrap();
@@ -293,6 +358,36 @@ impl JSEngine {
             _runtime: runtime,
             context,
         }
+    }
+
+    pub fn run_string(&mut self, script: &str) -> Result<(), String> {
+        self.context.with(|ctx| {
+            let module_entry = ctx
+                .clone()
+                .compile("entry.js".to_string(), script)
+                .map_err(|e| {
+                    let msg = format!("js file compile failed: [{}]", e);
+                    error!(msg = msg);
+                    msg
+                })?;
+
+            let main = module_entry
+                .get("main")
+                .unwrap_or_else(|_| module_entry.get::<&str, Function>("run"))
+                .map_err(|_| {
+                    let msg = r#"function "main" or "run" must exists"#.to_string();
+                    error!(msg = msg);
+                    msg
+                })?;
+
+            main.call_arg::<()>(Args::new(ctx.clone(), 0))
+                .map_err(|e| {
+                    let msg = format!("main run failed: {}", e);
+                    error!(msg = msg);
+                    msg
+                })?;
+            Ok(())
+        })
     }
 
     pub fn run_file(&mut self, file: &str) -> Result<(), String> {

@@ -7,7 +7,7 @@ use std::{
     io,
     net::{SocketAddr, TcpStream},
     ops::Add,
-    sync::mpsc::{self, channel, Receiver, Sender},
+    sync::mpsc::{self, channel, Receiver, RecvError, RecvTimeoutError, Sender},
     thread,
     time::{Duration, Instant},
 };
@@ -234,6 +234,26 @@ impl VNC {
         });
 
         Ok(Self { event_tx, stop_tx })
+    }
+
+    pub fn send(&self, req: VNCEventReq) -> Result<VNCEventRes, RecvError> {
+        let (tx, rx) = mpsc::channel();
+        if self.event_tx.send((req, tx)).is_err() {
+            panic!("vnc client stopped unexpected")
+        }
+        rx.recv()
+    }
+
+    pub fn send_timeout(
+        &self,
+        req: VNCEventReq,
+        timeout: Duration,
+    ) -> Result<VNCEventRes, RecvTimeoutError> {
+        let (tx, rx) = mpsc::channel();
+        if self.event_tx.send((req, tx)).is_err() {
+            panic!("vnc client stopped unexpected")
+        }
+        rx.recv_timeout(timeout)
     }
 
     pub fn stop(&self) {

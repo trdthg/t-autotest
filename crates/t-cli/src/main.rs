@@ -2,17 +2,14 @@ pub mod recorder;
 
 use clap::{Parser, Subcommand};
 use std::{env, io::IsTerminal, path::Path};
-use t_binding::api;
+use t_binding::api::{Api, RustApi};
 use t_config::Config;
 use t_runner::{DriverForScript, ServerBuilder};
-use tracing::{error, info, warn, Level};
+use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 #[derive(clap::Parser, Debug)]
 pub struct Cli {
-    #[clap(short, long)]
-    config: String,
-
     #[command(subcommand)]
     command: Commands,
 }
@@ -21,10 +18,17 @@ pub struct Cli {
 enum Commands {
     Run {
         #[clap(short, long)]
+        config: String,
+        #[clap(short, long)]
         script: String,
     },
-    Record {},
+    Record {
+        #[clap(short, long)]
+        config: Option<String>,
+    },
     VncDo {
+        #[clap(short, long)]
+        config: String,
         #[command(subcommand)]
         action: VNCAction,
     },
@@ -64,19 +68,19 @@ fn main() {
     let cli = Cli::parse();
     info!(msg = "current cli", cli = ?cli);
 
-    // init config
-    let mut config = Config::from_toml_file(cli.config.as_str()).expect("config not valid");
-
-    info!(msg = "current config", config = ?config);
     match cli.command {
-        Commands::Run { script } => {
+        Commands::Run { script, config } => {
+            // init config
+            let config = Config::from_toml_file(config.as_str()).expect("config not valid");
+            info!(msg = "current config", config = ?config);
+
             let ext = Path::new(script.as_str())
                 .extension()
                 .unwrap()
                 .to_string_lossy()
                 .to_string();
 
-            match DriverForScript::new_with_engine(config, ext) {
+            match DriverForScript::new_with_engine(config, ext.as_str()) {
                 Ok(mut d) => {
                     d.start().run_file(script).stop();
                 }
@@ -85,34 +89,38 @@ fn main() {
                 }
             }
         }
-        Commands::Record {} => {
-            let Some(_vnc) = &config.vnc else {
-                warn!("Please enable vnc in your config.toml");
-                return;
-            };
+        Commands::Record { config } => {
+            let config =
+                config.map(|c| Config::from_toml_file(c.as_str()).expect("config not valid"));
+            info!(msg = "current config", config = ?config);
 
             let builder = ServerBuilder::new(config);
             match builder.build() {
-                Ok((server, stop_tx)) => {
+                Ok((server, tx, stop_tx)) => {
                     server.start_non_blocking();
-                    recorder::RecorderBuilder::new(stop_tx).build().start();
+                    recorder::RecorderBuilder::new(stop_tx, tx).build().start();
                 }
                 Err(e) => {
                     error!(msg = "Driver init failed", reason = ?e)
                 }
             }
         }
-        Commands::VncDo { action } => {
+        Commands::VncDo { action, config } => {
+            // init config
+            let mut config = Config::from_toml_file(config.as_str()).expect("config not valid");
+            info!(msg = "current config", config = ?config);
+
             config.ssh = None;
             config.serial = None;
-            let builder = ServerBuilder::new(config);
+            let builder = ServerBuilder::new(Some(config));
             match builder.build() {
-                Ok((server, stop_tx)) => {
+                Ok((server, tx, stop_tx)) => {
+                    let api = RustApi::new(tx);
                     server.start_non_blocking();
                     if let Err(e) = match action {
-                        VNCAction::Move { x, y } => api::vnc_mouse_move(x, y),
-                        VNCAction::Click => api::vnc_mouse_click(),
-                        VNCAction::RClick => api::vnc_mouse_rclick(),
+                        VNCAction::Move { x, y } => api.vnc_mouse_move(x, y),
+                        VNCAction::Click => api.vnc_mouse_click(),
+                        VNCAction::RClick => api.vnc_mouse_rclick(),
                     } {
                         error!(msg = "do vnc action failed", reason=?e);
                     }

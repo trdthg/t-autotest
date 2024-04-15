@@ -27,6 +27,7 @@ pub trait Term {
     }
 }
 
+#[allow(unused)]
 struct General {}
 impl Term for General {}
 

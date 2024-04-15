@@ -7,7 +7,6 @@ use t_config::Config;
 use t_console::SSH;
 
 pub struct DriverForScript {
-    pub config: Config,
     driver: Driver,
     engine: Option<Engine>,
     engine_client: Option<EngineClient>,
@@ -17,19 +16,18 @@ type Result<T> = std::result::Result<T, DriverError>;
 
 impl DriverForScript {
     fn new(config: Config) -> Result<Self> {
-        let driver = Driver::new(config.clone())?;
+        let driver = Driver::new(Some(config.clone()))?;
 
         Ok(Self {
-            config,
             driver,
             engine: None,
             engine_client: None,
         })
     }
 
-    pub fn new_with_engine(config: Config, ext: String) -> Result<Self> {
+    pub fn new_with_engine(config: Config, ext: &str) -> Result<Self> {
         let mut res = Self::new(config)?;
-        let (engine, enginec) = Engine::new(ext.as_str());
+        let (engine, enginec) = Engine::new(ext, res.driver.msg_tx.clone());
         res.engine = Some(engine);
         res.engine_client = Some(enginec);
         Ok(res)
@@ -74,7 +72,7 @@ impl DriverForScript {
     }
 
     pub fn new_ssh(&mut self) -> Result<SSH> {
-        if let Some(ssh) = self.config.ssh.clone() {
+        if let Some(ssh) = self.driver.config.as_ref().and_then(|c| c.ssh.clone()) {
             SSH::new(ssh.clone()).map_err(DriverError::ConsoleError)
         } else {
             Err(DriverError::ConsoleError(t_console::ConsoleError::Timeout))
