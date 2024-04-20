@@ -6,7 +6,7 @@ use crate::Result;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::path::PathBuf;
-use tracing::error;
+use tracing::info;
 
 pub struct Serial {
     inner: SerialClient<crate::VT102>,
@@ -61,10 +61,16 @@ where
         let file = file.to_string();
         let evloop = EventLoop::spawn(
             move || {
-                serialport::new(&file, bund_rate).open().map_err(|e| {
-                    error!("serial conn failed: {}", e);
-                    ConsoleError::Serial(e)
-                })
+                match serialport::new(&file, bund_rate).open() {
+                    Ok(res) => {
+                        info!("serial conn success");
+                        Ok(res)
+                    }
+                    Err(e) => {
+                        // error!("serial conn failed: {}", e);
+                        Err(ConsoleError::Serial(e))
+                    }
+                }
             },
             log_file,
         );

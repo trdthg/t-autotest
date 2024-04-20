@@ -495,8 +495,7 @@ impl Server {
                     }
 
                     if let Err(e) = tx.send(res) {
-                        info!(msg = "script engine receiver closed", reason = ?e);
-                        break;
+                        warn!(msg = "script engine receiver closed", reason = ?e);
                     }
                 }
                 Err(e) => match e {
@@ -504,6 +503,7 @@ impl Server {
                         thread::sleep(Duration::from_millis(20));
                     }
                     mpsc::TryRecvError::Disconnected => {
+                        warn!(msg = "request sender closed unexpected", reason = ?e);
                         break;
                     }
                 },
