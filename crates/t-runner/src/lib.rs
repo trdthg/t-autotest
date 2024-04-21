@@ -6,7 +6,7 @@ mod server;
 pub use driver::Driver;
 pub use driver_for_script::DriverForScript;
 pub mod error;
-pub use server::{Server, ServerBuilder};
+use server::ServerBuilder;
 use std::fmt::Display;
 
 pub fn add(left: usize, right: usize) -> usize {

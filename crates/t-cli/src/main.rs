@@ -1,10 +1,10 @@
 pub mod recorder;
 
 use clap::{Parser, Subcommand};
-use std::{env, io::IsTerminal, path::Path};
+use std::{env, fs, io::IsTerminal, path::Path};
 use t_binding::api::{Api, RustApi};
 use t_config::Config;
-use t_runner::{DriverForScript, ServerBuilder};
+use t_runner::{Driver, DriverForScript};
 use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -90,15 +90,19 @@ fn main() {
             }
         }
         Commands::Record { config } => {
-            let config =
-                config.map(|c| Config::from_toml_file(c.as_str()).expect("config not valid"));
+            let config_str = config.map(|c| fs::read_to_string(c.as_str()).unwrap());
+
+            let config = config_str
+                .as_ref()
+                .map(|c| Config::from_toml_str(c.as_str()).expect("config not valid"));
             info!(msg = "current config", config = ?config);
 
-            let builder = ServerBuilder::new(config);
-            match builder.build() {
-                Ok((server, tx, stop_tx)) => {
-                    server.start_non_blocking();
-                    recorder::RecorderBuilder::new(stop_tx, tx).build().start();
+            match Driver::new(config) {
+                Ok(mut d) => {
+                    d.start();
+                    recorder::RecorderBuilder::new(d.stop_tx, d.msg_tx, config_str)
+                        .build()
+                        .start();
                 }
                 Err(e) => {
                     error!(msg = "Driver init failed", reason = ?e)
@@ -107,16 +111,15 @@ fn main() {
         }
         Commands::VncDo { action, config } => {
             // init config
-            let mut config = Config::from_toml_file(config.as_str()).expect("config not valid");
+            let mut config = Config::from_toml_str(config.as_str()).expect("config not valid");
             info!(msg = "current config", config = ?config);
 
             config.ssh = None;
             config.serial = None;
-            let builder = ServerBuilder::new(Some(config));
-            match builder.build() {
-                Ok((server, tx, stop_tx)) => {
-                    let api = RustApi::new(tx);
-                    server.start_non_blocking();
+            match Driver::new(Some(config)) {
+                Ok(mut d) => {
+                    d.start();
+                    let api = RustApi::new(d.msg_tx.clone());
                     if let Err(e) = match action {
                         VNCAction::Move { x, y } => api.vnc_mouse_move(x, y),
                         VNCAction::Click => api.vnc_mouse_click(),
@@ -124,9 +127,7 @@ fn main() {
                     } {
                         error!(msg = "do vnc action failed", reason=?e);
                     }
-                    if let Err(e) = stop_tx.send(()) {
-                        error!(msg = "server stop failed", reason=?e);
-                    }
+                    d.stop();
                 }
                 Err(e) => {
                     error!(msg = "Driver init failed", reason = ?e)

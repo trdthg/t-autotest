@@ -36,6 +36,10 @@ impl Container {
         (row as usize * self.width as usize + col as usize) * self.pixel_size
     }
 
+    pub fn set_zero(&mut self) {
+        self.data.iter_mut().for_each(|x| *x = 0);
+    }
+
     pub fn get(&self, row: u16, col: u16) -> &[u8] {
         assert!(row < self.height && col < self.width);
         let start = self.get_pixel_start(row, col);

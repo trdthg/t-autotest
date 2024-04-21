@@ -51,7 +51,7 @@ impl<T> AMOption<T> {
     }
 }
 
-pub struct Server {
+pub(crate) struct Server {
     config: Option<Config>,
 
     msg_rx: Receiver<(MsgReq, Sender<MsgRes>)>,
@@ -61,11 +61,9 @@ pub struct Server {
     ssh: AMOption<SSH>,
     serial: AMOption<Serial>,
     vnc: AMOption<VNC>,
-
-    screenshot_tx: Option<Sender<PNG>>,
 }
 
-pub struct ServerBuilder {
+pub(crate) struct ServerBuilder {
     config: Option<Config>,
     tx: Option<Sender<PNG>>,
 }
@@ -73,11 +71,6 @@ pub struct ServerBuilder {
 impl ServerBuilder {
     pub fn new(config: Option<Config>) -> Self {
         ServerBuilder { tx: None, config }
-    }
-
-    pub fn with_vnc_screenshot_subscriber(mut self, tx: Sender<PNG>) -> Self {
-        self.tx = Some(tx);
-        self
     }
 
     pub fn build(self) -> Result<(Server, ApiTx, mpsc::Sender<()>), ConsoleError> {
@@ -92,7 +85,6 @@ impl ServerBuilder {
             config: c.clone(),
             msg_rx,
             stop_rx,
-            screenshot_tx: self.tx,
 
             ssh: AMOption::new(None),
             serial: AMOption::new(None),
@@ -115,6 +107,34 @@ impl Server {
         });
     }
 
+    fn save_screenshots(screenshot_rx: Receiver<PNG>, dir: PathBuf) {
+        let path = dir;
+        thread::spawn(move || {
+            info!(msg = "vnc screenshot save thread started");
+            let mut path = path;
+            if let Err(e) = std::fs::create_dir_all(&path) {
+                warn!(msg="create screenshot dir failed", reason=?e);
+                return;
+            }
+            while let Ok(screen) = screenshot_rx.recv() {
+                let p = screen.into_img();
+                let image_name = format!(
+                    "output-{}.png",
+                    time::SystemTime::now()
+                        .duration_since(time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                );
+                path.push(&image_name);
+                if let Err(e) = p.save(&path) {
+                    warn!(msg="screenshot save failed", reason=?e);
+                }
+                path.pop();
+            }
+            info!(msg = "vnc screenshot save thread stopped");
+        });
+    }
+
     fn connect_with_config<'a>(&'a mut self, c: &'a Config) -> Result<(), ConsoleError> {
         // init serial
         if let Some(c) = c.serial.clone() {
@@ -122,7 +142,7 @@ impl Server {
             match Serial::new(c) {
                 Ok(s) => {
                     self.serial.set(Some(s));
-                    info!("serial connect success");
+                    info!(msg = "serial connect success");
                 }
                 Err(e) => {
                     error!(msg="serial connect failed", reason = ?e);
@@ -152,7 +172,16 @@ impl Server {
                 .parse()
                 .map_err(|e| ConsoleError::NoConnection(format!("vnc addr is not valid, {}", e)))?;
 
-            let vnc_client = VNC::connect(addr, vnc.password.clone(), None)
+            let tx = if let Some(screenshot_dir) =
+                c.vnc.as_ref().and_then(|c| c.screenshot_dir.as_ref())
+            {
+                let (tx, rx) = mpsc::channel();
+                Self::save_screenshots(rx, screenshot_dir.clone());
+                Some(tx)
+            } else {
+                None
+            };
+            let vnc_client = VNC::connect(addr, vnc.password.clone(), tx)
                 .map_err(|e| ConsoleError::NoConnection(e.to_string()))?;
             Ok::<VNC, ConsoleError>(vnc_client)
         };
@@ -199,7 +228,7 @@ impl Server {
                     }
 
                     if enable_log {
-                        info!("server recv req: {:?}", req);
+                        info!(msg = "server recv req", req = ?req);
                     }
 
                     let res = match req {
@@ -394,14 +423,7 @@ impl Server {
                                                 thread::sleep(Duration::from_millis(200));
                                             }
                                         };
-                                        if let Ok((similarity, same, png)) = res {
-                                            if let (Some(tx), Some(png)) =
-                                                (&self.screenshot_tx, png)
-                                            {
-                                                if tx.send(png).is_err() {
-                                                    // TODO: handle ch close
-                                                }
-                                            }
+                                        if let Ok((similarity, same, ..)) = res {
                                             MsgRes::AssertScreen {
                                                 similarity,
                                                 ok: same,
@@ -487,9 +509,6 @@ impl Server {
                         }
                     };
 
-                    // if handle req, take a screenshot
-                    Self::send_screenshot(&self.vnc, &self.screenshot_tx);
-
                     if enable_log {
                         info!(msg = format!("sending res: {:?}", res));
                     }
@@ -510,26 +529,6 @@ impl Server {
             }
         }
         info!(msg = "Runner loop stopped")
-    }
-
-    fn send_screenshot(vnc_client: &AMOption<VNC>, screenshot_tx: &Option<Sender<PNG>>) {
-        if !vnc_client.is_some() {
-            return;
-        }
-
-        let (tx, rx) = mpsc::channel();
-
-        vnc_client
-            .map_ref(|c| c.event_tx.send((VNCEventReq::TakeScreenShot, tx)))
-            .expect("no vnc")
-            .unwrap();
-        if let Ok(VNCEventRes::Screen(png)) = rx.recv() {
-            if let Some(tx) = screenshot_tx {
-                if tx.send(png).is_err() {
-                    // TODO: handle ch close
-                }
-            }
-        }
     }
 
     pub fn stop(&self) {

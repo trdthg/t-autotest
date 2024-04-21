@@ -4281,6 +4281,7 @@ dependencies = [
 name = "t-runner"
 version = "0.3.3"
 dependencies = [
+ "ctrlc",
  "home",
  "image 0.25.0",
  "nanoid",

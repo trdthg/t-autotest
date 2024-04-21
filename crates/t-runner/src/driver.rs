@@ -1,43 +1,28 @@
 use crate::error::DriverError;
 use crate::server::Server;
 use crate::ServerBuilder;
-use std::path::PathBuf;
 use std::sync::mpsc;
-use std::sync::mpsc::Receiver;
-use std::sync::mpsc::Sender;
 use std::thread;
 use std::time;
-use std::time::UNIX_EPOCH;
 use t_binding::api::ApiTx;
 use t_config::Config;
-use t_console::PNG;
 use t_console::SSH;
+use tracing::info;
 use tracing::warn;
 
 pub struct Driver {
     pub config: Option<Config>,
     server: Option<Server>,
-    stop_tx: mpsc::Sender<()>,
+    pub stop_tx: mpsc::Sender<()>,
     pub msg_tx: ApiTx,
-    screenshot_save_done_rx: Option<mpsc::Receiver<()>>,
 }
 
 type Result<T> = std::result::Result<T, DriverError>;
 
 impl Driver {
     pub fn new(config: Option<Config>) -> Result<Self> {
-        let mut builder = ServerBuilder::new(config.clone());
+        let builder = ServerBuilder::new(config.clone());
 
-        let mut stop_rx = None::<Receiver<()>>;
-        if let Some(vnc) = config.as_ref().and_then(|c| c.vnc.as_ref()) {
-            if let Some(ref dir) = vnc.screenshot_dir {
-                let (screenshot_tx, screenshot_rx) = mpsc::channel();
-                builder = builder.with_vnc_screenshot_subscriber(screenshot_tx);
-                let (done_tx, donw_rx) = mpsc::channel();
-                Self::save_screenshots(screenshot_rx, dir.clone(), done_tx);
-                stop_rx = Some(donw_rx);
-            }
-        }
         let (server, msg_tx, stop_tx) = builder.build().map_err(DriverError::ConsoleError)?;
 
         let driver = Self {
@@ -45,40 +30,20 @@ impl Driver {
             server: Some(server),
             stop_tx,
             msg_tx,
-            screenshot_save_done_rx: stop_rx,
         };
         Ok(driver)
     }
 
-    fn save_screenshots(screenshot_rx: Receiver<PNG>, dir: PathBuf, stop_tx: Sender<()>) {
-        let path = dir;
-        thread::spawn(move || {
-            let mut path = path;
-            let mut i = 0;
-            while let Ok(screen) = screenshot_rx.recv() {
-                i += 1;
-                let p = screen.into_img();
-
-                let image_name = format!(
-                    "output-{}-{}.png",
-                    i,
-                    time::SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
-                );
-                path.push(&image_name);
-                if let Err(e) = p.save(&path) {
-                    warn!(msg="screenshot save failed", reason=?e);
-                }
-                path.pop();
-            }
-            let _ = stop_tx.send(());
-        });
-    }
-
     pub fn start(&mut self) -> &mut Self {
         if let Some(server) = self.server.take() {
+            let stop_tx = self.stop_tx.clone();
+            if let Err(e) = ctrlc::set_handler(move || {
+                let _ = stop_tx.send(());
+                thread::sleep(time::Duration::from_secs(2));
+                std::process::exit(0);
+            }) {
+                warn!(msg="set ctrl-c handler failed", reason = ?e);
+            }
             server.start_non_blocking();
         }
         self
@@ -92,9 +57,6 @@ impl Driver {
     pub fn stop(&mut self) -> &mut Self {
         if self.stop_tx.send(()).is_err() {
             tracing::error!("stop server failed");
-        }
-        if let Some(rx) = &self.screenshot_save_done_rx {
-            let _ = rx.recv();
         }
         self
     }

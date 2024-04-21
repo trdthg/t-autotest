@@ -264,7 +264,7 @@ impl FileWatcher {
                             );
                         }
                         Err(e) => {
-                            println!("watch error: {:?}", e);
+                            info!("watch error: {:?}", e);
                         }
                     },
                 )
@@ -274,7 +274,7 @@ impl FileWatcher {
                 watcher.configure(cfg).unwrap();
 
                 let pathname = path.as_path().display();
-                warn!(msg = "watcher started", path = ?pathname);
+                info!(msg = "watcher started", path = ?pathname);
                 watcher
                     .watch(path.as_path(), notify::RecursiveMode::NonRecursive)
                     .unwrap();
@@ -396,17 +396,17 @@ pub struct RecorderBuilder {
 
     // option
     max_screenshot_num: usize,
-    needle_dir: Option<String>,
+    config_str: Option<String>,
 }
 
 impl RecorderBuilder {
-    pub fn new(stop_tx: Sender<()>, api: ApiTx) -> Self {
+    pub fn new(stop_tx: Sender<()>, api: ApiTx, config_str: Option<String>) -> Self {
         Self {
             stop_tx,
             screenshot_rx: None,
             api,
             max_screenshot_num: 60,
-            needle_dir: None,
+            config_str,
         }
     }
 
@@ -417,11 +417,6 @@ impl RecorderBuilder {
 
     pub fn with_screenshot_rx(mut self, rx: Receiver<PNG>) -> Self {
         self.screenshot_rx = Some(rx);
-        self
-    }
-
-    pub fn with_needle_dir(mut self, dir: String) -> Self {
-        self.needle_dir = Some(dir);
         self
     }
 
@@ -442,8 +437,8 @@ impl RecorderBuilder {
             mode: RecordMode::Interact,
             tab: Tab::Vnc,
             show_config_edit_window: true,
-            config: None,
-            config_str: r#"log_dir = "./logs"
+            config_str: self.config_str.clone().unwrap_or(
+                r#"log_dir = "./logs"
 
 # [serial]
 # serial_file = "/dev/ttyUSB0"
@@ -464,8 +459,12 @@ impl RecorderBuilder {
 # port = 5901
 # password = "123456" # optional
 # needle_dir = "./needles" # optional
-"#
-            .to_string(),
+            "#
+                .to_string(),
+            ),
+            config: Some(
+                t_config::Config::from_toml_str(self.config_str.unwrap().as_ref()).unwrap(),
+            ),
             code_receiver: None,
             code_str: r#"
 export function prehook() {
@@ -660,75 +659,77 @@ impl Recorder {
         egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
             match self.mode {
                 RecordMode::Interact => {
-                    if let Some(screenshot) = self.screenshots.read().back() {
-                        // render current screenshot
-                        let img = screenshot.image();
-                        let screenshot = ui.add(img.sense(Sense::click_and_drag()));
+                    let lock = self.screenshots.read();
+                    let Some(screenshot) = lock.back() else {
+                        return;
+                    };
 
-                        // if mouse move out of image, do nothing
-                        if let Some(pos) = screenshot.hover_pos() {
-                            let relative_x =
-                                (pos.x as u16).saturating_sub(screenshot.rect.left() as u16);
-                            let relative_y =
-                                (pos.y as u16).saturating_sub(screenshot.rect.top() as u16);
+                    // render current screenshot
+                    let img = screenshot.image();
+                    let screenshot = ui.add(img.sense(Sense::click_and_drag()));
 
-                            if let Err(e) = self.api.vnc_mouse_move(relative_x, relative_y) {
-                                self.logs_toasts.push((
-                                    Level::ERROR,
-                                    format!("mouse move failed, reason = {:?}", e),
-                                ));
-                            }
-                        } else {
-                            return;
+                    // if mouse move out of image, do nothing
+                    if let Some(pos) = screenshot.hover_pos() {
+                        let relative_x =
+                            (pos.x as u16).saturating_sub(screenshot.rect.left() as u16);
+                        let relative_y =
+                            (pos.y as u16).saturating_sub(screenshot.rect.top() as u16);
+
+                        if self.api.vnc_mouse_move(relative_x, relative_y).is_err() {
+                            // FIXME: too many error log
+                            // self.logs_toasts.push((
+                            //     Level::ERROR,
+                            //     format!("mouse move failed, reason = {:?}", e),
+                            // ));
                         }
+                    }
 
-                        // handle drag
-                        if screenshot.drag_started() {
-                            if let Some(pos) = screenshot.interact_pointer_pos() {
-                                self.drag_pos = pos;
-                                if let Err(e) = self.api.vnc_mouse_keydown() {
-                                    self.logs_toasts.push((
-                                        Level::ERROR,
-                                        format!("mouse key down failed, reason = {:?}", e),
-                                    ));
-                                }
-                            }
-                        } else if screenshot.dragged() {
-                            self.drag_pos += screenshot.drag_delta();
-                            if let Err(e) = self
-                                .api
-                                .vnc_mouse_drag(self.drag_pos.x as u16, self.drag_pos.y as u16)
-                            {
-                                self.logs_toasts.push((
-                                    Level::ERROR,
-                                    format!("mouse drag failed, reason = {:?}", e),
-                                ));
-                            }
-                        } else if screenshot.drag_stopped() {
-                            if let Err(e) = self.api.vnc_mouse_keyup() {
+                    // handle drag
+                    if screenshot.drag_started() {
+                        if let Some(pos) = screenshot.interact_pointer_pos() {
+                            self.drag_pos = pos;
+                            if let Err(e) = self.api.vnc_mouse_keydown() {
                                 self.logs_toasts.push((
                                     Level::ERROR,
                                     format!("mouse key down failed, reason = {:?}", e),
                                 ));
                             }
                         }
-
-                        if screenshot.clicked() {
-                            if let Err(e) = self.api.vnc_mouse_click() {
-                                self.logs_toasts.push((
-                                    Level::ERROR,
-                                    format!("mouse click failed, reason = {:?}", e),
-                                ));
-                            }
+                    } else if screenshot.dragged() {
+                        self.drag_pos += screenshot.drag_delta();
+                        if let Err(e) = self
+                            .api
+                            .vnc_mouse_drag(self.drag_pos.x as u16, self.drag_pos.y as u16)
+                        {
+                            self.logs_toasts.push((
+                                Level::ERROR,
+                                format!("mouse drag failed, reason = {:?}", e),
+                            ));
                         }
+                    } else if screenshot.drag_stopped() {
+                        if let Err(e) = self.api.vnc_mouse_keyup() {
+                            self.logs_toasts.push((
+                                Level::ERROR,
+                                format!("mouse key down failed, reason = {:?}", e),
+                            ));
+                        }
+                    }
 
-                        if screenshot.secondary_clicked() {
-                            if let Err(e) = self.api.vnc_mouse_rclick() {
-                                self.logs_toasts.push((
-                                    Level::ERROR,
-                                    format!("mouse right click failed, reason = {:?}", e),
-                                ));
-                            }
+                    if screenshot.clicked() {
+                        if let Err(e) = self.api.vnc_mouse_click() {
+                            self.logs_toasts.push((
+                                Level::ERROR,
+                                format!("mouse click failed, reason = {:?}", e),
+                            ));
+                        }
+                    }
+
+                    if screenshot.secondary_clicked() {
+                        if let Err(e) = self.api.vnc_mouse_rclick() {
+                            self.logs_toasts.push((
+                                Level::ERROR,
+                                format!("mouse right click failed, reason = {:?}", e),
+                            ));
                         }
                     }
                 }
@@ -1226,6 +1227,7 @@ impl Recorder {
                     TextEdit::multiline(&mut file_content.as_str())
                         .desired_width(f32::INFINITY)
                         .code_editor()
+                        .hint_text("empty file, waiting content...")
                         .interactive(false)
                         .show(left);
                     debug!("multiline: {:?}", start.elapsed().as_millis());
