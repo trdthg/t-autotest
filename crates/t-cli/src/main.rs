@@ -1,10 +1,10 @@
 pub mod recorder;
 
 use clap::{Parser, Subcommand};
-use std::{env, fs, io::IsTerminal, path::Path};
+use std::{env, fs, io::IsTerminal, path::Path, thread, time::Duration};
 use t_binding::api::{Api, RustApi};
 use t_config::Config;
-use t_runner::{Driver, DriverForScript};
+use t_runner::{DriverBuilder, DriverForScript};
 use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -25,6 +25,8 @@ enum Commands {
     Record {
         #[clap(short, long)]
         config: Option<String>,
+        #[clap(long)]
+        nogui: bool,
     },
     VncDo {
         #[clap(short, long)]
@@ -89,20 +91,29 @@ fn main() {
                 }
             }
         }
-        Commands::Record { config } => {
+        Commands::Record { config, nogui } => {
             let config_str = config.map(|c| fs::read_to_string(c.as_str()).unwrap());
 
             let config = config_str
                 .as_ref()
                 .map(|c| Config::from_toml_str(c.as_str()).expect("config not valid"));
             info!(msg = "current config", config = ?config);
-
-            match Driver::new(config) {
+            let mut builder = DriverBuilder::new(config);
+            if !nogui {
+                builder = builder.disable_screenshot();
+            }
+            match builder.build() {
                 Ok(mut d) => {
                     d.start();
-                    recorder::RecorderBuilder::new(d.stop_tx, d.msg_tx, config_str)
-                        .build()
-                        .start();
+                    if nogui {
+                        loop {
+                            thread::sleep(Duration::from_millis(100));
+                        }
+                    } else {
+                        recorder::RecorderBuilder::new(d.stop_tx, d.msg_tx, config_str)
+                            .build()
+                            .start();
+                    }
                 }
                 Err(e) => {
                     error!(msg = "Driver init failed", reason = ?e)
@@ -116,7 +127,7 @@ fn main() {
 
             config.ssh = None;
             config.serial = None;
-            match Driver::new(Some(config)) {
+            match DriverBuilder::new(Some(config)).build() {
                 Ok(mut d) => {
                     d.start();
                     let api = RustApi::new(d.msg_tx.clone());

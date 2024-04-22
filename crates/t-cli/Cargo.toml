@@ -41,3 +41,4 @@ chrono             = { workspace = true }
 rayon              = { workspace = true }
 console            = { workspace = true }
 notify             = { workspace = true }
+rand               = { version = "*" }

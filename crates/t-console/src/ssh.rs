@@ -87,7 +87,7 @@ impl SSH {
         self.inner.pts_file.clone()
     }
 
-    // TODO: may blocking
+    // FIXME: may blocking
     pub fn exec_seperate(
         &mut self,
         command: &str,

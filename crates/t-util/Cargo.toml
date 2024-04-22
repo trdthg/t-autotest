@@ -14,6 +14,8 @@ documentation.workspace = true
 [dependencies]
 tracing = { workspace = true }
 regex   = { workspace = true }
+chrono  = { workspace = true }
+parking_lot = { workspace = true }
 
 [dev-dependencies]
 vt100 = { workspace = true }

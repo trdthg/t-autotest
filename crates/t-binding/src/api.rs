@@ -3,7 +3,10 @@ use crate::{
     msg::{TextConsole, VNC},
     MsgReq, MsgRes, MsgResError,
 };
-use std::{sync::mpsc, time::Duration};
+use std::{
+    sync::{mpsc, Arc},
+    time::Duration,
+};
 use tracing::{info, trace, Level};
 
 pub type ApiTx = mpsc::Sender<(MsgReq, mpsc::Sender<MsgRes>)>;
@@ -235,8 +238,16 @@ pub trait Api {
         }
     }
 
-    fn vnc_take_screenshot(&self) -> Result<t_console::PNG> {
+    fn vnc_take_screenshot(&self) -> Result<()> {
         match self.req(MsgReq::VNC(VNC::TakeScreenShot))? {
+            MsgRes::Done => Ok(()),
+            MsgRes::Error(e) => Err(e.into()),
+            _ => Err(ApiError::ServerInvalidResponse),
+        }
+    }
+
+    fn vnc_get_screenshot(&self) -> Result<Arc<t_console::PNG>> {
+        match self.req(MsgReq::VNC(VNC::GetScreenShot))? {
             MsgRes::Screenshot(res) => Ok(res),
             MsgRes::Error(e) => Err(e.into()),
             _ => Err(ApiError::ServerInvalidResponse),

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use t_console::PNG;
 
@@ -46,6 +46,7 @@ pub enum MsgReq {
 #[derive(Debug)]
 pub enum VNC {
     TakeScreenShot,
+    GetScreenShot,
     Refresh,
     CheckScreen {
         tag: String,
@@ -90,5 +91,5 @@ pub enum MsgRes {
     ScriptRun { code: i32, value: String },
     Error(MsgResError),
     AssertScreen { similarity: f32, ok: bool },
-    Screenshot(PNG),
+    Screenshot(Arc<PNG>),
 }

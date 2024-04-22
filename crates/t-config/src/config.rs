@@ -23,7 +23,8 @@ impl Config {
     }
 
     fn init(&mut self) {
-        let log_dir = self.log_dir.clone().unwrap_or_default();
+        let mut log_dir = self.log_dir.clone().unwrap_or("log".to_string());
+        log_dir = format!("{}/{}", log_dir, t_util::get_dt());
         if let Some(serial) = self.serial.as_mut() {
             serial.log_file = Some(PathBuf::from_iter(vec![&log_dir, "serial.log"]));
         }
@@ -36,6 +37,7 @@ impl Config {
                 .expect("log folder create failed");
         }
         fs::create_dir_all(log_dir.as_str()).expect("log folder create failed");
+        self.log_dir = Some(log_dir);
     }
 
     pub fn from_toml_file(s: &str) -> Result<Self, toml::de::Error> {
@@ -61,7 +63,7 @@ pub struct ConsoleSSH {
 #[derive(Deserialize, Debug, Clone)]
 pub struct ConsoleSerial {
     pub serial_file: String,
-    pub bund_rate: u32,
+    pub bund_rate: Option<u32>,
 
     #[serde(skip_serializing)]
     pub log_file: Option<PathBuf>,

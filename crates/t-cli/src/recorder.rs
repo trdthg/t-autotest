@@ -47,15 +47,15 @@ enum Tab {
 
 struct Screenshot {
     recv_time: DateTime<Local>,
-    source: PNG,
-    image: TextureHandle,
+    source: Arc<PNG>,
+    handle: TextureHandle,
     #[allow(unused)]
     thumbnail: Option<TextureHandle>,
 }
 
 impl Screenshot {
     pub fn new(
-        source: PNG,
+        source: Arc<PNG>,
         ctx: &egui::Context,
         use_rayon: bool,
         recv_time: DateTime<Local>,
@@ -72,7 +72,7 @@ impl Screenshot {
         Self {
             recv_time,
             source,
-            image: handle,
+            handle,
             thumbnail: None,
         }
     }
@@ -81,15 +81,15 @@ impl Screenshot {
         Self {
             recv_time: self.recv_time,
             source: self.source.clone(),
-            image: self.image.clone(),
+            handle: self.handle.clone(),
             thumbnail: None,
         }
     }
 
     fn image(&self) -> egui::Image {
         egui::Image::from_texture(egui::load::SizedTexture::new(
-            self.image.id(),
-            self.image.size_vec2(),
+            self.handle.id(),
+            self.handle.size_vec2(),
         ))
     }
 
@@ -318,6 +318,8 @@ pub struct Recorder {
 
     // interact mode
     needle_name: String,
+    minimal_move_interval: Duration,
+    last_move_interval: Instant,
     drag_pos: Pos2,
     drag_rect: Option<RectF32>,
     drag_rects: Option<Vec<DragedRect>>,
@@ -405,7 +407,7 @@ impl RecorderBuilder {
             stop_tx,
             screenshot_rx: None,
             api,
-            max_screenshot_num: 60,
+            max_screenshot_num: 10,
             config_str,
         }
     }
@@ -494,6 +496,8 @@ export function afterhook() {
             // edit
             current_screenshot: None,
             needle_name: String::new(),
+            last_move_interval: Instant::now(),
+            minimal_move_interval: Duration::from_millis(50),
             drag_pos: Pos2 { x: 0., y: 0. },
             drag_rects: None,
             drag_rect: None,
@@ -541,8 +545,7 @@ impl Recorder {
                             }
                         }
 
-                        if let Ok(screenshot) = api.vnc_take_screenshot() {
-                            // append new screenshot
+                        if let Ok(screenshot) = api.vnc_get_screenshot() {
                             // update status
                             frame_status.write().last_screenshot = Instant::now();
                             sample_status.write().screenshot_count += 1;
@@ -552,6 +555,7 @@ impl Recorder {
                                 screenshots.write().pop_front();
                             }
 
+                            // append new screenshot
                             let s = Screenshot::new(screenshot, &ctx, false, Local::now());
                             screenshots.write().push_back(s);
                         }
@@ -675,12 +679,15 @@ impl Recorder {
                         let relative_y =
                             (pos.y as u16).saturating_sub(screenshot.rect.top() as u16);
 
-                        if self.api.vnc_mouse_move(relative_x, relative_y).is_err() {
-                            // FIXME: too many error log
-                            // self.logs_toasts.push((
-                            //     Level::ERROR,
-                            //     format!("mouse move failed, reason = {:?}", e),
-                            // ));
+                        if Instant::now() - self.last_move_interval > self.minimal_move_interval {
+                            if self.api.vnc_mouse_move(relative_x, relative_y).is_err() {
+                                // FIXME: too many error log
+                                // self.logs_toasts.push((
+                                //     Level::ERROR,
+                                //     format!("mouse move failed, reason = {:?}", e),
+                                // ));
+                            }
+                            self.last_move_interval = Instant::now();
                         }
                     }
 
@@ -1069,14 +1076,14 @@ impl Recorder {
                                 format!("mouse hide failed, reason = {:?}", e),
                             ));
                         }
+                        self.current_screenshot = self.screenshots.read().back().map(|x| x.clone());
                     }
-                    self.current_screenshot = self.screenshots.read().back().map(|x| x.clone());
                 },
             );
             ui.add_enabled_ui(
                 self.config
                     .as_ref()
-                    .map(|c| c.serial.is_some())
+                    .map(|c| c.vnc.is_some())
                     .unwrap_or_default(),
                 |ui| ui.selectable_value(&mut self.mode, RecordMode::View, "View"),
             );
@@ -1253,8 +1260,8 @@ impl eframe::App for Recorder {
             self.render_top_bar(ui);
         });
 
-        egui::TopBottomPanel::bottom("status bar").show(ctx, |_ui| {
-            //
+        egui::TopBottomPanel::bottom("status bar").show(ctx, |ui| {
+            ctx.texture_ui(ui);
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {

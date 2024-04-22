@@ -623,6 +623,7 @@ dependencies = [
  "notify",
  "parking_lot 0.12.1",
  "png",
+ "rand",
  "rayon",
  "rfd",
  "serde",
@@ -4254,6 +4255,7 @@ name = "t-config"
 version = "0.3.3"
 dependencies = [
  "serde",
+ "t-util",
  "toml 0.8.8",
 ]
 
@@ -4302,6 +4304,8 @@ dependencies = [
 name = "t-util"
 version = "0.3.3"
 dependencies = [
+ "chrono",
+ "parking_lot 0.12.1",
  "regex",
  "tracing",
  "vt100",

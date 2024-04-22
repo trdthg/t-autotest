@@ -3,10 +3,9 @@ mod driver_for_script;
 mod engine;
 pub mod needle;
 mod server;
-pub use driver::Driver;
 pub use driver_for_script::DriverForScript;
 pub mod error;
-use server::ServerBuilder;
+pub use driver::{Driver, DriverBuilder};
 use std::fmt::Display;
 
 pub fn add(left: usize, right: usize) -> usize {

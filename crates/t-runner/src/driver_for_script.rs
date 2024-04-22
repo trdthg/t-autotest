@@ -2,6 +2,7 @@ use crate::engine::Engine;
 use crate::engine::EngineClient;
 use crate::error::DriverError;
 use crate::Driver;
+use crate::DriverBuilder;
 use std::thread;
 use t_config::Config;
 use t_console::SSH;
@@ -16,7 +17,7 @@ type Result<T> = std::result::Result<T, DriverError>;
 
 impl DriverForScript {
     fn new(config: Config) -> Result<Self> {
-        let driver = Driver::new(Some(config.clone()))?;
+        let driver = DriverBuilder::new(Some(config.clone())).build()?;
 
         Ok(Self {
             driver,

@@ -1,11 +1,70 @@
-use std::{error::Error, fmt::Display, process::Command, sync::mpsc, thread, time::Duration};
+use std::{
+    error::Error,
+    fmt::Display,
+    process::Command,
+    sync::{mpsc, Arc},
+    thread,
+    time::Duration,
+};
 
+use chrono::{DateTime, Local};
+use parking_lot::Mutex;
 use regex::Regex;
 use tracing::{error, info, trace};
+
+#[derive(Clone)]
+pub struct AMOption<T> {
+    inner: Arc<Mutex<Option<T>>>,
+}
+
+impl<T> AMOption<T> {
+    pub fn new(val: Option<T>) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(val)),
+        }
+    }
+
+    pub fn set(&mut self, val: Option<T>) {
+        self.inner = Arc::new(Mutex::new(val));
+    }
+
+    pub fn map_mut<R, F>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        self.inner.lock().as_mut().map(f)
+    }
+
+    pub fn map_ref<R, F>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&T) -> R,
+    {
+        self.inner.lock().as_ref().map(f)
+    }
+
+    pub fn is_some(&self) -> bool {
+        self.inner.lock().is_some()
+    }
+}
 
 #[derive(Debug)]
 pub enum RegexError {
     RegexBuildError(regex::Error),
+}
+
+pub fn get_time() -> String {
+    let now: DateTime<Local> = Local::now();
+    now.format("%H:%M:%S").to_string()
+}
+
+pub fn get_date() -> String {
+    let now: DateTime<Local> = Local::now();
+    now.format("%Y-%m-%d").to_string()
+}
+
+pub fn get_dt() -> String {
+    let now: DateTime<Local> = Local::now();
+    now.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 pub fn assert_capture_between(
@@ -77,8 +136,6 @@ pub fn execute_shell(command: &str) -> Result<(), ExecutorError> {
 
 #[cfg(test)]
 mod test {
-
-    use std::process::Command;
 
     use super::*;
 

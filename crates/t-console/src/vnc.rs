@@ -6,8 +6,10 @@ use std::{
     fmt::Display,
     io,
     net::{SocketAddr, TcpStream},
-    ops::Add,
-    sync::mpsc::{self, channel, Receiver, RecvError, RecvTimeoutError, Sender},
+    sync::{
+        mpsc::{self, channel, Receiver, RecvError, RecvTimeoutError, Sender},
+        Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -109,6 +111,7 @@ pub mod key {
     }
 }
 
+#[derive(Debug)]
 pub enum VNCEventReq {
     TypeString(String),
     SendKey { keys: Vec<u32> },
@@ -117,7 +120,8 @@ pub enum VNCEventReq {
     MoveDown(u8),
     MoveUp(u8),
     MouseHide,
-    TakeScreenShot,
+    GetScreenShot,
+    TakeScreenShot(String),
     Refresh,
 }
 
@@ -126,13 +130,15 @@ pub type PNG = Container;
 pub enum VNCEventRes {
     NoConnection,
     Done,
-    Screen(PNG),
+    Screen(Arc<PNG>),
 }
 
 pub struct VNC {
     pub event_tx: Sender<(VNCEventReq, Sender<VNCEventRes>)>,
     pub stop_tx: Sender<()>,
 }
+
+pub type ScreenShotTx = Sender<(Arc<Container>, String, Sender<()>)>;
 
 #[derive(Debug)]
 pub enum VNCError {
@@ -154,7 +160,7 @@ impl VNC {
         let stream =
             TcpStream::connect_timeout(addr, Duration::from_millis(200)).map_err(VNCError::Io)?;
 
-        let vnc = t_vnc::Client::from_tcp_stream(stream, true, |methods| {
+        let mut vnc = t_vnc::Client::from_tcp_stream(stream, true, |methods| {
             for method in methods {
                 match method {
                     t_vnc::client::AuthMethod::None => {
@@ -184,16 +190,6 @@ impl VNC {
             None
         })
         .map_err(VNCError::VNCError)?;
-        info!("vnc connect success");
-        Ok(vnc)
-    }
-
-    pub fn connect(
-        addr: SocketAddr,
-        password: Option<String>,
-        screenshot_tx: Option<Sender<Container>>,
-    ) -> Result<Self, VNCError> {
-        let mut vnc = Self::make_conn(&addr, password.clone())?;
 
         // vnc.set_encodings(&[t_vnc::Encoding::Zrle, t_vnc::Encoding::DesktopSize])
         vnc.set_encodings(&[
@@ -203,31 +199,27 @@ impl VNC {
             t_vnc::Encoding::Cursor,
             t_vnc::Encoding::DesktopSize,
         ])
-        .unwrap();
+        .map_err(VNCError::VNCError)?;
 
-        let size = vnc.size();
-        let pixel_format = vnc.format();
+        info!(msg = "vnc connect success");
+
+        Ok(vnc)
+    }
+
+    pub fn connect(
+        addr: SocketAddr,
+        password: Option<String>,
+        screenshot_tx: Option<ScreenShotTx>,
+    ) -> Result<Self, VNCError> {
+        let vnc = Self::make_conn(&addr, password.clone())?;
 
         let (event_tx, event_rx) = mpsc::channel();
         let (stop_tx, stop_rx) = channel();
 
         let mut c = VncClientInner {
             make_conn: Box::new(move || Self::make_conn(&addr, password.clone())),
+            state: State::from_vnc(&vnc),
             conn: Some(vnc),
-
-            state: State {
-                width: size.0,
-                height: size.1,
-                mouse_x: size.0,
-                mouse_y: size.1,
-
-                pixel_format,
-                unstable_screen: Container::new(size.0, size.1, 3),
-                updated_in_frame: true,
-                buttons: 0,
-            },
-
-            last_take_screenshot: None,
 
             event_rx,
             stop_rx,
@@ -248,7 +240,8 @@ impl VNC {
     pub fn send(&self, req: VNCEventReq) -> Result<VNCEventRes, RecvError> {
         let (tx, rx) = mpsc::channel();
         if self.event_tx.send((req, tx)).is_err() {
-            panic!("vnc client stopped unexpected");
+            warn!("vnc client stopped unexpected");
+            return Err(RecvError);
         }
         rx.recv()
     }
@@ -280,6 +273,8 @@ struct State {
     mouse_x: u16,
     mouse_y: u16,
 
+    count: i32,
+
     pixel_format: PixelFormat,
     unstable_screen: Container,
     updated_in_frame: bool,
@@ -296,6 +291,8 @@ impl State {
             height: size.1,
             mouse_x: size.0,
             mouse_y: size.1,
+
+            count: 0,
 
             pixel_format,
             unstable_screen: Container::new(size.0, size.1, 3),
@@ -314,9 +311,8 @@ struct VncClientInner {
     event_rx: Receiver<(VNCEventReq, Sender<VNCEventRes>)>,
     stop_rx: Receiver<()>,
 
-    last_take_screenshot: Option<Instant>,
-    screenshot_tx: Option<Sender<Container>>,
-    screenshot_buffer: std::collections::VecDeque<PNG>,
+    screenshot_tx: Option<ScreenShotTx>,
+    screenshot_buffer: std::collections::VecDeque<Arc<PNG>>,
 }
 
 impl VncClientInner {
@@ -340,6 +336,7 @@ impl VncClientInner {
                 }
             };
 
+            // request refresh
             if let Some(vnc) = self.conn.as_mut() {
                 trace!(msg = "handle vnc update");
                 let _ = vnc.request_update(
@@ -353,132 +350,133 @@ impl VncClientInner {
                 );
             }
 
-            let frame_end = Instant::now().add(Duration::from_millis(FRAME_MS));
+            let deadline = Instant::now() + Duration::from_millis(FRAME_MS);
+            // handle server events
             trace!(msg = "handle vnc events");
-            if let Err(e) = self.try_handle_vnc_events() {
-                error!(msg="vnc disconnected", reason = ?e);
-                self.conn = None;
-            }
-
-            trace!(msg = "handle vnc req");
-            loop {
-                let action_start = Instant::now();
-                if action_start > frame_end {
+            while let Some(event) = self.conn.as_mut().and_then(|vnc| vnc.poll_event()) {
+                debug!(msg = "vnc receive new event");
+                if let Err(e) = self.try_handle_vnc_events(event) {
+                    error!(msg="vnc disconnected", reason = ?e);
+                    self.conn = None;
                     break;
                 }
-                if let Ok((msg, tx)) = self.event_rx.recv_timeout(frame_end - action_start) {
-                    match self.handle_req(msg) {
-                        Ok(res) => {
-                            if tx.send(res).is_err() {
-                                error!(msg = "vnc event result send back failed");
-                            };
-                        }
-                        Err(_) => {
-                            if tx.send(VNCEventRes::NoConnection).is_err() {
-                                self.conn = None;
-                                error!(msg = "vnc connection may broken, close connection");
-                            };
-                        }
+            }
+
+            // handle user requests
+            trace!(msg = "handle vnc req");
+            while let Ok((msg, tx)) = self.event_rx.try_recv() {
+                // info!(msg="handle new msg", req=?msg);
+                match self.handle_req(msg) {
+                    Ok(res) => {
+                        if tx.send(res).is_err() {
+                            error!(msg = "vnc event result send back failed");
+                        };
+                    }
+                    Err(_) => {
+                        if tx.send(VNCEventRes::NoConnection).is_err() {
+                            self.conn = None;
+                            error!(msg = "vnc connection may broken, close connection");
+                        };
                     }
                 }
+                if Instant::now() > deadline {
+                    break;
+                }
+            }
+            if Instant::now() < deadline {
+                thread::sleep(deadline - Instant::now());
             }
         }
         debug!(msg = "vnc stopped");
         Ok(())
     }
 
-    fn try_handle_vnc_events(&mut self) -> Result<(), Option<t_vnc::Error>> {
-        let Self {
-            state,
-            conn: Some(vnc),
-            ..
-        } = self
-        else {
-            return Ok(());
-        };
-        trace!(msg = "handle vnc events");
-        for event in vnc.poll_iter() {
-            debug!(msg = "vnc receive new event");
-            match event {
-                Event::Disconnected(e) => {
+    fn try_handle_vnc_events(
+        &mut self,
+        event: t_vnc::client::Event,
+    ) -> Result<(), Option<t_vnc::Error>> {
+        let Self { state, .. } = self;
+        match event {
+            Event::Disconnected(e) => {
+                state.updated_in_frame = true;
+                state.unstable_screen.set_zero();
+                return Err(e);
+            }
+            Event::Resize(w, h) => {
+                info!(msg = "VNC Window Resize", w = w, h = h);
+                state.updated_in_frame = true;
+                state.width = w;
+                state.height = h;
+                let mut new_screen = Container::new(w, h, 3);
+                new_screen.set_rect(0, 0, &state.unstable_screen);
+                state.unstable_screen = new_screen;
+            }
+            Event::PutPixels(rect, pixels) => {
+                if !pixels.is_empty() {
                     state.updated_in_frame = true;
-                    state.unstable_screen.set_zero();
-                    return Err(e);
                 }
-                Event::Resize(w, h) => {
-                    info!(msg = "VNC Window Resize");
+                let data = convert_to_rgb(&state.pixel_format, &pixels);
+                let c = Container::new_with_data(rect.width, rect.height, data, 3);
+                state.unstable_screen.set_rect(rect.left, rect.top, &c);
+            }
+            Event::CopyPixels { src, dst } => {
+                if src != dst {
                     state.updated_in_frame = true;
-                    state.width = w;
-                    state.height = h;
-                    let mut new_screen = Container::new(w, h, 3);
-                    new_screen.set_rect(0, 0, &state.unstable_screen);
-                    state.unstable_screen = new_screen;
                 }
-                Event::PutPixels(rect, pixels) => {
-                    if !pixels.is_empty() {
-                        state.updated_in_frame = true;
-                    }
-                    let data = convert_to_rgb(&state.pixel_format, &pixels);
-                    let c = Container::new_with_data(rect.width, rect.height, data, 3);
-                    state.unstable_screen.set_rect(rect.left, rect.top, &c);
+                state.unstable_screen.set_rect(
+                    dst.left,
+                    dst.top,
+                    &Container::new_with_data(
+                        dst.width,
+                        dst.height,
+                        state.unstable_screen.get_rect(src),
+                        3,
+                    ),
+                );
+            }
+            Event::EndOfFrame => {
+                if !state.updated_in_frame {
+                    return Ok(());
                 }
-                Event::CopyPixels { src, dst } => {
-                    if src != dst {
-                        state.updated_in_frame = true;
-                    }
-                    state.unstable_screen.set_rect(
-                        dst.left,
-                        dst.top,
-                        &Container::new_with_data(
-                            dst.width,
-                            dst.height,
-                            state.unstable_screen.get_rect(src),
-                            3,
-                        ),
-                    );
-                }
-                Event::EndOfFrame => {
-                    if !state.updated_in_frame {
-                        continue;
-                    }
-                    state.updated_in_frame = false;
+                state.count += 1;
+                state.updated_in_frame = false;
 
-                    // save buffer
-                    debug!(msg = "vnc event Event::EndOfFrame");
-                    if self.screenshot_buffer.len() == 60 {
-                        self.screenshot_buffer.pop_front();
-                    }
-                    self.screenshot_buffer
-                        .push_back(state.unstable_screen.clone());
+                // save buffer
+                debug!(msg = "vnc event Event::EndOfFrame", count = state.count);
+                while self.screenshot_buffer.len() > 10 {
+                    self.screenshot_buffer.pop_front();
+                }
 
-                    // send screenshot
-                    if let Some(tx) = &self.screenshot_tx {
-                        // if let Some(last) = self.last_take_screenshot {
-                        //     // TODO: maybe set a minimal interval
-                        //     // if Instant::now().duration_since(last) < Duration::from_secs(2) {
-                        //     //     continue
-                        //     // }
-                        // }
-                        if tx.send(state.unstable_screen.clone()).is_err() {
-                            error!(msg = "screenshot channel closed");
-                            self.screenshot_tx = None;
-                        }
-                        self.last_take_screenshot = Some(Instant::now());
-                    }
-                }
-                Event::Clipboard(ref _text) => {
-                    state.updated_in_frame = true;
-                }
-                Event::SetCursor { .. } => {
-                    state.updated_in_frame = true;
-                }
-                Event::SetColourMap { .. } => {
-                    state.updated_in_frame = true;
-                }
-                Event::Bell => {
-                    state.updated_in_frame = true;
-                }
-            };
+                let screenshot = Arc::new(state.unstable_screen.clone());
+                self.screenshot_buffer.push_back(screenshot.clone());
+
+                // FIXME: send screenshot may cause memoey overflow slowly if handler handle too slow
+                // if let Some(tx) = &self.screenshot_tx {
+                //     // if let Some(last) = self.last_take_screenshot {
+                //     //     // TODO: maybe set a minimal interval
+                //     //     // if Instant::now().duration_since(last) < Duration::from_secs(2) {
+                //     //     //     continue
+                //     //     // }
+                //     // }
+                //     if tx.send(screenshot).is_err() {
+                //         error!(msg = "screenshot channel closed");
+                //         self.screenshot_tx = None;
+                //     }
+                //     self.last_take_screenshot = Some(Instant::now());
+                // }
+            }
+            Event::Clipboard(ref _text) => {
+                state.updated_in_frame = true;
+            }
+            Event::SetCursor { .. } => {
+                state.updated_in_frame = true;
+            }
+            Event::SetColourMap { .. } => {
+                state.updated_in_frame = true;
+            }
+            Event::Bell => {
+                state.updated_in_frame = true;
+            }
         }
         Ok(())
     }
@@ -492,7 +490,8 @@ impl VncClientInner {
             VNCEventReq::MoveDown(button) => self.handle_mouse_down(button),
             VNCEventReq::MoveUp(button) => self.handle_mouse_up(button),
             VNCEventReq::Refresh => self.handle_screen_refresh(),
-            VNCEventReq::TakeScreenShot => self.handle_screen_takeshot(),
+            VNCEventReq::GetScreenShot => self.handle_screen_getlatest(),
+            VNCEventReq::TakeScreenShot(name) => self.handle_screen_takeshot(name),
             VNCEventReq::MouseHide => self.handle_mouse_hide(),
         }
     }
@@ -570,13 +569,30 @@ impl VncClientInner {
         Ok(VNCEventRes::NoConnection)
     }
 
-    fn handle_screen_takeshot(&mut self) -> Result<VNCEventRes, t_vnc::Error> {
-        let screen = self
-            .screenshot_buffer
-            .back()
-            .unwrap_or(&Container::new(80, 24, 3))
-            .clone();
-        Ok(VNCEventRes::Screen(screen))
+    fn handle_screen_takeshot(&mut self, name: String) -> Result<VNCEventRes, t_vnc::Error> {
+        if let Some(screenshot) = self.screenshot_buffer.back() {
+            if let Some(tx) = &self.screenshot_tx {
+                // if has new frame, then save
+                let (done_tx, done_rx) = mpsc::channel();
+                if let Err(e) = tx.send((screenshot.clone(), name, done_tx)) {
+                    error!(msg = "screenshot channel closed", reason = ?e);
+                    self.screenshot_tx = None;
+                }
+                if let Err(e) = done_rx.recv() {
+                    error!(msg = "screenshot done recv failed", reason = ?e);
+                    self.screenshot_tx = None;
+                }
+                return Ok(VNCEventRes::Done);
+            }
+        }
+        Ok(VNCEventRes::NoConnection)
+    }
+
+    fn handle_screen_getlatest(&mut self) -> Result<VNCEventRes, t_vnc::Error> {
+        if let Some(screenshot) = self.screenshot_buffer.back() {
+            return Ok(VNCEventRes::Screen(screenshot.clone()));
+        }
+        Ok(VNCEventRes::NoConnection)
     }
 
     fn handle_screen_refresh(&mut self) -> Result<VNCEventRes, t_vnc::Error> {

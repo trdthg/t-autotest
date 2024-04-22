@@ -67,9 +67,17 @@ impl Container {
 
     pub fn set_rect(&mut self, left: u16, top: u16, c: &Container) {
         assert!(c.pixel_size == self.pixel_size);
-        for row in top..top + c.height {
-            for col in left..left + c.width {
-                self.set(row, col, c.get(row - top, col - left));
+        for row in 0..(if self.height - top > c.height {
+            c.height
+        } else {
+            self.height - top
+        }) {
+            for col in 0..(if self.width - left > c.width {
+                c.width
+            } else {
+                self.width - left
+            }) {
+                self.set(row + top, col + left, c.get(row, col));
             }
         }
     }
@@ -77,6 +85,12 @@ impl Container {
     pub fn into_img(self) -> DynamicImage {
         DynamicImage::ImageRgb8(
             RgbImage::from_vec(self.width as u32, self.height as u32, self.data).unwrap(),
+        )
+    }
+
+    pub fn as_img(&self) -> DynamicImage {
+        DynamicImage::ImageRgb8(
+            RgbImage::from_vec(self.width as u32, self.height as u32, self.data.clone()).unwrap(),
         )
     }
 

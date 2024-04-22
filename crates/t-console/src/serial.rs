@@ -36,7 +36,11 @@ impl Serial {
     fn connect_from_serial_config(
         c: &t_config::ConsoleSerial,
     ) -> Result<SerialClient<crate::VT102>> {
-        let ssh_client = SerialClient::connect(&c.serial_file, c.bund_rate, c.log_file.clone())?;
+        let ssh_client = SerialClient::connect(
+            &c.serial_file,
+            c.bund_rate.unwrap_or(115200),
+            c.log_file.clone(),
+        )?;
         Ok(ssh_client)
     }
 }
@@ -63,7 +67,7 @@ where
             move || {
                 match serialport::new(&file, bund_rate).open() {
                     Ok(res) => {
-                        info!("serial conn success");
+                        info!(msg = "serial conn success");
                         Ok(res)
                     }
                     Err(e) => {
@@ -112,7 +116,7 @@ mod test {
             return;
         };
 
-        let port = serialport::new(serial.serial_file, serial.bund_rate)
+        let port = serialport::new(serial.serial_file, serial.bund_rate.unwrap_or(115200))
             .timeout(Duration::from_millis(10))
             .open_native();
         if port.is_err() {
@@ -145,7 +149,12 @@ mod test {
     }
 
     fn get_client(serial: &ConsoleSerial) -> SerialClient<VT102> {
-        SerialClient::connect(&serial.serial_file, serial.bund_rate, None).unwrap()
+        SerialClient::connect(
+            &serial.serial_file,
+            serial.bund_rate.unwrap_or(115200),
+            None,
+        )
+        .unwrap()
     }
 
     #[test]

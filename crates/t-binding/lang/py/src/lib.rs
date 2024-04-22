@@ -21,7 +21,7 @@ use t_binding::{
 };
 use t_config::{Config, ConsoleSSH};
 use t_console::SSH;
-use t_runner::Driver as InnerDriver;
+use t_runner::{Driver as InnerDriver, DriverBuilder};
 use tracing::{error, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -94,9 +94,11 @@ impl Driver {
     fn __init__(config: String) -> PyResult<Self> {
         let config =
             Config::from_toml_str(&config).map_err(|e| DriverException::new_err(e.to_string()))?;
-        let mut driver = InnerDriver::new(Some(config.clone())).map_err(|e| {
-            DriverException::new_err(format!("driver init failed, reason: [{}]", e))
-        })?;
+        let mut driver = DriverBuilder::new(Some(config.clone()))
+            .build()
+            .map_err(|e| {
+                DriverException::new_err(format!("driver init failed, reason: [{}]", e))
+            })?;
         driver.start();
         Ok(Self {
             tx: driver.msg_tx.clone(),
