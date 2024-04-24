@@ -6,11 +6,32 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use t_console::{Rect, PNG};
-use tracing::warn;
+use tracing::{info, warn};
 
 pub struct Needle {
     pub config: NeedleConfig,
     pub data: PNG,
+}
+
+impl Needle {
+    pub fn cmp(s: &PNG, needle: &Needle, min_same: Option<f32>) -> (f32, bool) {
+        if needle.config.areas.is_empty() {
+            warn!("this needle has no match ares");
+            return (1.0, true);
+        }
+
+        let mut not_same = 0;
+        let mut all = 0;
+        for area in needle.config.areas.iter() {
+            all += area.width * area.height;
+            let count = s.cmp_rect_and_count(&needle.data, &area.into());
+            not_same += count;
+        }
+
+        let res = 1. - (not_same as f32 / all as f32);
+        info!(res = res, all = all, not_same = not_same);
+        (res, res >= min_same.unwrap_or(0.95))
+    }
 }
 
 pub struct NeedleManager {
@@ -59,27 +80,7 @@ impl NeedleManager {
 
     pub fn cmp(&self, s: &PNG, filename: &str, min_same: Option<f32>) -> Option<(f32, bool)> {
         let needle = self.load(filename)?;
-        if needle.config.areas.is_empty() {
-            warn!("this needle has no match ares");
-            return Some((1.0, true));
-        }
-
-        let mut not_same = 0;
-        let mut all = 0;
-        for area in needle.config.areas.iter() {
-            all += area.width * area.height;
-            let (count, ok) = needle.data.cmp_rect_and_count(s, &area.into());
-            if !ok {
-                not_same += count;
-            }
-        }
-
-        if not_same == 0 {
-            return Some((1., true));
-        }
-
-        let res = 1. - (not_same as f32 / all as f32);
-        Some((res, res >= min_same.unwrap_or(0.95)))
+        Some(Needle::cmp(s, &needle, min_same))
     }
 }
 

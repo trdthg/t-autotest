@@ -51,7 +51,10 @@ impl JSEngine {
 
                 let api = rustapi.clone();
                 ctx.globals()
-                    .set("sleep", Function::new(ctx.clone(), move |s| api.sleep(s)))
+                    .set(
+                        "sleep",
+                        Function::new(ctx.clone(), move |s: i32| api.sleep(s as u64)),
+                    )
                     .unwrap();
 
                 let api = rustapi.clone();
@@ -291,6 +294,62 @@ impl JSEngine {
                         ),
                     )
                     .unwrap();
+
+                let api = rustapi.clone();
+                ctx.globals()
+                    .set(
+                        "assert_and_click",
+                        Function::new(
+                            ctx.clone(),
+                            move |tag: String, timeout: i32| -> rquickjs::Result<()> {
+                                api.vnc_assert_and_click(tag.clone(), timeout)
+                                    .map_err(into_jserr)
+                            },
+                        ),
+                    )
+                    .unwrap();
+
+                let api = rustapi.clone();
+                ctx.globals()
+                    .set(
+                        "check_and_click",
+                        Function::new(
+                            ctx.clone(),
+                            move |tag: String, timeout: i32| -> rquickjs::Result<bool> {
+                                api.vnc_check_and_click(tag.clone(), timeout)
+                                    .map_err(into_jserr)
+                            },
+                        ),
+                    )
+                    .unwrap();
+
+                let api = rustapi.clone();
+                ctx.globals()
+                    .set(
+                        "assert_and_move",
+                        Function::new(
+                            ctx.clone(),
+                            move |tag: String, timeout: i32| -> rquickjs::Result<()> {
+                                api.vnc_assert_and_move(tag.clone(), timeout)
+                                    .map_err(into_jserr)
+                            },
+                        ),
+                    )
+                    .unwrap();
+                let api = rustapi.clone();
+                ctx.globals()
+                    .set(
+                        "check_and_move",
+                        Function::new(
+                            ctx.clone(),
+                            move |tag: String, timeout: i32| -> rquickjs::Result<bool> {
+                                api.vnc_check_and_move(tag.clone(), timeout)
+                                    .map_err(into_jserr)
+                            },
+                        ),
+                    )
+                    .unwrap();
+
                 let api = rustapi.clone();
                 ctx.globals()
                     .set(

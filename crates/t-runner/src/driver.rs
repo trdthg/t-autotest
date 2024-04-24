@@ -1,11 +1,17 @@
-use std::{sync::mpsc, thread};
+use std::{
+    sync::{mpsc, Arc},
+    thread,
+};
 
 use t_binding::api::ApiTx;
 use t_config::Config;
 use t_console::SSH;
 use tracing::warn;
 
-use crate::{error::DriverError, server::Server};
+use crate::{
+    error::DriverError,
+    server::{Server, Service},
+};
 use t_util::AMOption;
 
 pub struct Driver {
@@ -81,22 +87,24 @@ impl DriverBuilder {
         // init stop tx
         let (stop_tx, stop_rx) = mpsc::channel();
 
-        let mut server = Server {
-            config: self.config.clone(),
+        let server = Server {
             msg_rx,
             stop_rx,
 
-            enable_screenshot: true,
-
-            ssh: AMOption::new(None),
-            serial: AMOption::new(None),
-            vnc: AMOption::new(None),
+            repo: Arc::new(Service {
+                enable_screenshot: true,
+                config: AMOption::new(self.config.clone()),
+                ssh: AMOption::new(None),
+                serial: AMOption::new(None),
+                vnc: AMOption::new(None),
+            }),
         };
 
         // try connect for the first time
         if let Some(ref c) = self.config {
             server
-                .connect_with_config(c)
+                .repo
+                .connect_with_config(c.clone())
                 .map_err(DriverError::ConsoleError)?;
         }
 

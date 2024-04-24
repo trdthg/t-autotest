@@ -117,6 +117,7 @@ pub enum VNCEventReq {
     SendKey { keys: Vec<u32> },
     MouseMove(u16, u16),
     MouseDrag(u16, u16),
+    MouseClick(u8),
     MoveDown(u8),
     MoveUp(u8),
     MouseHide,
@@ -400,6 +401,8 @@ impl VncClientInner {
             Event::Disconnected(e) => {
                 state.updated_in_frame = true;
                 state.unstable_screen.set_zero();
+                let screenshot = Arc::new(state.unstable_screen.clone());
+                self.screenshot_buffer.push_back(screenshot.clone());
                 return Err(e);
             }
             Event::Resize(w, h) => {
@@ -487,6 +490,11 @@ impl VncClientInner {
             VNCEventReq::SendKey { keys } => self.handle_send_key(keys),
             VNCEventReq::MouseMove(x, y) => self.handle_mouse_move(x, y),
             VNCEventReq::MouseDrag(x, y) => self.handle_mouse_drag(x, y),
+            VNCEventReq::MouseClick(button) => {
+                self.handle_mouse_down(button)?;
+                self.handle_mouse_up(button)?;
+                Ok(VNCEventRes::Done)
+            }
             VNCEventReq::MoveDown(button) => self.handle_mouse_down(button),
             VNCEventReq::MoveUp(button) => self.handle_mouse_up(button),
             VNCEventReq::Refresh => self.handle_screen_refresh(),
@@ -498,16 +506,18 @@ impl VncClientInner {
 
     fn handle_mouse_down(&mut self, button: u8) -> Result<VNCEventRes, t_vnc::Error> {
         if let Some(vnc) = self.conn.as_mut() {
-            vnc.send_pointer_event(self.state.buttons, self.state.mouse_x, self.state.mouse_y)?;
-            self.state.buttons |= button;
+            let new_buttons = self.state.buttons | button;
+            vnc.send_pointer_event(new_buttons, self.state.mouse_x, self.state.mouse_y)?;
+            self.state.buttons = new_buttons;
             return Ok(VNCEventRes::Done);
         }
         Ok(VNCEventRes::NoConnection)
     }
     fn handle_mouse_up(&mut self, button: u8) -> Result<VNCEventRes, t_vnc::Error> {
         if let Some(vnc) = self.conn.as_mut() {
-            vnc.send_pointer_event(self.state.buttons, self.state.mouse_x, self.state.mouse_y)?;
-            self.state.buttons &= !button;
+            let new_buttons = self.state.buttons & !button;
+            vnc.send_pointer_event(new_buttons, self.state.mouse_x, self.state.mouse_y)?;
+            self.state.buttons = new_buttons;
             return Ok(VNCEventRes::Done);
         }
         Ok(VNCEventRes::NoConnection)
@@ -525,9 +535,9 @@ impl VncClientInner {
 
     fn handle_mouse_hide(&mut self) -> Result<VNCEventRes, t_vnc::Error> {
         if let Some(vnc) = self.conn.as_mut() {
+            vnc.send_pointer_event(self.state.buttons, self.state.width, self.state.height)?;
             self.state.mouse_x = self.state.width;
             self.state.mouse_y = self.state.height;
-            vnc.send_pointer_event(self.state.buttons, self.state.width, self.state.height)?;
             return Ok(VNCEventRes::Done);
         }
         Ok(VNCEventRes::NoConnection)

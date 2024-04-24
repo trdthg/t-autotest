@@ -213,11 +213,14 @@ pub trait Api {
     fn vnc_check_screen(&self, tag: String, timeout: i32) -> Result<bool> {
         match self.req(MsgReq::VNC(VNC::CheckScreen {
             tag: tag.clone(),
-            threshold: 1,
+            threshold: 0.95,
             timeout: Duration::from_secs(timeout as u64),
+            click: false,
+            r#move: false,
+            delay: None,
         }))? {
-            MsgRes::AssertScreen { similarity: _, ok } => Ok(ok),
-            MsgRes::Error(e) => Err(e.into()),
+            MsgRes::Done => Ok(true),
+            MsgRes::Error(_) => Ok(false),
             _ => Err(ApiError::ServerInvalidResponse),
         }
     }
@@ -227,6 +230,50 @@ pub trait Api {
             Ok(())
         } else {
             Err(ApiError::AssertFailed)
+        }
+    }
+
+    fn vnc_check_and_click(&self, tag: String, timeout: i32) -> Result<bool> {
+        match self.req(MsgReq::VNC(VNC::CheckScreen {
+            tag: tag.clone(),
+            threshold: 0.95,
+            timeout: Duration::from_secs(timeout as u64),
+            click: true,
+            r#move: false,
+            delay: None,
+        }))? {
+            MsgRes::Done => Ok(true),
+            MsgRes::Error(_) => Ok(false),
+            _ => Err(ApiError::ServerInvalidResponse),
+        }
+    }
+
+    fn vnc_assert_and_click(&self, tag: String, timeout: i32) -> Result<()> {
+        match self.vnc_check_and_click(tag, timeout)? {
+            true => Ok(()),
+            false => Err(ApiError::AssertFailed),
+        }
+    }
+
+    fn vnc_check_and_move(&self, tag: String, timeout: i32) -> Result<bool> {
+        match self.req(MsgReq::VNC(VNC::CheckScreen {
+            tag: tag.clone(),
+            threshold: 0.95,
+            timeout: Duration::from_secs(timeout as u64),
+            click: false,
+            r#move: true,
+            delay: None,
+        }))? {
+            MsgRes::Done => Ok(true),
+            MsgRes::Error(_) => Ok(false),
+            _ => Err(ApiError::ServerInvalidResponse),
+        }
+    }
+
+    fn vnc_assert_and_move(&self, tag: String, timeout: i32) -> Result<()> {
+        match self.vnc_check_and_move(tag, timeout)? {
+            true => Ok(()),
+            false => Err(ApiError::AssertFailed),
         }
     }
 

@@ -21,7 +21,7 @@ use std::{
         Arc,
     },
     thread,
-    time::{self, Duration, Instant, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 use t_binding::api::{Api, ApiTx, RustApi};
 use t_console::PNG;
@@ -342,17 +342,12 @@ impl NeedleSource {
     pub fn save_to_file(&self, dir: impl AsRef<Path>) -> Result<(), ()> {
         let mut path = PathBuf::new();
         path.push(dir);
-        let t = time::SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        let image_name = format!("{}-{}.png", self.name, t);
+        let image_name = format!("{}.png", self.name);
         path.push(image_name);
         self.save_png(&path)?;
         path.pop();
 
-        let json_file = format!("{}-{}.json", self.name, t);
+        let json_file = format!("{}.json", self.name);
         path.push(json_file);
         self.save_json(&path)?;
         Ok(())
@@ -660,179 +655,215 @@ impl Recorder {
     }
 
     fn render_vnc(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-            match self.mode {
-                RecordMode::Interact => {
-                    let lock = self.screenshots.read();
-                    let Some(screenshot) = lock.back() else {
-                        return;
-                    };
+        egui::ScrollArea::both()
+            .auto_shrink(false)
+            .show_viewport(ui, |ui, _rect| {
+                match self.mode {
+                    RecordMode::Interact => {
+                        let lock = self.screenshots.read();
+                        let Some(screenshot) = lock.back() else {
+                            return;
+                        };
 
-                    // render current screenshot
-                    let img = screenshot.image();
-                    let screenshot = ui.add(img.sense(Sense::click_and_drag()));
+                        // render current screenshot
+                        let img = screenshot.image();
+                        let screenshot = ui.add(img.sense(Sense::click_and_drag()));
 
-                    // if mouse move out of image, do nothing
-                    if let Some(pos) = screenshot.hover_pos() {
-                        let relative_x =
-                            (pos.x as u16).saturating_sub(screenshot.rect.left() as u16);
-                        let relative_y =
-                            (pos.y as u16).saturating_sub(screenshot.rect.top() as u16);
+                        // if mouse move out of image, do nothing
+                        if let Some(pos) = screenshot.hover_pos() {
+                            let relative_x =
+                                (pos.x as u16).saturating_sub(screenshot.rect.left() as u16);
+                            let relative_y =
+                                (pos.y as u16).saturating_sub(screenshot.rect.top() as u16);
 
-                        if Instant::now() - self.last_move_interval > self.minimal_move_interval {
-                            if self.api.vnc_mouse_move(relative_x, relative_y).is_err() {
-                                // FIXME: too many error log
-                                // self.logs_toasts.push((
-                                //     Level::ERROR,
-                                //     format!("mouse move failed, reason = {:?}", e),
-                                // ));
+                            if Instant::now() - self.last_move_interval > self.minimal_move_interval
+                            {
+                                if self.api.vnc_mouse_move(relative_x, relative_y).is_err() {
+                                    // FIXME: too many error log
+                                    // self.logs_toasts.push((
+                                    //     Level::ERROR,
+                                    //     format!("mouse move failed, reason = {:?}", e),
+                                    // ));
+                                }
+                                self.last_move_interval = Instant::now();
                             }
-                            self.last_move_interval = Instant::now();
                         }
-                    }
 
-                    // handle drag
-                    if screenshot.drag_started() {
-                        if let Some(pos) = screenshot.interact_pointer_pos() {
-                            self.drag_pos = pos;
-                            if let Err(e) = self.api.vnc_mouse_keydown() {
+                        // handle drag
+                        if screenshot.drag_started() {
+                            if let Some(pos) = screenshot.interact_pointer_pos() {
+                                self.drag_pos = pos;
+                                if let Err(e) = self.api.vnc_mouse_keydown() {
+                                    self.logs_toasts.push((
+                                        Level::ERROR,
+                                        format!("mouse key down failed, reason = {:?}", e),
+                                    ));
+                                }
+                            }
+                        } else if screenshot.dragged() {
+                            self.drag_pos += screenshot.drag_delta();
+                            if let Err(e) = self
+                                .api
+                                .vnc_mouse_drag(self.drag_pos.x as u16, self.drag_pos.y as u16)
+                            {
+                                self.logs_toasts.push((
+                                    Level::ERROR,
+                                    format!("mouse drag failed, reason = {:?}", e),
+                                ));
+                            }
+                        } else if screenshot.drag_stopped() {
+                            if let Err(e) = self.api.vnc_mouse_keyup() {
                                 self.logs_toasts.push((
                                     Level::ERROR,
                                     format!("mouse key down failed, reason = {:?}", e),
                                 ));
                             }
                         }
-                    } else if screenshot.dragged() {
-                        self.drag_pos += screenshot.drag_delta();
-                        if let Err(e) = self
-                            .api
-                            .vnc_mouse_drag(self.drag_pos.x as u16, self.drag_pos.y as u16)
-                        {
-                            self.logs_toasts.push((
-                                Level::ERROR,
-                                format!("mouse drag failed, reason = {:?}", e),
-                            ));
-                        }
-                    } else if screenshot.drag_stopped() {
-                        if let Err(e) = self.api.vnc_mouse_keyup() {
-                            self.logs_toasts.push((
-                                Level::ERROR,
-                                format!("mouse key down failed, reason = {:?}", e),
-                            ));
-                        }
-                    }
 
-                    if screenshot.clicked() {
-                        if let Err(e) = self.api.vnc_mouse_click() {
-                            self.logs_toasts.push((
-                                Level::ERROR,
-                                format!("mouse click failed, reason = {:?}", e),
-                            ));
-                        }
-                    }
-
-                    if screenshot.secondary_clicked() {
-                        if let Err(e) = self.api.vnc_mouse_rclick() {
-                            self.logs_toasts.push((
-                                Level::ERROR,
-                                format!("mouse right click failed, reason = {:?}", e),
-                            ));
-                        }
-                    }
-                }
-                RecordMode::Edit => {
-                    // handle screenshot
-                    if let Some(screenshot) = self.screenshots.read().back() {
-                        // ---------------------------------------------------------------------------------------------------------
-
-                        let mut screenshot =
-                            ui.add(screenshot.image().sense(Sense::click_and_drag()));
-
-                        if let Some(pos_max) = screenshot.hover_pos() {
-                            let x = pos_max.x - screenshot.rect.left();
-                            let y = pos_max.y - screenshot.rect.top();
-                            screenshot = screenshot
-                                .on_hover_text_at_pointer(format!("x: {:.1}, y: {:.1}", x, y));
-                        }
-
-                        // ---------------------------------------------------------------------------------------------------------
-
-                        // handle rect drag
-                        if screenshot.drag_started() && self.drag_rect.is_none() {
-                            if let Some(start_point) = screenshot.interact_pointer_pos() {
-                                let drag_rect = RectF32 {
-                                    left: start_point.x - screenshot.rect.left(),
-                                    top: start_point.y - screenshot.rect.top(),
-                                    width: 0.,
-                                    height: 0.,
-                                };
-                                self.drag_rect = Some(drag_rect);
+                        if screenshot.clicked() {
+                            if let Err(e) = self.api.vnc_mouse_click() {
+                                self.logs_toasts.push((
+                                    Level::ERROR,
+                                    format!("mouse click failed, reason = {:?}", e),
+                                ));
                             }
                         }
-                        if screenshot.dragged() {
-                            if let Some(rect) = self.drag_rect.as_mut() {
-                                if let Some(pos_max) = screenshot.interact_pointer_pos() {
-                                    rect.width = pos_max.x - screenshot.rect.left() - rect.left;
-                                    rect.height = pos_max.y - screenshot.rect.top() - rect.top;
+
+                        if screenshot.secondary_clicked() {
+                            if let Err(e) = self.api.vnc_mouse_rclick() {
+                                self.logs_toasts.push((
+                                    Level::ERROR,
+                                    format!("mouse right click failed, reason = {:?}", e),
+                                ));
+                            }
+                        }
+                    }
+                    RecordMode::Edit => {
+                        // handle screenshot
+                        if let Some(screenshot) = self.screenshots.read().back() {
+                            // ---------------------------------------------------------------------------------------------------------
+
+                            let mut screenshot =
+                                ui.add(screenshot.image().sense(Sense::click_and_drag()));
+
+                            if let Some(pos_max) = screenshot.hover_pos() {
+                                let x = pos_max.x - screenshot.rect.left();
+                                let y = pos_max.y - screenshot.rect.top();
+                                screenshot = screenshot
+                                    .on_hover_text_at_pointer(format!("x: {:.1}, y: {:.1}", x, y));
+                            }
+
+                            // ---------------------------------------------------------------------------------------------------------
+
+                            // handle rect drag
+                            if screenshot.drag_started() && self.drag_rect.is_none() {
+                                if let Some(start_point) = screenshot.interact_pointer_pos() {
+                                    let drag_rect = RectF32 {
+                                        left: start_point.x - screenshot.rect.left(),
+                                        top: start_point.y - screenshot.rect.top(),
+                                        width: 0.,
+                                        height: 0.,
+                                    };
+                                    self.drag_rect = Some(drag_rect);
                                 }
-
-                                // let delta = screenshot.drag_delta();
-                                // rect.add_delta_f32_noreverse(delta.x, delta.y);
-
-                                let rect = rect
-                                    .clone()
-                                    .reverse_if_needed()
-                                    .add_delta_egui_rect(&screenshot.rect);
-                                ui.painter().rect_filled(
-                                    rect,
-                                    0.0,
-                                    Color32::from_rgba_premultiplied(0, 255, 0, 100),
-                                );
                             }
-                        }
-                        if screenshot.drag_stopped() {
-                            if let Some(mut rect) = self.drag_rect.take() {
-                                rect.reverse_if_needed();
-                                if rect.width != 0. && rect.height != 0. {
-                                    if self.drag_rects.is_none() {
-                                        self.drag_rects = Some(Vec::new());
+                            if screenshot.dragged() {
+                                if let Some(rect) = self.drag_rect.as_mut() {
+                                    if let Some(pos_max) = screenshot.interact_pointer_pos() {
+                                        rect.width = pos_max.x - screenshot.rect.left() - rect.left;
+                                        rect.height = pos_max.y - screenshot.rect.top() - rect.top;
                                     }
-                                    if let Some(rects) = self.drag_rects.as_mut() {
-                                        rects.push(DragedRect {
-                                            hover: false,
-                                            rect,
-                                            click: None,
+
+                                    // let delta = screenshot.drag_delta();
+                                    // rect.add_delta_f32_noreverse(delta.x, delta.y);
+
+                                    let rect = rect
+                                        .clone()
+                                        .reverse_if_needed()
+                                        .add_delta_egui_rect(&screenshot.rect);
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        0.0,
+                                        Color32::from_rgba_premultiplied(0, 255, 0, 100),
+                                    );
+                                }
+                            }
+                            if screenshot.drag_stopped() {
+                                if let Some(mut rect) = self.drag_rect.take() {
+                                    rect.reverse_if_needed();
+                                    if rect.width != 0. && rect.height != 0. {
+                                        if self.drag_rects.is_none() {
+                                            self.drag_rects = Some(Vec::new());
+                                        }
+                                        if let Some(rects) = self.drag_rects.as_mut() {
+                                            rects.push(DragedRect {
+                                                hover: false,
+                                                rect,
+                                                click: None,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+
+                            // ---------------------------------------------------------------------------------------------------------
+
+                            // handle rects
+                            if let Some(rects) = self.drag_rects.as_mut() {
+                                for DragedRect { hover, rect, click } in rects.iter_mut() {
+                                    // draw rect
+                                    let draw_rect = rect.add_delta_egui_rect(&screenshot.rect);
+                                    let rect_res =
+                                        ui.allocate_rect(draw_rect, Sense::click_and_drag());
+                                    ui.painter().rect_filled(
+                                        draw_rect,
+                                        0.0,
+                                        if *hover {
+                                            Color32::from_rgba_premultiplied(120, 0, 0, 30)
+                                        } else {
+                                            Color32::from_rgba_premultiplied(0, 120, 0, 30)
+                                        },
+                                    );
+
+                                    // draw click point
+                                    if let Some((x, y)) = click {
+                                        let point = ui.add(|ui: &mut egui::Ui| {
+                                            let circle_pos = Pos2 {
+                                                x: *x + rect_res.rect.left(),
+                                                y: *y + rect_res.rect.top(),
+                                            };
+                                            let radius = 10.;
+                                            let response = ui.allocate_rect(
+                                                Rect {
+                                                    min: circle_pos - Vec2::splat(radius),
+                                                    max: circle_pos + Vec2::splat(radius),
+                                                },
+                                                Sense::drag(),
+                                            );
+                                            ui.painter().circle_filled(
+                                                response.rect.center(),
+                                                radius,
+                                                if *hover {
+                                                    Color32::from_rgba_premultiplied(
+                                                        255, 255, 255, 120,
+                                                    )
+                                                } else {
+                                                    Color32::from_rgba_premultiplied(
+                                                        255, 255, 255, 30,
+                                                    )
+                                                },
+                                            );
+                                            response
                                         });
+                                        if point.dragged() {
+                                            *x += point.drag_delta().x;
+                                            *y += point.drag_delta().y;
+                                        }
                                     }
-                                }
-                            }
-                        }
 
-                        // ---------------------------------------------------------------------------------------------------------
-
-                        // handle rects
-                        if let Some(rects) = self.drag_rects.as_mut() {
-                            for DragedRect { hover, rect, click } in rects.iter_mut() {
-                                // draw rect
-                                let draw_rect = rect.add_delta_egui_rect(&screenshot.rect);
-                                let rect_res = ui.allocate_rect(draw_rect, Sense::click_and_drag());
-                                ui.painter().rect_filled(
-                                    draw_rect,
-                                    0.0,
-                                    if *hover {
-                                        Color32::from_rgba_premultiplied(120, 0, 0, 30)
-                                    } else {
-                                        Color32::from_rgba_premultiplied(0, 120, 0, 30)
-                                    },
-                                );
-
-                                // draw click point
-                                if let Some((x, y)) = click {
-                                    let point = ui.add(|ui: &mut egui::Ui| {
-                                        let circle_pos = Pos2 {
-                                            x: *x + rect_res.rect.left(),
-                                            y: *y + rect_res.rect.top(),
-                                        };
+                                    // draw resize drag button
+                                    let resize_button = ui.add(|ui: &mut egui::Ui| {
+                                        let circle_pos = rect_res.rect.max;
                                         let radius = 10.;
                                         let response = ui.allocate_rect(
                                             Rect {
@@ -844,81 +875,51 @@ impl Recorder {
                                         ui.painter().circle_filled(
                                             response.rect.center(),
                                             radius,
-                                            if *hover {
-                                                Color32::from_rgba_premultiplied(255, 255, 255, 120)
-                                            } else {
-                                                Color32::from_rgba_premultiplied(255, 255, 255, 30)
-                                            },
+                                            Color32::from_rgba_premultiplied(255, 255, 255, 30),
                                         );
                                         response
                                     });
-                                    if point.dragged() {
-                                        *x += point.drag_delta().x;
-                                        *y += point.drag_delta().y;
+
+                                    // handle add click point
+                                    if rect_res.double_clicked() {
+                                        if let Some(click_point) = rect_res.interact_pointer_pos() {
+                                            self.toasts.info("add pos");
+                                            *click = Some((
+                                                click_point.x - rect_res.rect.left(),
+                                                click_point.y - rect_res.rect.top(),
+                                            ));
+                                        }
                                     }
-                                }
-
-                                // draw resize drag button
-                                let resize_button = ui.add(|ui: &mut egui::Ui| {
-                                    let circle_pos = rect_res.rect.max;
-                                    let radius = 10.;
-                                    let response = ui.allocate_rect(
-                                        Rect {
-                                            min: circle_pos - Vec2::splat(radius),
-                                            max: circle_pos + Vec2::splat(radius),
-                                        },
-                                        Sense::drag(),
-                                    );
-                                    ui.painter().circle_filled(
-                                        response.rect.center(),
-                                        radius,
-                                        Color32::from_rgba_premultiplied(255, 255, 255, 30),
-                                    );
-                                    response
-                                });
-
-                                // handle add click point
-                                if rect_res.double_clicked() {
-                                    if let Some(click_point) = rect_res.interact_pointer_pos() {
-                                        self.toasts.info("add pos");
-                                        *click = Some((
-                                            click_point.x - rect_res.rect.left(),
-                                            click_point.y - rect_res.rect.top(),
-                                        ));
+                                    // handle rect drag
+                                    if rect_res.dragged() {
+                                        rect.left += rect_res.drag_delta().x;
+                                        rect.top += rect_res.drag_delta().y;
                                     }
-                                }
-                                // handle rect drag
-                                if rect_res.dragged() {
-                                    rect.left += rect_res.drag_delta().x;
-                                    rect.top += rect_res.drag_delta().y;
-                                }
 
-                                // handle rect resize
-                                if resize_button.hover_pos().is_some() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
-                                } else {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
-                                }
-                                if resize_button.dragged() {
-                                    rect.width += resize_button.drag_delta().x;
-                                    rect.height += resize_button.drag_delta().y;
+                                    // handle rect resize
+                                    if resize_button.hover_pos().is_some() {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+                                    } else {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+                                    }
+                                    if resize_button.dragged() {
+                                        rect.width += resize_button.drag_delta().x;
+                                        rect.height += resize_button.drag_delta().y;
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                RecordMode::View => {
-                    if self.current_screenshot.is_none() {
-                        if let Some(screenshot) = self.screenshots.read().back() {
-                            self.current_screenshot = Some(screenshot.clone());
-                        }
-                    }
-                    if let Some(screenshot) = &mut self.current_screenshot {
-                        ui.add(screenshot.image().sense(Sense::click_and_drag()));
+                    RecordMode::View => {
+                        let lock = self.screenshots.read();
+                        let Some(screenshot) = lock.back() else {
+                            return;
+                        };
+                        let img = screenshot.image();
+                        ui.add(img);
                     }
                 }
-            }
-        });
+            });
     }
 
     fn render_logs(&mut self, ui: &mut egui::Ui) {
@@ -984,6 +985,7 @@ impl Recorder {
 
         if let Some(rx) = self.code_receiver.as_ref() {
             if let Ok(res) = rx.try_recv() {
+                self.mode = RecordMode::Interact;
                 info!(msg = "run script done", res = ?res);
                 self.code_receiver = None;
                 if let Err(e) = res {
@@ -1001,6 +1003,7 @@ impl Recorder {
 
                     let msg_tx = self.api.tx.clone();
                     info!(msg = "run script");
+                    self.mode = RecordMode::View;
                     thread::spawn(move || {
                         let res = t_binding::JSEngine::new(msg_tx).run_string(code.as_str());
                         tx.send(res)
@@ -1080,13 +1083,9 @@ impl Recorder {
                     }
                 },
             );
-            ui.add_enabled_ui(
-                self.config
-                    .as_ref()
-                    .map(|c| c.vnc.is_some())
-                    .unwrap_or_default(),
-                |ui| ui.selectable_value(&mut self.mode, RecordMode::View, "View"),
-            );
+            ui.add_enabled_ui(false, |ui| {
+                ui.selectable_value(&mut self.mode, RecordMode::View, "View")
+            });
         });
 
         match self.mode {
@@ -1186,7 +1185,7 @@ impl Recorder {
             name,
         } in self.needles.iter_mut()
         {
-            ui.vertical_centered_justified(|ui| {
+            ui.vertical(|ui| {
                 ui.label(
                     RichText::new(format!("tag: {}", name)).text_style(egui::TextStyle::Heading),
                 );

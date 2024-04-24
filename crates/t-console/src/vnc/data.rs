@@ -43,7 +43,7 @@ impl Container {
     pub fn get(&self, row: u16, col: u16) -> &[u8] {
         assert!(row < self.height && col < self.width);
         let start = self.get_pixel_start(row, col);
-        &self.data[start..start + self.pixel_size]
+        &self.data[start..(start + self.pixel_size)]
     }
 
     pub fn set(&mut self, row: u16, col: u16, p: &[u8]) {
@@ -128,25 +128,27 @@ impl Container {
         true
     }
 
-    pub fn cmp_rect_and_count(&self, o: &Self, rect: &Rect) -> (i32, bool) {
+    pub fn cmp_rect_and_count(&self, o: &Self, rect: &Rect) -> i32 {
         // check width and height
         if self.width != o.width || self.height != o.height {
-            return (rect.width as i32 * rect.height as i32, false);
+            return rect.width as i32 * rect.height as i32;
         }
 
         let mut n = 0;
 
-        // compare rgb
         for row in rect.top..rect.top + rect.height {
             for col in rect.left..rect.left + rect.width {
-                if let Some((p1, p2)) = self.get(row, col).iter().zip(o.get(row, col)).next() {
-                    if !*p1 == *p2 {
+                let p1 = self.get(row, col);
+                let p2 = o.get(row, col);
+                for i in 0..self.pixel_size {
+                    if p1[i] != p2[i] {
                         n += 1;
+                        break;
                     }
                 }
             }
         }
-        (n, n == 0)
+        n
     }
 }
 

@@ -233,19 +233,25 @@ impl Driver {
     }
 
     // vnc
+    fn check_screen(&self, py: Python<'_>, tag: String, timeout: i32) -> PyResult<bool> {
+        PyApi::new(&self.tx, py)
+            .vnc_check_screen(tag, timeout)
+            .map_err(into_pyerr)
+    }
+
     fn assert_screen(&self, py: Python<'_>, tag: String, timeout: i32) -> PyResult<()> {
         PyApi::new(&self.tx, py)
             .vnc_assert_screen(tag, timeout)
             .map_err(into_pyerr)
     }
 
-    fn vnc_type_string(&self, py: Python<'_>, s: String) -> PyResult<()> {
+    fn type_string(&self, py: Python<'_>, s: String) -> PyResult<()> {
         PyApi::new(&self.tx, py)
             .vnc_type_string(s)
             .map_err(into_pyerr)
     }
 
-    fn vnc_send_key(&self, py: Python<'_>, s: String) -> PyResult<()> {
+    fn send_key(&self, py: Python<'_>, s: String) -> PyResult<()> {
         PyApi::new(&self.tx, py).vnc_send_key(s).map_err(into_pyerr)
     }
 
@@ -253,9 +259,15 @@ impl Driver {
         PyApi::new(&self.tx, py).vnc_refresh().map_err(into_pyerr)
     }
 
-    fn check_screen(&self, py: Python<'_>, tag: String, timeout: i32) -> PyResult<bool> {
+    fn check_and_click(&self, py: Python<'_>, tag: String, timeout: i32) -> PyResult<bool> {
         PyApi::new(&self.tx, py)
-            .vnc_check_screen(tag, timeout)
+            .vnc_check_and_click(tag, timeout)
+            .map_err(into_pyerr)
+    }
+
+    fn assert_and_click(&self, py: Python<'_>, tag: String, timeout: i32) -> PyResult<()> {
+        PyApi::new(&self.tx, py)
+            .vnc_assert_and_click(tag, timeout)
             .map_err(into_pyerr)
     }
 

@@ -50,8 +50,11 @@ pub enum VNC {
     Refresh,
     CheckScreen {
         tag: String,
-        threshold: i32,
+        threshold: f32,
         timeout: Duration,
+        click: bool,
+        r#move: bool,
+        delay: Option<Duration>,
     },
     MouseMove {
         x: u16,
@@ -90,6 +93,5 @@ pub enum MsgRes {
     ConfigValue(Option<String>),
     ScriptRun { code: i32, value: String },
     Error(MsgResError),
-    AssertScreen { similarity: f32, ok: bool },
     Screenshot(Arc<PNG>),
 }

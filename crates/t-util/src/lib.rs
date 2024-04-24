@@ -8,42 +8,57 @@ use std::{
 };
 
 use chrono::{DateTime, Local};
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use regex::Regex;
 use tracing::{error, info, trace};
 
 #[derive(Clone)]
 pub struct AMOption<T> {
-    inner: Arc<Mutex<Option<T>>>,
+    inner: Arc<RwLock<Option<T>>>,
 }
 
 impl<T> AMOption<T> {
     pub fn new(val: Option<T>) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(val)),
+            inner: Arc::new(RwLock::new(val)),
         }
     }
 
-    pub fn set(&mut self, val: Option<T>) {
-        self.inner = Arc::new(Mutex::new(val));
+    pub fn set(&self, val: Option<T>) {
+        let mut value = self.inner.write();
+        *value = val;
     }
 
     pub fn map_mut<R, F>(&self, f: F) -> Option<R>
     where
         F: FnOnce(&mut T) -> R,
     {
-        self.inner.lock().as_mut().map(f)
+        self.inner.write().as_mut().map(f)
     }
 
     pub fn map_ref<R, F>(&self, f: F) -> Option<R>
     where
         F: FnOnce(&T) -> R,
     {
-        self.inner.lock().as_ref().map(f)
+        self.inner.read().as_ref().map(f)
+    }
+
+    pub fn and_then_ref<U, F>(&self, f: F) -> Option<U>
+    where
+        F: FnOnce(&T) -> Option<U>,
+    {
+        self.inner.read().as_ref().and_then(f)
+    }
+
+    pub fn and_then_mut<U, F>(&self, f: F) -> Option<U>
+    where
+        F: FnOnce(&mut T) -> Option<U>,
+    {
+        self.inner.write().as_mut().and_then(f)
     }
 
     pub fn is_some(&self) -> bool {
-        self.inner.lock().is_some()
+        self.inner.read().is_some()
     }
 }
 
