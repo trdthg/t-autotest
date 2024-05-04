@@ -12,7 +12,9 @@ use eframe::egui::{
 use egui_notify::Toast;
 use helper::*;
 use image::DynamicImage;
+use parking_lot::RwLock;
 use std::{
+    collections::VecDeque,
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -75,6 +77,12 @@ impl Screenshot {
             handle,
             thumbnail: None,
         }
+    }
+
+    pub fn update(&mut self, source: Arc<PNG>) {
+        let color_image = to_egui_rgb_color_image(&source, false);
+        self.handle.set(color_image, TextureOptions::NEAREST);
+        self.source = source;
     }
 
     fn clone(&self) -> Self {
@@ -215,6 +223,27 @@ impl Default for EguiFrameStatus {
     }
 }
 
+struct SharedState {
+    frame_status: RwLock<EguiFrameStatus>,
+    sample_status: RwLock<SampleStatus>,
+    use_rayon: RwLock<bool>,
+    screen: RwLock<Option<Screenshot>>,
+    #[allow(unused)]
+    screenshots: RwLock<VecDeque<Screenshot>>,
+}
+
+impl Default for SharedState {
+    fn default() -> Self {
+        Self {
+            frame_status: RwLock::new(EguiFrameStatus::default()),
+            sample_status: RwLock::new(SampleStatus::default()),
+            use_rayon: RwLock::new(true),
+            screen: RwLock::new(None),
+            screenshots: RwLock::new(VecDeque::new()),
+        }
+    }
+}
+
 pub struct FileWatcher {
     cache: Arc<parking_lot::RwLock<HashMap<PathBuf, String>>>,
     watchers: parking_lot::Mutex<Vec<notify::RecommendedWatcher>>,
@@ -290,12 +319,9 @@ pub struct Recorder {
     allowed_to_close: bool,
     stop_tx: Sender<()>,
 
-    // speed
-    use_rayon: bool,
-
-    // frame evenv count
-    frame_status: Arc<parking_lot::RwLock<EguiFrameStatus>>,
-    sample_status: Arc<parking_lot::RwLock<SampleStatus>>,
+    share_state: Arc<SharedState>,
+    #[allow(unused)]
+    screenshot_rx: Option<Receiver<PNG>>,
 
     // file
     file_watcher: FileWatcher,
@@ -310,17 +336,10 @@ pub struct Recorder {
     code_receiver: Option<Receiver<Result<(), String>>>,
     cursor_range: Option<CursorRange>,
 
-    // screenshots
-    max_screenshot_num: usize,
-    #[allow(unused)]
-    screenshot_rx: Option<Receiver<PNG>>,
-    screenshots: Arc<parking_lot::RwLock<std::collections::VecDeque<Screenshot>>>,
-
     // interact mode
     needle_name: String,
     minimal_move_interval: Duration,
     last_move_interval: Instant,
-    drag_pos: Pos2,
     drag_rect: Option<RectF32>,
     drag_rects: Option<Vec<DragedRect>>,
     current_screenshot: Option<Screenshot>,
@@ -424,10 +443,7 @@ impl RecorderBuilder {
             allowed_to_close: false,
 
             // only used in PNG to egui::ColorImage, take more cpu usage
-            use_rayon: false,
-
-            frame_status: Default::default(),
-            sample_status: Default::default(),
+            share_state: Arc::new(SharedState::default()),
 
             stop_tx: self.stop_tx,
             screenshot_rx: self.screenshot_rx,
@@ -484,16 +500,11 @@ export function afterhook() {
             // file
             file_watcher: FileWatcher::new(),
 
-            // screenshots buffer
-            max_screenshot_num: self.max_screenshot_num,
-            screenshots: Arc::new(parking_lot::RwLock::new(std::collections::VecDeque::new())),
-
             // edit
             current_screenshot: None,
             needle_name: String::new(),
             last_move_interval: Instant::now(),
             minimal_move_interval: Duration::from_millis(50),
-            drag_pos: Pos2 { x: 0., y: 0. },
             drag_rects: None,
             drag_rect: None,
             needles: Vec::new(),
@@ -524,17 +535,16 @@ impl Recorder {
                 egui_extras::install_image_loaders(&cc.egui_ctx);
 
                 let ctx = cc.egui_ctx.clone();
-                let screenshots = self.screenshots.clone();
-                let frame_status = self.frame_status.clone();
-                let sample_status = self.sample_status.clone();
+                let shared_state = self.share_state.clone();
                 let api = self.api.clone();
                 thread::spawn(move || {
-                    let interval = frame_status.read().screenshot_interval;
+                    let interval = shared_state.frame_status.read().screenshot_interval;
                     loop {
                         // if already got new screenshot in this egui frame, then skip
                         if let Some(screenshot_interval) = interval {
                             if Instant::now()
-                                < frame_status.read().last_screenshot + screenshot_interval
+                                < shared_state.frame_status.read().last_screenshot
+                                    + screenshot_interval
                             {
                                 continue;
                             }
@@ -542,17 +552,23 @@ impl Recorder {
 
                         if let Ok(screenshot) = api.vnc_get_screenshot() {
                             // update status
-                            frame_status.write().last_screenshot = Instant::now();
-                            sample_status.write().screenshot_count += 1;
+                            shared_state.frame_status.write().last_screenshot = Instant::now();
+                            shared_state.sample_status.write().screenshot_count += 1;
 
-                            // handle too many
-                            if screenshots.read().len() == self.max_screenshot_num {
-                                screenshots.write().pop_front();
+                            if shared_state.screen.read().is_none() {
+                                // append new screenshot
+                                let s = Screenshot::new(
+                                    screenshot,
+                                    &ctx,
+                                    *shared_state.use_rayon.read(),
+                                    Local::now(),
+                                );
+                                *shared_state.screen.write() = Some(s);
+                            } else {
+                                if let Some(s) = shared_state.screen.write().as_mut() {
+                                    s.update(screenshot);
+                                }
                             }
-
-                            // append new screenshot
-                            let s = Screenshot::new(screenshot, &ctx, false, Local::now());
-                            screenshots.write().push_back(s);
                         }
                         thread::sleep(Duration::from_millis(50));
                     }
@@ -567,7 +583,7 @@ impl Recorder {
 
 impl Recorder {
     fn pre_frame(&mut self) {
-        self.frame_status.write().egui_start = Instant::now();
+        self.share_state.frame_status.write().egui_start = Instant::now();
     }
 
     fn after_frame(&mut self, ctx: &egui::Context) {
@@ -582,8 +598,8 @@ impl Recorder {
         }
         self.toasts.show(ctx);
 
-        let mut sample_status = self.sample_status.write();
-        let frame_status = self.frame_status.read();
+        let mut sample_status = self.share_state.sample_status.write();
+        let frame_status = self.share_state.frame_status.read();
 
         // calc render time
         let egui_elasped = Instant::now() - frame_status.egui_start;
@@ -616,7 +632,7 @@ impl Recorder {
                 self.logs_toasts
                     .push((Level::ERROR, "force refresh failed".to_string()));
             }
-            let sample_status = self.sample_status.read();
+            let sample_status = self.share_state.sample_status.read();
             ui.colored_label(
                 Color32::RED,
                 RichText::new(format!(
@@ -633,21 +649,20 @@ impl Recorder {
             );
             drop(sample_status);
 
+            let use_rayon = *self.share_state.use_rayon.read();
             if ui
-                .button(format!(
-                    "rayon: {}",
-                    if self.use_rayon { "on" } else { "off" }
-                ))
+                .button(format!("rayon: {}", if use_rayon { "on" } else { "off" }))
                 .clicked()
             {
-                self.use_rayon = !self.use_rayon;
+                *self.share_state.use_rayon.write() = !use_rayon;
             }
 
             ui.colored_label(
                 Color32::GREEN,
                 RichText::new(format!(
                     "vnc no update:{}s",
-                    (Instant::now() - self.frame_status.read().last_screenshot).as_secs()
+                    (Instant::now() - self.share_state.frame_status.read().last_screenshot)
+                        .as_secs()
                 ))
                 .heading(),
             );
@@ -660,8 +675,8 @@ impl Recorder {
             .show_viewport(ui, |ui, _rect| {
                 match self.mode {
                     RecordMode::Interact => {
-                        let lock = self.screenshots.read();
-                        let Some(screenshot) = lock.back() else {
+                        let lock = self.share_state.screen.read();
+                        let Some(screenshot) = lock.as_ref() else {
                             return;
                         };
 
@@ -687,60 +702,83 @@ impl Recorder {
                                 }
                                 self.last_move_interval = Instant::now();
                             }
+
+                            ui.input(|i| {
+                                for e in i.events.iter() {
+                                    match e {
+                                        // TODO: It seems easier to copy locally and paste remotely, but what about the other way around?
+                                        // egui::Event::Copy => todo!(),
+                                        // egui::Event::Cut => todo!(),
+                                        // egui::Event::Paste(_) => todo!(),
+                                        // egui::Event::Text(_) => {} // Event::Key would be enough?
+                                        egui::Event::Key {
+                                            key,
+                                            physical_key: _, // idk what is this
+                                            pressed,
+                                            repeat: _, // no repeaat
+                                            modifiers,
+                                        } => {
+                                            if *pressed {
+                                                let mut keys = "".to_string();
+                                                if modifiers.ctrl {
+                                                    keys.push_str("ctrl-");
+                                                }
+                                                if modifiers.alt {
+                                                    keys.push_str("alt-");
+                                                }
+                                                if modifiers.shift {
+                                                    keys.push_str("shift-");
+                                                }
+                                                keys.push_str(key.name());
+                                                let _ = self.api.vnc_send_key(keys.to_string());
+                                                info!(final_key = keys.to_string());
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            });
                         }
 
                         // handle drag
-                        if screenshot.drag_started() {
-                            if let Some(pos) = screenshot.interact_pointer_pos() {
-                                self.drag_pos = pos;
-                                if let Err(e) = self.api.vnc_mouse_keydown() {
+                        if let Some(_pos) = screenshot.interact_pointer_pos() {
+                            let relative_x =
+                                (_pos.x as u16).saturating_sub(screenshot.rect.left() as u16);
+                            let relative_y =
+                                (_pos.y as u16).saturating_sub(screenshot.rect.top() as u16);
+
+                            if screenshot.drag_started() {
+                                // init current pos
+                                let _ = self.api.vnc_mouse_keydown();
+                                let _ = self.api.vnc_mouse_drag(relative_x, relative_y);
+                            } else if screenshot.dragged() {
+                                let _ = self.api.vnc_mouse_drag(relative_x, relative_y);
+                            } else if screenshot.drag_stopped() {
+                                let _ = self.api.vnc_mouse_keyup();
+                            }
+
+                            if screenshot.clicked() {
+                                if let Err(e) = self.api.vnc_mouse_click() {
                                     self.logs_toasts.push((
                                         Level::ERROR,
-                                        format!("mouse key down failed, reason = {:?}", e),
+                                        format!("mouse click failed, reason = {:?}", e),
                                     ));
                                 }
                             }
-                        } else if screenshot.dragged() {
-                            self.drag_pos += screenshot.drag_delta();
-                            if let Err(e) = self
-                                .api
-                                .vnc_mouse_drag(self.drag_pos.x as u16, self.drag_pos.y as u16)
-                            {
-                                self.logs_toasts.push((
-                                    Level::ERROR,
-                                    format!("mouse drag failed, reason = {:?}", e),
-                                ));
-                            }
-                        } else if screenshot.drag_stopped() {
-                            if let Err(e) = self.api.vnc_mouse_keyup() {
-                                self.logs_toasts.push((
-                                    Level::ERROR,
-                                    format!("mouse key down failed, reason = {:?}", e),
-                                ));
-                            }
-                        }
 
-                        if screenshot.clicked() {
-                            if let Err(e) = self.api.vnc_mouse_click() {
-                                self.logs_toasts.push((
-                                    Level::ERROR,
-                                    format!("mouse click failed, reason = {:?}", e),
-                                ));
-                            }
-                        }
-
-                        if screenshot.secondary_clicked() {
-                            if let Err(e) = self.api.vnc_mouse_rclick() {
-                                self.logs_toasts.push((
-                                    Level::ERROR,
-                                    format!("mouse right click failed, reason = {:?}", e),
-                                ));
+                            if screenshot.secondary_clicked() {
+                                if let Err(e) = self.api.vnc_mouse_rclick() {
+                                    self.logs_toasts.push((
+                                        Level::ERROR,
+                                        format!("mouse right click failed, reason = {:?}", e),
+                                    ));
+                                }
                             }
                         }
                     }
                     RecordMode::Edit => {
                         // handle screenshot
-                        if let Some(screenshot) = self.screenshots.read().back() {
+                        if let Some(screenshot) = self.share_state.screen.read().as_ref() {
                             // ---------------------------------------------------------------------------------------------------------
 
                             let mut screenshot =
@@ -911,8 +949,8 @@ impl Recorder {
                         }
                     }
                     RecordMode::View => {
-                        let lock = self.screenshots.read();
-                        let Some(screenshot) = lock.back() else {
+                        let lock = self.share_state.screen.read();
+                        let Some(screenshot) = lock.as_ref() else {
                             return;
                         };
                         let img = screenshot.image();
@@ -931,39 +969,39 @@ impl Recorder {
         });
     }
 
-    #[allow(unused)]
-    fn render_screenshorts(&mut self, ui: &mut egui::Ui) {
-        ui.heading(format!(
-            "screenshot buffer count: {}",
-            self.screenshots.read().len()
-        ));
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            let mut deleted = Vec::new();
-            for (i, screenshot) in self.screenshots.read().iter().rev().enumerate() {
-                ui.group(|ui| {
-                    // top control bar
-                    ui.horizontal(|ui| {
-                        ui.label(format!("{}", screenshot.recv_time.format("%H:%M:%S")));
-                        if ui.button("del").clicked() {
-                            deleted.push(i);
-                        }
-                    });
-                    // thumbnail
-                    let thumbnail = ui.add(screenshot.thumbnail().max_height(200.));
-                    if thumbnail.clicked() {
-                        self.mode = RecordMode::View;
-                        self.current_screenshot = Some(screenshot.clone());
-                    }
-                });
-                ui.separator();
-            }
-            let mut index: usize = self.screenshots.read().len();
-            self.screenshots.write().retain(|_| {
-                index -= 1;
-                !deleted.contains(&index)
-            });
-        });
-    }
+    // #[allow(unused)]
+    // fn render_screenshorts(&mut self, ui: &mut egui::Ui) {
+    //     ui.heading(format!(
+    //         "screenshot buffer count: {}",
+    //         self.share_state.screenshots.read().len()
+    //     ));
+    //     egui::ScrollArea::vertical().show(ui, |ui| {
+    //         let mut deleted = Vec::new();
+    //         for (i, screenshot) in self.share_state.screenshots.read().iter().rev().enumerate() {
+    //             ui.group(|ui| {
+    //                 // top control bar
+    //                 ui.horizontal(|ui| {
+    //                     ui.label(format!("{}", screenshot.recv_time.format("%H:%M:%S")));
+    //                     if ui.button("del").clicked() {
+    //                         deleted.push(i);
+    //                     }
+    //                 });
+    //                 // thumbnail
+    //                 let thumbnail = ui.add(screenshot.thumbnail().max_height(200.));
+    //                 if thumbnail.clicked() {
+    //                     self.mode = RecordMode::View;
+    //                     self.current_screenshot = Some(screenshot.clone());
+    //                 }
+    //             });
+    //             ui.separator();
+    //         }
+    //         let mut index: usize = self.screenshots.read().len();
+    //         self.screenshots.write().retain(|_| {
+    //             index -= 1;
+    //             !deleted.contains(&index)
+    //         });
+    //     });
+    // }
 
     fn render_code_editor(&mut self, ui: &mut egui::Ui) {
         // code editor
@@ -1079,7 +1117,8 @@ impl Recorder {
                                 format!("mouse hide failed, reason = {:?}", e),
                             ));
                         }
-                        self.current_screenshot = self.screenshots.read().back().map(|x| x.clone());
+                        self.current_screenshot =
+                            self.share_state.screen.read().as_ref().map(|x| x.clone());
                     }
                 },
             );
@@ -1136,6 +1175,8 @@ impl Recorder {
                                                     Level::INFO,
                                                     "save needle success".to_string(),
                                                 ));
+                                                // save to screenshots list;
+                                                // self.share_state.screenshots.write().push_back(s);
                                             } else {
                                                 self.drag_rects = Some(needle.rects);
                                                 self.logs_toasts.push((

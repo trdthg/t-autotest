@@ -60,7 +60,7 @@ pub mod key {
     pub const SUPER_R: u32 = 0xffec;
 
     pub fn from_str(s: &str) -> Option<u32> {
-        let key = match s {
+        let key = match s.to_lowercase().as_str() {
             "back" | "backspace" => BACK_SPACE,
             "tab" => TAB,
             "ret" | "return" | "enter" => RETURN,
@@ -524,6 +524,9 @@ impl VncClientInner {
     }
 
     fn handle_mouse_move(&mut self, x: u16, y: u16) -> Result<VNCEventRes, t_vnc::Error> {
+        if !self.check_move(x, y) {
+            return Ok(VNCEventRes::Done);
+        }
         if let Some(vnc) = self.conn.as_mut() {
             vnc.send_pointer_event(self.state.buttons, x, y)?;
             self.state.mouse_x = x;
@@ -543,12 +546,24 @@ impl VncClientInner {
         Ok(VNCEventRes::NoConnection)
     }
 
+    fn check_move(&self, x: u16, y: u16) -> bool {
+        self.state.mouse_x != x || self.state.mouse_y != y
+    }
+
     fn handle_mouse_drag(&mut self, x: u16, y: u16) -> Result<VNCEventRes, t_vnc::Error> {
-        for i in self.state.mouse_x..self.state.mouse_x + x {
-            self.handle_mouse_move(i, self.state.mouse_y)?;
+        if !self.check_move(x, y) {
+            return Ok(VNCEventRes::Done);
         }
-        for i in self.state.mouse_y..self.state.mouse_y + y {
-            self.handle_mouse_move(self.state.mouse_x, i)?;
+        for i in self.state.mouse_x..self.state.mouse_x + x {
+            self.handle_mouse_move(
+                i,
+                i * self.state.mouse_y
+                    + y / if self.state.mouse_x + x == 0 {
+                        0
+                    } else {
+                        self.state.mouse_x + x
+                    },
+            )?;
         }
         self.handle_mouse_move(x, y)
     }
