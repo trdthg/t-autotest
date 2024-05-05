@@ -37,6 +37,10 @@ in pkgs.mkShell {
     openssl.dev
     # build python binding
     maturin
+    # libvirt api
+    libvirt
+    virt-manager
+    virt-viewer
 
     ### build(gui-x11)
     xorg.libX11

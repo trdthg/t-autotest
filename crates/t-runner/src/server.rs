@@ -534,11 +534,13 @@ impl Service {
                 }
                 t_binding::msg::VNC::SendKey(s) => {
                     screenshotname = "sendkey";
-                    let parts = s.split('-');
                     let mut keys = Vec::new();
-                    for part in parts {
-                        if let Some(key) = key::from_str(part) {
-                            keys.push(key);
+                    if s == "-" { keys.push(b'-' as u32)} else {
+                        let parts = s.split('-');
+                        for part in parts {
+                            if let Some(key) = key::from_str(part) {
+                                keys.push(key);
+                            }
                         }
                     }
                     match c.send(VNCEventReq::SendKey { keys }) {

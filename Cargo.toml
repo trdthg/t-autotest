@@ -68,6 +68,8 @@ egui_tiles         = { version = "0.8.0" }
 chrono             = { version = "0.4.35" }
 rayon              = { version = "1.9.0" }
 notify             = { version = "6.1.1" }
+rand               = { version = "0.8.5" }
+phf                = { version = "0.11", features = ["macros"] }
 
 [profile.dev]
 incremental = true

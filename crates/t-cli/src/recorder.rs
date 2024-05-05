@@ -710,15 +710,36 @@ impl Recorder {
                                         // egui::Event::Copy => todo!(),
                                         // egui::Event::Cut => todo!(),
                                         // egui::Event::Paste(_) => todo!(),
-                                        // egui::Event::Text(_) => {} // Event::Key would be enough?
+                                        egui::Event::Text(s) => {
+                                            for c in s.as_bytes() {
+                                                if let Some(v) = CAPS_MAP.get(&c) {
+                                                    // if c is with capsLk, send key with shift-key, if not, just key
+                                                    let mut keys = String::new();
+                                                    if *c != *v {
+                                                        keys.push_str("shift-");
+                                                    }
+                                                    keys.push(*c as char);
+                                                    debug!(msg = "text input", text = keys);
+                                                    let _ = self.api.vnc_send_key(keys);
+                                                }
+                                            }
+                                        } // Event::Key would be enough?
                                         egui::Event::Key {
                                             key,
-                                            physical_key: _, // idk what is this
+                                            physical_key: _,
                                             pressed,
                                             repeat: _, // no repeaat
                                             modifiers,
                                         } => {
-                                            if *pressed {
+                                            if *pressed
+                                                && !(
+                                                    // ascii direct or with shift
+                                                    (*key >= egui::Key::Colon
+                                                        && *key <= egui::Key::Z)
+                                                        && (modifiers.is_none()
+                                                            || modifiers.shift_only())
+                                                )
+                                            {
                                                 let mut keys = "".to_string();
                                                 if modifiers.ctrl {
                                                     keys.push_str("ctrl-");
@@ -730,8 +751,11 @@ impl Recorder {
                                                     keys.push_str("shift-");
                                                 }
                                                 keys.push_str(key.name());
-                                                let _ = self.api.vnc_send_key(keys.to_string());
-                                                info!(final_key = keys.to_string());
+                                                debug!(
+                                                    msg = "key input",
+                                                    final_key = keys.to_string()
+                                                );
+                                                let _ = self.api.vnc_send_key(keys);
                                             }
                                         }
                                         _ => {}
