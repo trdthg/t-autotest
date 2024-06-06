@@ -18,7 +18,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        build: [linux, macos, windows]
+        build: [linux, macos, macos-arm, windows]
         include:
           - build: linux
             os: ubuntu-22.04
@@ -26,10 +26,15 @@ jobs:
             target: x86_64-unknown-linux-gnu
             archive-name: autotest-linux.tar.gz
           - build: macos
-            os: macos-12
+            os: macos-13
             rust: stable
             target: x86_64-apple-darwin
             archive-name: autotest-macos.tar.gz
+          - build: macos-arm
+            os: macos-latest
+            rust: stable
+            target: aarch64-apple-darwin
+            archive-name: autotest-macos-arm.tar.gz
           - build: windows
             os: windows-2019
             rust: stable-x86_64-msvc
@@ -48,6 +53,12 @@ jobs:
           sudo apt-get install libudev-dev
 
       - name: dependencies(macos)
+        if: matrix.build == 'macos'
+        run: |
+          brew --prefix openssl
+          # echo "OPENSSL_DIR=$(brew --prefix openssl)" >> $GITHUB_ENV
+
+      - name: dependencies(macos-arm)
         if: matrix.build == 'macos'
         run: |
           brew --prefix openssl
