@@ -23,8 +23,7 @@ impl Config {
     }
 
     fn init(&mut self) {
-        let mut log_dir = self.log_dir.clone().unwrap_or("log".to_string());
-        log_dir = format!("{}/{}", log_dir, t_util::get_dt());
+        let log_dir = self.log_dir.clone().unwrap_or("log".to_string());
         if let Some(serial) = self.serial.as_mut() {
             serial.log_file = Some(PathBuf::from_iter(vec![&log_dir, "serial.log"]));
         }
@@ -64,9 +63,16 @@ pub struct ConsoleSSH {
 pub struct ConsoleSerial {
     pub serial_file: String,
     pub bund_rate: Option<u32>,
+    pub r#type: Option<ConsoleSerialType>,
 
     #[serde(skip_serializing)]
     pub log_file: Option<PathBuf>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub enum ConsoleSerialType {
+    Pts,
+    Sock,
 }
 
 #[derive(Deserialize, Debug, Clone)]

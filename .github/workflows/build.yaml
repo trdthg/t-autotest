@@ -26,7 +26,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             archive-name: autotest-linux.tar.gz
           - build: macos
-            os: macos-latest
+            os: macos-12
             rust: stable
             target: x86_64-apple-darwin
             archive-name: autotest-macos.tar.gz
@@ -43,9 +43,20 @@ jobs:
           pip install maturin
 
       - name: dependencies(ubuntu)
-        if: matrix.os == 'ubuntu-22.04'
+        if: matrix.build == 'linux'
         run: |
           sudo apt-get install libudev-dev
+
+      - name: dependencies(macos)
+        if: matrix.build == 'macos'
+        run: |
+          brew --prefix openssl
+          # echo "OPENSSL_DIR=$(brew --prefix openssl)" >> $GITHUB_ENV
+
+      - name: dependencies(windows)
+        if: matrix.build == 'windows'
+        run: |
+          # choco install openssl
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -98,9 +109,9 @@ jobs:
       - name: Upload artifact Whl
         uses: actions/upload-artifact@v4
         with:
-          name: pyautotest-${{ matrix.build }}.whl
+          name: pyautotest-${{ matrix.build }}-wheel
           path: |
-            ./target/wheels/pyautotest-${{ matrix.build }}.whl
+            ./target/wheels/*.whl
 
       - name: Upload release
         uses: softprops/action-gh-release@v2

@@ -4311,6 +4311,7 @@ dependencies = [
  "home",
  "image 0.25.0",
  "nanoid",
+ "parking_lot 0.12.1",
  "png",
  "serialport",
  "ssh2",

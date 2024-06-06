@@ -24,7 +24,7 @@ pub enum Res {
 
 pub struct EvLoopCtl {
     req_tx: Sender<(Req, Sender<Res>)>,
-    stop_tx: Sender<()>,
+    stop_tx: Sender<Sender<()>>,
 }
 
 impl EvLoopCtl {
@@ -42,8 +42,12 @@ impl EvLoopCtl {
     }
 
     pub fn stop(&self) {
-        if self.stop_tx.send(()).is_err() {
+        let (tx, rx) = channel();
+        if self.stop_tx.send(tx).is_err() {
             error!("evloop closed");
+        }
+        if let Err(e) = rx.recv() {
+            error!("evloop receiver closed, connection may be lost: {}", e);
         }
     }
 }
@@ -52,7 +56,7 @@ pub struct EventLoop<T> {
     make_conn: Box<dyn Fn() -> Result<T>>,
     conn: Option<T>,
     req_rx: Receiver<(Req, Sender<Res>)>,
-    stop_rx: Receiver<()>,
+    stop_rx: Receiver<Sender<()>>,
     history: Vec<u8>,
     log_file: Option<File>,
     last_read_index: usize,
@@ -102,8 +106,17 @@ where
 
     fn pool(&mut self) {
         'out: loop {
-            if self.stop_rx.try_recv().is_ok() {
+            if let Ok(tx) = self.stop_rx.try_recv() {
+                tx.send(()).ok();
                 break 'out;
+            }
+
+            if self.conn.is_none() {
+                if let Ok(conn) = self.make_conn.as_mut()() {
+                    self.conn = Some(conn);
+                } else {
+                    thread::sleep(Duration::from_millis(20));
+                }
             }
 
             // handle tty output
@@ -147,97 +160,81 @@ where
     }
 
     fn try_read_buffer(&mut self) -> Result<Vec<u8>> {
-        'out: loop {
-            match &mut self.conn {
-                Some(conn) => match conn.read(&mut self.buffer) {
-                    Ok(n) => {
-                        if n == 0 {
-                            return Ok(Vec::new());
-                        }
-                        let received = &self.buffer[0..n];
-                        self.history.extend(received);
+        let mut set_none = false;
+        if let Some(conn) = self.conn.as_mut() {
+            match conn.read(&mut self.buffer) {
+                Ok(n) => {
+                    if n == 0 {
+                        return Ok(Vec::new());
+                    }
+                    let received = &self.buffer[0..n];
+                    self.history.extend(received);
 
-                        if let Some(ref mut log_file) = self.log_file {
-                            if let Err(e) = log_file.write_all(received) {
-                                warn!(msg = "unable write to log", reason = ?e);
-                                self.log_file = None;
-                            }
+                    if let Some(ref mut log_file) = self.log_file {
+                        if let Err(e) = log_file.write_all(received) {
+                            warn!(msg = "unable write to log", reason = ?e);
+                            self.log_file = None;
                         }
-                        return Ok(received.to_vec());
                     }
-                    Err(e) => match e.kind() {
-                        io::ErrorKind::ConnectionRefused
-                        | io::ErrorKind::ConnectionReset
-                        | io::ErrorKind::BrokenPipe => {
-                            // drop conn, relese fd, release /dev/ttyUSB0
-                            self.conn = None;
-                            continue;
-                        }
-                        io::ErrorKind::TimedOut => return Ok(Vec::new()),
-                        _ => {
-                            error!(msg = "read failed, connection may be broken", reason = ?e);
-                            return Err(ConsoleError::IO(e));
-                        }
-                    },
-                },
-                None => {
-                    if let Ok(conn) = self.make_conn.as_mut()() {
-                        self.conn = Some(conn);
-                    } else {
-                        thread::sleep(Duration::from_millis(20));
-                    }
-                    continue 'out;
+                    return Ok(received.to_vec());
                 }
-            };
+                Err(e) => match e.kind() {
+                    io::ErrorKind::ConnectionRefused
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe => {
+                        // drop conn, relese fd, release /dev/ttyUSB0
+                        set_none = true;
+                    }
+                    io::ErrorKind::TimedOut => return Ok(Vec::new()),
+                    _ => {
+                        error!(msg = "read failed, connection may be broken", reason = ?e);
+                        return Err(ConsoleError::IO(e));
+                    }
+                },
+            }
         }
+        if set_none {
+            self.conn = None;
+        }
+        Ok(Vec::new())
     }
 
     fn write_buffer(&mut self, bytes: &[u8]) -> Result<()> {
-        'out: loop {
-            match self.conn.as_mut() {
-                Some(conn) => {
-                    if let Err(e) = conn.write_all(bytes) {
-                        match e.kind() {
-                            io::ErrorKind::ConnectionRefused
-                            | io::ErrorKind::ConnectionReset
-                            | io::ErrorKind::BrokenPipe => {
-                                self.conn = None;
-                                continue;
-                            }
-                            io::ErrorKind::TimedOut => continue,
-                            _ => {
-                                error!(msg = "write failed, connection may be broken", reason = ?e);
-                                return Err(ConsoleError::IO(e));
-                            }
-                        }
+        let mut set_none = false;
+        if let Some(conn) = self.conn.as_mut() {
+            if let Err(e) = conn.write_all(bytes) {
+                match e.kind() {
+                    io::ErrorKind::ConnectionRefused
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe => {
+                        set_none = true;
                     }
-                    if let Err(e) = conn.flush() {
-                        match e.kind() {
-                            io::ErrorKind::ConnectionRefused
-                            | io::ErrorKind::ConnectionReset
-                            | io::ErrorKind::BrokenPipe => {
-                                self.conn = None;
-                                continue;
-                            }
-                            io::ErrorKind::TimedOut => continue,
-                            _ => {
-                                error!(msg = "flush failed, connection may be broken", reason = ?e);
-                                return Err(ConsoleError::IO(e));
-                            }
-                        }
+                    io::ErrorKind::TimedOut => return Ok(()),
+                    _ => {
+                        error!(msg = "write failed, connection may be broken", reason = ?e);
+                        return Err(ConsoleError::IO(e));
                     }
-                    return Ok(());
                 }
-                None => {
-                    if let Ok(conn) = self.make_conn.as_mut()() {
-                        self.conn = Some(conn);
-                    } else {
-                        thread::sleep(Duration::from_millis(20));
+            }
+            if let Err(e) = conn.flush() {
+                match e.kind() {
+                    io::ErrorKind::ConnectionRefused
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe => {
+                        set_none = true;
                     }
-                    continue 'out;
+                    io::ErrorKind::TimedOut => return Ok(()),
+                    _ => {
+                        error!(msg = "flush failed, connection may be broken", reason = ?e);
+                        return Err(ConsoleError::IO(e));
+                    }
                 }
             }
         }
+        if set_none {
+            self.conn = None;
+        }
+        Ok(())
     }
 
     fn consume_buffer(&mut self) -> Vec<u8> {

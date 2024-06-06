@@ -48,11 +48,6 @@ impl DriverForScript {
         self
     }
 
-    pub fn reconnect(&mut self) -> &mut Self {
-        // TODO
-        self
-    }
-
     pub fn stop(&mut self) -> &mut Self {
         // stop script engine if exists
         if let Some(c) = self.engine_client.as_mut() {

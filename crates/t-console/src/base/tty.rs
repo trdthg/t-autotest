@@ -1,5 +1,6 @@
 use super::evloop::{EvLoopCtl, Req, Res};
 use crate::{term::Term, ConsoleError};
+use parking_lot::Mutex;
 use std::{
     marker::PhantomData,
     thread,
@@ -9,13 +10,17 @@ use tracing::{debug, error, info};
 
 type Result<T> = std::result::Result<T, ConsoleError>;
 
-pub struct Tty<T: Term> {
-    // interface for communicate with tty file
-    ctl: EvLoopCtl,
+struct State {
     // store all tty output bytes
     history: Vec<u8>,
     // used by regex search history start
     last_buffer_start: usize,
+}
+
+pub struct Tty<T: Term> {
+    // interface for communicate with tty file
+    ctl: EvLoopCtl,
+    state: Mutex<State>,
     // Term decide how to decode output bytes
     phantom: PhantomData<T>,
 }
@@ -32,8 +37,10 @@ where
     pub fn new(ctl: EvLoopCtl) -> Self {
         Self {
             ctl,
-            history: Vec::new(),
-            last_buffer_start: 0,
+            state: Mutex::new(State {
+                history: Vec::new(),
+                last_buffer_start: 0,
+            }),
             phantom: PhantomData {},
         }
     }
@@ -42,14 +49,14 @@ where
         self.ctl.stop();
     }
 
-    pub fn write(&mut self, s: &[u8], timeout: Duration) -> Result<()> {
+    pub fn write(&self, s: &[u8], timeout: Duration) -> Result<()> {
         self.ctl
             .send_timeout(Req::Write(s.to_vec()), timeout)
             .map_err(|_| ConsoleError::Timeout)?;
         Ok(())
     }
 
-    pub fn write_string(&mut self, s: &str, timeout: Duration) -> Result<()> {
+    pub fn write_string(&self, s: &str, timeout: Duration) -> Result<()> {
         info!(msg = "write_string", s = s);
         self.write(s.as_bytes(), timeout)?;
         Ok(())
@@ -139,7 +146,7 @@ where
     }
 
     fn comsume_buffer_and_map<T>(
-        &mut self,
+        &self,
         timeout: Duration,
         f: impl Fn(&[u8], &[u8]) -> ConsumeAction<T>,
     ) -> Result<T> {
@@ -165,27 +172,28 @@ where
                         continue;
                     }
 
+                    let mut state = self.state.lock();
                     // save to history
-                    self.history.extend(recv);
+                    state.history.extend(recv);
                     buffer_len += recv.len();
 
                     debug!(
                         msg = "event loop recv",
-                        sum_buffer_len = self.history.len() - self.last_buffer_start,
-                        last_buffer_start = self.last_buffer_start,
-                        old_buffer_len = self.history.len() - buffer_len,
+                        sum_buffer_len = state.history.len() - state.last_buffer_start,
+                        last_buffer_start = state.last_buffer_start,
+                        old_buffer_len = state.history.len() - buffer_len,
                         new_buffer_len = buffer_len,
                         new_buffer_acc = recv.len(),
                     );
 
                     // find target pattern
-                    let res = f(&self.history[self.last_buffer_start..], recv);
+                    let res = f(&state.history[state.last_buffer_start..], recv);
 
                     match res {
                         ConsumeAction::BreakValue(v) => {
                             // cut from last find
                             info!(msg = "buffer cut");
-                            self.last_buffer_start = self.history.len() - buffer_len;
+                            state.last_buffer_start = state.history.len() - buffer_len;
                             return Ok(v);
                         }
                         ConsumeAction::Continue => {

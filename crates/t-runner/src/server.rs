@@ -19,7 +19,7 @@ use tracing::{debug, error, info, warn};
 pub(crate) struct Server {
     pub(crate) msg_rx: Receiver<(MsgReq, Sender<MsgRes>)>,
 
-    pub(crate) stop_rx: mpsc::Receiver<()>,
+    pub(crate) stop_rx: mpsc::Receiver<Sender<()>>,
 
     pub(crate) repo: Arc<Service>,
 }
@@ -27,21 +27,23 @@ pub(crate) struct Server {
 impl Server {
     pub fn start_non_blocking(self) {
         thread::spawn(move || {
-            let mut s = self;
-            s.pool();
+            self.pool();
         });
     }
 
-    fn pool(&mut self) {
+    fn pool(&self) {
         // start script engine if in case mode
         info!(msg = "start msg handler thread");
 
         loop {
             let deadline = Instant::now() + Duration::from_millis(16);
             // stop on receive done signal
-            if self.stop_rx.try_recv().is_ok() {
+            if let Ok(tx) = self.stop_rx.try_recv() {
                 info!(msg = "runner handler thread stopped");
                 self.stop();
+                if let Err(e) = tx.send(()) {
+                    warn!(msg = "runner handler thread stopped", reason = ?e);
+                }
                 break;
             }
 
@@ -149,7 +151,7 @@ impl Service {
         });
     }
 
-    pub fn connect_with_config<'a>(&'a self, c: Config) -> Result<(), ConsoleError> {
+    pub fn connect_with_config(&self, c: Config) -> Result<(), ConsoleError> {
         // init serial
         if let Some(c) = c.serial.clone() {
             self.serial.map_ref(|c| c.stop());
@@ -207,7 +209,7 @@ impl Service {
                 info!(msg = "vnc connect success");
             }
             Some(Err(e)) => {
-                error!(msg = "ssh connect failed", reason = ?e);
+                error!(msg = "vnc connect failed", reason = ?e);
                 return Err(e);
             }
             None => {
@@ -384,16 +386,9 @@ impl Service {
                     let deadline = time::Instant::now() + timeout;
                     let mut similarity: f32 = 0.;
                     let mut i = 0;
-                    let res = 'res: loop {
+                    'res: loop {
                         i += 1;
                         if Instant::now() > deadline {
-                            if self.enable_screenshot && c.send(VNCEventReq::TakeScreenShot(format!(
-                                "{screenshotname}-{i}-timeout"
-                            )))
-                            .is_err()
-                            {
-                                warn!("take screenshot failed, vnc server may stopped unexpectedly")
-                            }
                             let msg = "match timeout";
                             info!(msg = msg, tag = tag, similarity = similarity);
                             break 'res MsgRes::Error(MsgResError::String(
@@ -405,9 +400,20 @@ impl Service {
                                 let Some(needle) = nmg.load(&tag) else {
                                     let msg = "assert screen failed, needle file not found";
                                     error!(msg = msg, tag = tag);
-                                    break 'res MsgRes::Error(MsgResError::String(
-                                        msg.to_string()
-                                    ));
+                                    if self.enable_screenshot && c.send(VNCEventReq::TakeScreenShot(format!(
+                                        "{screenshotname}-{i}-failed-noneedle"
+                                    )))
+                                    .is_err()
+                                    {
+                                        warn!("take screenshot failed, vnc server may stopped unexpectedly")
+                                    }
+                                    if Instant::now() > deadline {
+                                        break 'res MsgRes::Error(MsgResError::String(
+                                            msg.to_string()
+                                        ));
+                                    }
+                                    thread::sleep(Duration::from_millis(1000));
+                                    continue;
                                 };
 
                                 let (res_similarity, needle_match) = Needle::cmp(
@@ -432,12 +438,10 @@ impl Service {
                                             if let Some(point) = area.click {
                                                 let x = point.left + area.left;
                                                 let y = point.top + area.top;
-                                                if r#move {
-                                                    if !matches!(c.send(VNCEventReq::MouseMove(x, y)), Ok(VNCEventRes::Done)) {
+                                                    if r#move && !matches!(c.send(VNCEventReq::MouseMove(x, y)), Ok(VNCEventRes::Done)) {
                                                         let msg ="check screen success, but mouse move failed";
                                                         warn!(msg = msg);
                                                         break 'res MsgRes::Error(MsgResError::String(msg.to_string()));
-                                                    }
                                                 }
                                                 if click {
                                                     thread::sleep(Duration::from_millis(1000));
@@ -457,13 +461,11 @@ impl Service {
                                                 break;
                                             }
                                         }
-                                        if !r#move {
-                                            if !matches!(c.send(VNCEventReq::MouseHide), Ok(VNCEventRes::Done)) {
+                                            if !r#move && !matches!(c.send(VNCEventReq::MouseHide), Ok(VNCEventRes::Done)) {
                                                 let msg ="check screen success, but mouse hide after click failed";
                                                 warn!(msg = msg);
                                                 break 'res MsgRes::Error(MsgResError::String(msg.to_string()));
                                             }
-                                        }
                                     }
                                     break 'res MsgRes::Done;
                                 } else {
@@ -483,8 +485,7 @@ impl Service {
                             Err(_e) => break MsgRes::Error(MsgResError::Timeout),
                         }
                         thread::sleep(Duration::from_millis(200));
-                    };
-                    res
+                    }
                 }
                 t_binding::msg::VNC::MouseMove { x, y } => {
                     screenshotname = "mousemove";

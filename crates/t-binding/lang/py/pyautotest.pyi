@@ -101,12 +101,12 @@ class Driver:
         check screen, return false if timeout, or not similar to tag
         """
 
-    def vnc_type_string(self, s: str):
+    def type_string(self, s: str):
         """
         type string
         """
 
-    def vnc_send_key(self):
+    def send_key(self):
         """
         send event
         """

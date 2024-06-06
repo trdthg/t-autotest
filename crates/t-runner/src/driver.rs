@@ -1,6 +1,6 @@
-use std::{
-    sync::{mpsc, Arc},
-    thread,
+use std::sync::{
+    mpsc::{self, Sender},
+    Arc,
 };
 
 use t_binding::api::ApiTx;
@@ -16,7 +16,7 @@ use t_util::AMOption;
 
 pub struct Driver {
     pub config: Option<Config>,
-    pub stop_tx: mpsc::Sender<()>,
+    pub stop_tx: mpsc::Sender<Sender<()>>,
     pub msg_tx: ApiTx,
     server: Option<Server>,
 }
@@ -26,8 +26,11 @@ impl Driver {
         if let Some(server) = self.server.take() {
             let stop_tx = self.stop_tx.clone();
             if let Err(e) = ctrlc::set_handler(move || {
-                let _ = stop_tx.send(());
-                thread::sleep(std::time::Duration::from_secs(2));
+                let (tx, rx) = mpsc::channel();
+                if stop_tx.send(tx).is_err() || rx.recv().is_err() {
+                    tracing::error!("stop server failed");
+                    std::process::exit(1);
+                }
                 std::process::exit(0);
             }) {
                 warn!(msg="set ctrl-c handler failed", reason = ?e);
@@ -37,16 +40,14 @@ impl Driver {
         self
     }
 
-    pub fn reconnect(&mut self) -> &mut Self {
-        // TODO
-        self
-    }
-
-    pub fn stop(&mut self) -> &mut Self {
-        if self.stop_tx.send(()).is_err() {
+    pub fn stop(&self) {
+        let (tx, rx) = mpsc::channel();
+        if self.stop_tx.send(tx).is_err() {
             tracing::error!("stop server failed");
         }
-        self
+        if let Err(e) = rx.recv() {
+            tracing::error!(msg="stop server failed", reason = ?e);
+        }
     }
 
     pub fn new_ssh(&mut self) -> StdResult<SSH, DriverError> {

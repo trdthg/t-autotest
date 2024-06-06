@@ -13,7 +13,6 @@ let
     fi
     source .venv/bin/activate
   '';
-  libPath = with pkgs; lib.makeLibraryPath [ libGL libxkbcommon wayland ];
 in pkgs.mkShell {
   nativeBuildInputs = with pkgs; [
     ### build(bin/examples) SDL2-sys
@@ -45,21 +44,22 @@ in pkgs.mkShell {
     ### build(gui-x11)
     xorg.libX11
     xorg.libXcursor
-    xorg.libXi
     xorg.libXrandr
+    xorg.libXi
     xorg.libxcb
+    libxkbcommon
     libGL
-
-    ### ci
-    act
   ];
   buildInputs = with pkgs; [ ];
   shellHook = ''
     export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${
-      pkgs.lib.makeLibraryPath [
-
-      ]
-    }:${libPath}"
+      pkgs.lib.makeLibraryPath (with pkgs; [
+        pkg-config
+        libxkbcommon
+        libGL
+        wayland
+      ])
+    }"
     ${prepareVenvIfNotExists}
   '';
 }

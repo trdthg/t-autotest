@@ -9,34 +9,37 @@ use std::path::PathBuf;
 use tracing::info;
 
 pub struct Serial {
-    inner: SerialClient<crate::VT102>,
+    inner: Box<dyn SerialClient<crate::VT102> + Send + Sync>,
 }
 
 impl Deref for Serial {
     type Target = Tty<crate::VT102>;
 
     fn deref(&self) -> &Self::Target {
-        &self.inner.tty
+        self.inner.get_tty()
     }
 }
 
 impl DerefMut for Serial {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner.tty
+        self.inner.get_tty_mut()
     }
 }
 
 impl Serial {
     pub fn new(c: t_config::ConsoleSerial) -> Result<Self> {
-        let inner = Self::connect_from_serial_config(&c)?;
-
+        let inner: Box<dyn SerialClient<crate::VT102> + Send + Sync> = match c.r#type {
+            #[cfg(feature = "unixsock")]
+            Some(ConsoleSerialType::Sock) => {
+                Box::new(SockClient::connect(&c.serial_file, c.log_file.clone())?)
+            }
+            _ => Box::new(Self::connect_from_serial_config(&c)?),
+        };
         Ok(Self { inner })
     }
 
-    fn connect_from_serial_config(
-        c: &t_config::ConsoleSerial,
-    ) -> Result<SerialClient<crate::VT102>> {
-        let ssh_client = SerialClient::connect(
+    fn connect_from_serial_config(c: &t_config::ConsoleSerial) -> Result<PtyClient<crate::VT102>> {
+        let ssh_client = PtyClient::connect(
             &c.serial_file,
             c.bund_rate.unwrap_or(115200),
             c.log_file.clone(),
@@ -45,12 +48,38 @@ impl Serial {
     }
 }
 
-struct SerialClient<T: Term> {
+trait SerialClient<T: Term> {
+    fn get_tty(&self) -> &Tty<T>;
+    fn get_tty_mut(&mut self) -> &mut Tty<T>;
+}
+
+impl<T: Term> SerialClient<T> for PtyClient<T> {
+    fn get_tty(&self) -> &Tty<T> {
+        &self.tty
+    }
+
+    fn get_tty_mut(&mut self) -> &mut Tty<T> {
+        &mut self.tty
+    }
+}
+
+#[cfg(feature = "unixsock")]
+impl<T: Term> SerialClient<T> for SockClient<T> {
+    fn get_tty(&self) -> &Tty<T> {
+        &self.tty
+    }
+
+    fn get_tty_mut(&mut self) -> &mut Tty<T> {
+        &mut self.tty
+    }
+}
+
+struct PtyClient<T: Term> {
     pub tty: Tty<T>,
     pub path: String,
 }
 
-impl<T> SerialClient<T>
+impl<T> PtyClient<T>
 where
     T: Term,
 {
@@ -91,6 +120,45 @@ where
     }
 }
 
+#[cfg(feature = "unixsock")]
+struct SockClient<T: Term> {
+    pub tty: Tty<T>,
+    pub path: String,
+}
+
+#[cfg(feature = "unixsock")]
+impl<T> SockClient<T>
+where
+    T: Term,
+{
+    pub fn connect(file: &str, log_file: Option<PathBuf>) -> Result<Self> {
+        let file = file.to_string();
+        let evloop = EventLoop::spawn(
+            move || match std::os::unix::net::UnixStream::connect(std::path::Path::new(&file)) {
+                Ok(res) => {
+                    info!(msg = "serial(unix sock) conn success");
+                    Ok(res)
+                }
+                Err(e) => {
+                    error!("serial(unix sock) conn failed: {} {}", e, file);
+                    Err(ConsoleError::IO(e))
+                }
+            },
+            log_file,
+        );
+
+        Ok(Self {
+            tty: Tty::new(evloop?),
+            path: "".to_string(),
+        })
+    }
+
+    #[allow(unused)]
+    pub fn tty(&self) -> String {
+        self.path.to_owned()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use t_config::{Config, ConsoleSerial};
@@ -103,7 +171,7 @@ mod test {
         time::Duration,
     };
 
-    use super::SerialClient;
+    use super::PtyClient;
 
     #[test]
     fn test_serial_boot() {
@@ -148,8 +216,8 @@ mod test {
         c.unwrap()
     }
 
-    fn get_client(serial: &ConsoleSerial) -> SerialClient<VT102> {
-        SerialClient::connect(
+    fn get_client(serial: &ConsoleSerial) -> PtyClient<VT102> {
+        PtyClient::connect(
             &serial.serial_file,
             serial.bund_rate.unwrap_or(115200),
             None,

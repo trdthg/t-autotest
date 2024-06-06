@@ -1,7 +1,7 @@
-pub mod recorder;
+pub mod gui;
 
 use clap::{Parser, Subcommand};
-use std::{env, fs, io::IsTerminal, path::Path, thread, time::Duration};
+use std::{env, fs, io::IsTerminal, path::Path};
 use t_binding::api::{Api, RustApi};
 use t_config::Config;
 use t_runner::{DriverBuilder, DriverForScript};
@@ -25,8 +25,6 @@ enum Commands {
     Record {
         #[clap(short, long)]
         config: Option<String>,
-        #[clap(long)]
-        nogui: bool,
     },
     VncDo {
         #[clap(short, long)]
@@ -91,34 +89,15 @@ fn main() {
                 }
             }
         }
-        Commands::Record { config, nogui } => {
+        Commands::Record { config } => {
             let config_str = config.map(|c| fs::read_to_string(c.as_str()).unwrap());
 
             let config = config_str
                 .as_ref()
                 .map(|c| Config::from_toml_str(c.as_str()).expect("config not valid"));
             info!(msg = "current config", config = ?config);
-            let mut builder = DriverBuilder::new(config);
-            if !nogui {
-                builder = builder.disable_screenshot();
-            }
-            match builder.build() {
-                Ok(mut d) => {
-                    d.start();
-                    if nogui {
-                        loop {
-                            thread::sleep(Duration::from_millis(100));
-                        }
-                    } else {
-                        recorder::RecorderBuilder::new(d.stop_tx, d.msg_tx, config_str)
-                            .build()
-                            .start();
-                    }
-                }
-                Err(e) => {
-                    error!(msg = "Driver init failed", reason = ?e)
-                }
-            }
+
+            gui::GuiBuilder::new(config_str).build().start();
         }
         Commands::VncDo { action, config } => {
             // init config

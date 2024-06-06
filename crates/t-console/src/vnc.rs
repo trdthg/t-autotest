@@ -136,7 +136,7 @@ pub enum VNCEventRes {
 
 pub struct VNC {
     pub event_tx: Sender<(VNCEventReq, Sender<VNCEventRes>)>,
-    pub stop_tx: Sender<()>,
+    pub stop_tx: Sender<Sender<()>>,
 }
 
 pub type ScreenShotTx = Sender<(Arc<Container>, String, Sender<()>)>;
@@ -260,8 +260,12 @@ impl VNC {
     }
 
     pub fn stop(&self) {
-        if self.stop_tx.send(()).is_err() {
+        let (tx, rx) = channel();
+        if self.stop_tx.send(tx).is_err() {
             error!("vnc stopped failed")
+        }
+        if let Err(e) = rx.recv() {
+            error!(msg = "vnc stop failed", reason=?e);
         }
     }
 }
@@ -310,7 +314,7 @@ struct VncClientInner {
     state: State,
 
     event_rx: Receiver<(VNCEventReq, Sender<VNCEventRes>)>,
-    stop_rx: Receiver<()>,
+    stop_rx: Receiver<Sender<()>>,
 
     screenshot_tx: Option<ScreenShotTx>,
     screenshot_buffer: std::collections::VecDeque<Arc<PNG>>,
@@ -325,7 +329,8 @@ impl VncClientInner {
 
         loop {
             // handle return
-            if let Ok(()) = self.stop_rx.try_recv() {
+            if let Ok(tx) = self.stop_rx.try_recv() {
+                tx.send(()).ok();
                 break;
             }
 
