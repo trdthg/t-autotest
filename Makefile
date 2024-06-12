@@ -3,7 +3,7 @@ default: test build install
 test:
 	cargo fmt
 	cargo clippy --all -- -D warnings
-	cargo test
+	cargo test --all
 
 build:
 	cargo build --release

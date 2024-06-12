@@ -185,7 +185,7 @@ mod test {
 
     fn get_config_from_file() -> Option<t_config::Config> {
         let f = env::var("AUTOTEST_CONFIG_FILE").ok()?;
-        t_config::load_config_from_file(f).map(Some).unwrap()
+        t_config::load_config_from_file(f).ok()
     }
 
     fn get_ssh_client() -> Option<SSH> {

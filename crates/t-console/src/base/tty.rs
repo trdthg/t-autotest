@@ -117,7 +117,7 @@ where
                 return ConsumeAction::BreakValue((1, "invalid consume regex".to_string()));
             };
             match catched_output {
-                Some(v) => {
+                Some((_pos, v)) => {
                     info!(msg = "catched_output", nanoid = nanoid, catched_output = v,);
                     if let Some((res, flag)) = v.rsplit_once(Tm::linebreak()) {
                         info!(

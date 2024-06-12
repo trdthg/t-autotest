@@ -218,25 +218,22 @@ mod test {
 
         sc.set_rect(1, 1, &sub_sc);
 
-        assert_eq!(sc.get(1, 2), vec![2, 2]);
-
         assert!(sc.cmp_rect(
-            &sub_sc,
+            &Container::new_with_data(
+                3,
+                3,
+                vec![
+                    1, 1, 2, 2, 3, 3, //
+                    4, 4, 1, 1, 2, 2, //
+                    7, 7, 3, 3, 4, 4, //
+                ],
+                2,
+            ),
             &Rect {
                 left: 0,
                 top: 0,
-                width: 2,
-                height: 2,
-            },
-        ));
-
-        assert!(sc.cmp_rect(
-            &sub_sc,
-            &Rect {
-                left: 1,
-                top: 1,
-                width: 2,
-                height: 2,
+                width: 3,
+                height: 3,
             },
         ));
     }

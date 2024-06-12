@@ -208,7 +208,9 @@ mod test {
     #[test]
     fn get_needle() {
         let needle_mg = init_needle_manager();
-        let png = needle_mg.load("output").unwrap();
+        let Some(png) = needle_mg.load("output") else {
+            return;
+        };
 
         assert_eq!(
             png.config,

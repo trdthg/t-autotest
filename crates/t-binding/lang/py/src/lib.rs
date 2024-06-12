@@ -64,7 +64,7 @@ fn init_logger() {
             "info" => Level::INFO,
             _ => return,
         },
-        _ => Level::INFO,
+        _ => return,
     };
 
     let format = tracing_subscriber::fmt::format()

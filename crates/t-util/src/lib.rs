@@ -86,7 +86,7 @@ pub fn assert_capture_between(
     src: &str,
     left: &str,
     right: &str,
-) -> Result<Option<String>, RegexError> {
+) -> Result<Option<(usize, String)>, RegexError> {
     let re = format!("(?s){}(.*){}", regex::escape(left), regex::escape(right));
     trace!(re = re, src = src, left = left, right = right,);
     let re = Regex::new(&re).map_err(RegexError::RegexBuildError)?;
@@ -97,7 +97,7 @@ pub fn assert_capture_between(
     }
     let res_loc = locs.get(1).unwrap();
 
-    Ok(Some(src[res_loc.0..res_loc.1].to_string()))
+    Ok(Some((res_loc.0, src[res_loc.0..res_loc.1].to_string())))
 }
 
 pub fn run_with_timeout<F, T>(f: F, timeout: Duration) -> Result<T, mpsc::RecvTimeoutError>
@@ -176,7 +176,7 @@ mod test {
 
         let res = assert_capture_between(src, cmd, prompt).unwrap().unwrap();
         println!("res: [{:?}]", res);
-        assert!(res == "pi\n");
+        assert!(res.1 == "pi\n");
     }
 
     #[test]
@@ -187,7 +187,7 @@ mod test {
 
         let res = assert_capture_between(src, cmd, prompt).unwrap().unwrap();
         println!("res: [{:?}]", res);
-        assert!(res.is_empty());
+        assert!(res.1.is_empty());
     }
 
     #[test]
@@ -198,7 +198,7 @@ mod test {
 
         let res = assert_capture_between(src, cmd, prompt).unwrap().unwrap();
         println!("res: [{:?}]", res);
-        assert!(res.is_empty());
+        assert!(res.1.is_empty());
     }
 
     #[test]
@@ -215,6 +215,6 @@ mod test {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(prompt, "pi@raspberrypi:~$ ");
+        assert_eq!(prompt.1, "pi@raspberrypi:~$ ");
     }
 }

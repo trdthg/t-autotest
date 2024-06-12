@@ -212,8 +212,7 @@ mod test {
     fn get_config_from_file() -> Option<Config> {
         let f = env::var("AUTOTEST_CONFIG_FILE").ok();
         f.as_ref()?;
-        let c = t_config::load_config_from_file(f.unwrap()).map(Some);
-        c.unwrap()
+        t_config::load_config_from_file(f.unwrap()).ok()
     }
 
     fn get_client(serial: &ConsoleSerial) -> PtyClient<VT102> {

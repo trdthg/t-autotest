@@ -57,9 +57,10 @@ fn main() {
                 "debug" => Level::DEBUG,
                 "warn" => Level::WARN,
                 "error" => Level::ERROR,
-                _ => Level::INFO,
+                "info" => Level::INFO,
+                _ => return,
             },
-            _ => Level::INFO,
+            _ => return,
         })
         .event_format(format)
         .finish();

@@ -46,9 +46,8 @@ a = 1
 
 [ssh]
 host = ""
-port = 1
+port = 22
 username = ""
-timeout = 1
 password = ""
 private_key = ""
 
