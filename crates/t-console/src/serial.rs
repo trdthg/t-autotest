@@ -6,9 +6,13 @@ use crate::Result;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::path::PathBuf;
-use tracing::info;
+use std::sync::mpsc;
+use std::sync::mpsc::Receiver;
+use t_config::ConsoleSerialType;
+use tracing::{error, info};
 
 pub struct Serial {
+    stop_tx: mpsc::Sender<()>,
     inner: Box<dyn SerialClient<crate::VT102> + Send + Sync>,
 }
 
@@ -28,23 +32,41 @@ impl DerefMut for Serial {
 
 impl Serial {
     pub fn new(c: t_config::ConsoleSerial) -> Result<Self> {
+        // init tty
+        t_util::execute_shell(
+            format!("stty -F {} -echo -icrnl -onlcr -icanon", c.serial_file).as_str(),
+        )
+        .map_err(|_| ConsoleError::NoBashSupport("stty run failed".to_string()))?;
+
+        let (stop_tx, stop_rx) = mpsc::channel();
+
         let inner: Box<dyn SerialClient<crate::VT102> + Send + Sync> = match c.r#type {
-            #[cfg(feature = "unixsock")]
-            Some(ConsoleSerialType::Sock) => {
-                Box::new(SockClient::connect(&c.serial_file, c.log_file.clone())?)
+            #[cfg(target_os = "linux")]
+            Some(ConsoleSerialType::Sock) => Box::new(SockClient::connect(
+                &c.serial_file,
+                c.log_file.clone(),
+                stop_rx,
+            )?),
+            _ => {
+                let ssh_client = PtyClient::connect(
+                    &c.serial_file,
+                    c.bund_rate.unwrap_or(115200),
+                    c.log_file.clone(),
+                    stop_rx,
+                )?;
+                Box::new(ssh_client)
             }
-            _ => Box::new(Self::connect_from_serial_config(&c)?),
         };
-        Ok(Self { inner })
+        Ok(Self { stop_tx, inner })
     }
 
-    fn connect_from_serial_config(c: &t_config::ConsoleSerial) -> Result<PtyClient<crate::VT102>> {
-        let ssh_client = PtyClient::connect(
-            &c.serial_file,
-            c.bund_rate.unwrap_or(115200),
-            c.log_file.clone(),
-        )?;
-        Ok(ssh_client)
+    pub fn stop(&self) {
+        if self.stop_tx.send(()).is_err() {
+            error!("stop serial failed, serial may stopped already");
+            return;
+        }
+
+        self.inner.get_tty().stop_evloop();
     }
 }
 
@@ -63,7 +85,7 @@ impl<T: Term> SerialClient<T> for PtyClient<T> {
     }
 }
 
-#[cfg(feature = "unixsock")]
+#[cfg(target_os = "linux")]
 impl<T: Term> SerialClient<T> for SockClient<T> {
     fn get_tty(&self) -> &Tty<T> {
         &self.tty
@@ -83,17 +105,18 @@ impl<T> PtyClient<T>
 where
     T: Term,
 {
-    pub fn connect(file: &str, bund_rate: u32, log_file: Option<PathBuf>) -> Result<Self> {
-        // init tty
-        // t_util::execute_shell(
-        //     format!("stty -F {} {} -echo -icrnl -onlcr -icanon", file, bund_rate).as_str(),
-        // )
-        // .map_err(ConsoleError::Stty)?;
-
+    pub fn connect(
+        file: &str,
+        bund_rate: u32,
+        log_file: Option<PathBuf>,
+        stop_rx: Receiver<()>,
+    ) -> Result<Self> {
         // connect serial
         let file = file.to_string();
         let evloop = EventLoop::spawn(
             move || {
+                // disable echo
+
                 match serialport::new(&file, bund_rate).open() {
                     Ok(res) => {
                         info!(msg = "serial conn success");
@@ -109,7 +132,7 @@ where
         );
 
         Ok(Self {
-            tty: Tty::new(evloop?),
+            tty: Tty::new(evloop?, stop_rx),
             path: "".to_string(),
         })
     }
@@ -120,19 +143,21 @@ where
     }
 }
 
-#[cfg(feature = "unixsock")]
+#[cfg(target_os = "linux")]
 struct SockClient<T: Term> {
+    #[allow(unused)]
     pub tty: Tty<T>,
     pub path: String,
 }
 
-#[cfg(feature = "unixsock")]
+#[cfg(target_os = "linux")]
 impl<T> SockClient<T>
 where
     T: Term,
 {
-    pub fn connect(file: &str, log_file: Option<PathBuf>) -> Result<Self> {
+    pub fn connect(file: &str, log_file: Option<PathBuf>, stop_rx: Receiver<()>) -> Result<Self> {
         let file = file.to_string();
+
         let evloop = EventLoop::spawn(
             move || match std::os::unix::net::UnixStream::connect(std::path::Path::new(&file)) {
                 Ok(res) => {
@@ -148,7 +173,7 @@ where
         );
 
         Ok(Self {
-            tty: Tty::new(evloop?),
+            tty: Tty::new(evloop?, stop_rx),
             path: "".to_string(),
         })
     }
@@ -167,6 +192,7 @@ mod test {
     use std::{
         env,
         io::{ErrorKind, Read},
+        sync::mpsc::channel,
         thread::sleep,
         time::Duration,
     };
@@ -216,10 +242,12 @@ mod test {
     }
 
     fn get_client(serial: &ConsoleSerial) -> PtyClient<VT102> {
+        let (_, rx) = channel();
         PtyClient::connect(
             &serial.serial_file,
             serial.bund_rate.unwrap_or(115200),
             None,
+            rx,
         )
         .unwrap()
     }

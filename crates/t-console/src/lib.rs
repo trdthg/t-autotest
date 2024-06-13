@@ -19,6 +19,7 @@ pub enum ConsoleError {
     NoBashSupport(String),
     //
     Timeout,
+    Cancel,
     // other error
     IO(std::io::Error),
     Serial(serialport::Error),
@@ -30,6 +31,7 @@ impl Display for ConsoleError {
         match self {
             ConsoleError::NoConnection(s) => write!(f, "connection failed: {}", s),
             ConsoleError::Timeout => write!(f, "Timeout"),
+            ConsoleError::Cancel => write!(f, "Cancel"),
             ConsoleError::NoBashSupport(s) => write!(f, "no bash support, {}", s),
             ConsoleError::IO(e) => write!(f, "io error, {}", e),
             ConsoleError::SSH2(e) => write!(f, "ssh error, {}", e),

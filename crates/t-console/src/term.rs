@@ -1,6 +1,7 @@
-#[allow(unused)]
 const LF: &str = "\n";
+#[allow(unused)]
 const CR: &str = "\r";
+#[allow(unused)]
 const CR_LF: &str = "\r\n";
 
 pub trait Term {
@@ -8,6 +9,12 @@ pub trait Term {
         CR
     }
 
+    #[cfg(not(target_os = "windows"))]
+    fn enter_output() -> &'static str {
+        LF
+    }
+
+    #[cfg(target_os = "windows")]
     fn enter_output() -> &'static str {
         CR_LF
     }

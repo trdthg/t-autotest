@@ -44,7 +44,7 @@ impl EvLoopCtl {
     pub fn stop(&self) {
         let (tx, rx) = channel();
         if self.stop_tx.send(tx).is_err() {
-            error!("evloop closed");
+            return;
         }
         if let Err(e) = rx.recv() {
             error!("evloop receiver closed, connection may be lost: {}", e);

@@ -8,8 +8,11 @@ use std::ops::Deref;
 use std::ops::DerefMut;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::sync::mpsc::Receiver;
 use std::thread::sleep;
 use std::time::Duration;
+use tracing::error;
 use tracing::{debug, info};
 
 type Result<T> = std::result::Result<T, ConsoleError>;
@@ -21,6 +24,7 @@ pub enum SSHAuthAuth<P: AsRef<Path>> {
 }
 
 pub struct SSH {
+    stop_tx: mpsc::Sender<()>,
     inner: SSHClient<crate::Xterm>,
 }
 
@@ -40,25 +44,6 @@ impl DerefMut for SSH {
 
 impl SSH {
     pub fn new(c: t_config::ConsoleSSH) -> Result<Self> {
-        let inner = Self::connect_from_ssh_config(&c)?;
-
-        // debug!(msg = "ssh getting tty...");
-        // let (code, tty) = inner.pts.exec(Duration::from_secs(10), "tty")?;
-
-        // if code != 0 {
-        //     return Err(ConsoleError::NoBashSupport(format!(
-        //         "run tty command failed, code: {}, tty: {}",
-        //         code, tty
-        //     )));
-        // }
-
-        // inner.pts_file = tty;
-        // info!(msg = "ssh client tty", tty = inner.pts_file.trim());
-
-        Ok(Self { inner })
-    }
-
-    fn connect_from_ssh_config(c: &t_config::ConsoleSSH) -> Result<SSHClient<crate::Xterm>> {
         info!(msg = "init ssh...");
         let auth = if let Some(password) = c.password.as_ref() {
             SSHAuthAuth::Password(password.clone())
@@ -74,13 +59,25 @@ impl SSH {
                 ),
             )
         };
-        SSHClient::connect(
+
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let inner = SSHClient::connect(
             c.timeout,
             &auth,
             c.username.clone(),
             format!("{}:{}", c.host, c.port.unwrap_or(22)),
             c.log_file.clone(),
-        )
+            stop_rx,
+        )?;
+        Ok(Self { stop_tx, inner })
+    }
+
+    pub fn stop(&self) {
+        if self.stop_tx.send(()).is_err() {
+            error!("stop serial failed, serial may stopped already");
+            return;
+        }
+        self.inner.pts.stop_evloop();
     }
 
     pub fn tty(&self) -> String {
@@ -119,7 +116,7 @@ impl SSH {
 
 struct SSHClient<T: Term> {
     session: ssh2::Session,
-    pts: Tty<T>,
+    pub pts: Tty<T>,
     pts_file: String,
 }
 
@@ -133,6 +130,7 @@ where
         user: impl Into<String>,
         addrs: A,
         log_file: Option<PathBuf>,
+        stop_rx: Receiver<()>,
     ) -> std::result::Result<Self, ConsoleError> {
         let tcp = TcpStream::connect(addrs).map_err(ConsoleError::IO)?;
         let mut sess = ssh2::Session::new().map_err(ConsoleError::SSH2)?;
@@ -159,18 +157,21 @@ where
 
         let res = Self {
             session: sess.clone(),
-            pts: Tty::new(EventLoop::spawn(
-                move || {
-                    // build shell channel
-                    let mut channel = sess.channel_session().map_err(ConsoleError::SSH2)?;
-                    channel
-                        .request_pty("xterm", None, Some((80, 24, 0, 0)))
-                        .map_err(ConsoleError::SSH2)?;
-                    channel.shell().map_err(ConsoleError::SSH2)?;
-                    Ok(channel)
-                },
-                log_file,
-            )?),
+            pts: Tty::new(
+                EventLoop::spawn(
+                    move || {
+                        // build shell channel
+                        let mut channel = sess.channel_session().map_err(ConsoleError::SSH2)?;
+                        channel
+                            .request_pty("xterm", None, Some((80, 24, 0, 0)))
+                            .map_err(ConsoleError::SSH2)?;
+                        channel.shell().map_err(ConsoleError::SSH2)?;
+                        Ok(channel)
+                    },
+                    log_file,
+                )?,
+                stop_rx,
+            ),
             pts_file: "".to_string(),
         };
 

@@ -31,19 +31,33 @@ impl Server {
         });
     }
 
+    fn try_stop(&self) -> bool {
+        // stop on receive done signal
+        if let Ok(tx) = self.stop_rx.try_recv() {
+            info!(msg = "runner handler thread stopped");
+
+            self.repo.ssh.map_ref(|c| c.stop());
+            info!(msg = "ssh stopped");
+            self.repo.serial.map_ref(|s| s.stop());
+            info!(msg = "serial stopped");
+            self.repo.vnc.map_ref(|s| s.stop());
+            info!(msg = "vnc stopped");
+
+            if let Err(e) = tx.send(()) {
+                warn!(msg = "runner handler thread stopped", reason = ?e);
+            }
+            return true;
+        }
+        false
+    }
+
     fn pool(&self) {
         // start script engine if in case mode
         info!(msg = "start msg handler thread");
 
         loop {
             let deadline = Instant::now() + Duration::from_millis(16);
-            // stop on receive done signal
-            if let Ok(tx) = self.stop_rx.try_recv() {
-                info!(msg = "runner handler thread stopped");
-                self.stop();
-                if let Err(e) = tx.send(()) {
-                    warn!(msg = "runner handler thread stopped", reason = ?e);
-                }
+            if self.try_stop() {
                 break;
             }
 
@@ -84,12 +98,6 @@ impl Server {
             thread::sleep(deadline - Instant::now());
         }
         info!(msg = "Runner loop stopped")
-    }
-
-    pub fn stop(&self) {
-        self.repo.ssh.map_mut(|c| c.stop());
-        self.repo.serial.map_mut(|s| s.stop());
-        self.repo.vnc.map_mut(|s| s.stop());
     }
 }
 

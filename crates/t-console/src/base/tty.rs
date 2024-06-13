@@ -3,6 +3,7 @@ use crate::{term::Term, ConsoleError};
 use parking_lot::Mutex;
 use std::{
     marker::PhantomData,
+    sync::mpsc::Receiver,
     thread,
     time::{Duration, Instant},
 };
@@ -20,6 +21,7 @@ struct State {
 pub struct Tty<T: Term> {
     // interface for communicate with tty file
     ctl: EvLoopCtl,
+    stop_rx: Mutex<Receiver<()>>,
     state: Mutex<State>,
     // Term decide how to decode output bytes
     phantom: PhantomData<T>,
@@ -28,15 +30,18 @@ pub struct Tty<T: Term> {
 enum ConsumeAction<T> {
     BreakValue(T),
     Continue,
+    #[allow(unused)]
+    Cancel,
 }
 
 impl<Tm> Tty<Tm>
 where
     Tm: Term,
 {
-    pub fn new(ctl: EvLoopCtl) -> Self {
+    pub fn new(ctl: EvLoopCtl, stop_rx: Receiver<()>) -> Self {
         Self {
             ctl,
+            stop_rx: Mutex::new(stop_rx),
             state: Mutex::new(State {
                 history: Vec::new(),
                 last_buffer_start: 0,
@@ -45,8 +50,13 @@ where
         }
     }
 
-    pub fn stop(&self) {
+    pub fn stop_evloop(&self) {
         self.ctl.stop();
+    }
+
+    fn try_handle_stop_signal(&self) -> bool {
+        // stop on receive done signal
+        self.stop_rx.lock().try_recv().is_ok()
     }
 
     pub fn write(&self, s: &[u8], timeout: Duration) -> Result<()> {
@@ -89,17 +99,29 @@ where
 
     pub fn exec(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
         info!(msg = "exec", cmd = cmd);
+
         // wait for prompt show, cmd may write too fast before prompt show, which will broken regex
         std::thread::sleep(Duration::from_millis(70));
 
+        // prepare
         let nanoid = nanoid::nanoid!(6);
-        let cmd = format!("{cmd}; echo $?{nanoid}{}", Tm::enter_input(),);
-        let deadline = Instant::now() + timeout;
-        self.write_string(&cmd, timeout)?;
 
-        let match_left = &format!("{nanoid}{}{}", Tm::linebreak(), Tm::enter_input());
+        let cmd = format!("echo {nanoid}; {cmd}; echo $?{nanoid}{}", Tm::enter_input(),);
+        let match_left = &format!("{nanoid}{}", Tm::linebreak());
         let match_right = &format!("{nanoid}{}", Tm::linebreak());
 
+        #[cfg(never)]
+        {
+            // if echo is can't be disabled(like windows), the following may be useful
+            let cmd = format!("{cmd}; echo $?{nanoid}{}", Tm::enter_input(),);
+            let match_left = &format!("{nanoid}{}{}", Tm::linebreak(), Tm::enter_input());
+        };
+
+        // run command
+        self.write_string(&cmd, timeout)?;
+
+        // wait output
+        let deadline = Instant::now() + timeout;
         self.comsume_buffer_and_map(deadline - Instant::now(), |buffer, new| {
             // find target pattern from buffer
             let buffer_str = Tm::parse_and_strip(buffer);
@@ -121,7 +143,7 @@ where
                     info!(msg = "catched_output", nanoid = nanoid, catched_output = v,);
                     if let Some((res, flag)) = v.rsplit_once(Tm::linebreak()) {
                         info!(
-                            msg = "catched_output info",
+                            msg = "catched_output_splited",
                             nanoid = nanoid,
                             flag = flag,
                             res = res
@@ -154,6 +176,10 @@ where
 
         let mut buffer_len = 0;
         loop {
+            if self.try_handle_stop_signal() {
+                return Err(ConsoleError::Cancel);
+            }
+
             tracing::info!(msg = "deadline", deadline = ?(deadline - Instant::now()));
             // handle timeout
             if Instant::now() > deadline {
@@ -192,12 +218,15 @@ where
                     match res {
                         ConsumeAction::BreakValue(v) => {
                             // cut from last find
-                            info!(msg = "buffer cut");
+                            debug!(msg = "buffer cut");
                             state.last_buffer_start = state.history.len() - buffer_len;
                             return Ok(v);
                         }
                         ConsumeAction::Continue => {
                             continue;
+                        }
+                        ConsumeAction::Cancel => {
+                            return Err(ConsoleError::Cancel);
                         }
                     }
                 }
