@@ -13,7 +13,7 @@ members = [
 default-members = ["crates/t-cli"]
 
 [workspace.package]
-version       = "0.3.5"
+version       = "0.3.6"
 description   = "autotest tool"
 authors       = ["trdthg"]
 edition       = "2021"
