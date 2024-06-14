@@ -146,11 +146,11 @@ impl JSEngine {
                 let api = rustapi.clone();
                 ctx.globals()
                     .set(
-                        "wait_string_ntimes",
+                        "wait_string",
                         Function::new(
                             ctx.clone(),
-                            move |s: String, n: i32, timeout: i32| -> rquickjs::Result<bool> {
-                                api.wait_string_ntimes(s, n, timeout).map_err(into_jserr)
+                            move |s: String, timeout: i32| -> rquickjs::Result<()> {
+                                api.wait_string(s, timeout).map_err(into_jserr)
                             },
                         ),
                     )
@@ -159,11 +159,11 @@ impl JSEngine {
                 let api = rustapi.clone();
                 ctx.globals()
                     .set(
-                        "assert_wait_string_ntimes",
+                        "try_wait_string",
                         Function::new(
                             ctx.clone(),
-                            move |s: String, n: i32, timeout: i32| -> rquickjs::Result<bool> {
-                                if !api.wait_string_ntimes(s, n, timeout).map_err(into_jserr)? {
+                            move |s: String, timeout: i32| -> rquickjs::Result<bool> {
+                                if !api.try_wait_string(s, timeout) {
                                     Err(rquickjs::Error::Exception)
                                 } else {
                                     Ok(true)

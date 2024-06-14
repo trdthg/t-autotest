@@ -36,6 +36,8 @@ fn main() {
         password: cli.password,
         timeout: None,
         log_file: None,
+        enable_echo: Some(false),
+        linebreak: Some("\n".to_string()),
     }) {
         Ok(mut ssh) => {
             info!("Connected");

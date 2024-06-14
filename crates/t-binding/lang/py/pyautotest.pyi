@@ -46,14 +46,14 @@ class Driver:
         write string with '\n' to console
         """
 
-    def wait_string_ntimes(self, s: str, n: int, timeout: int) -> bool:
+    def wait_string(self, s: str, timeout: int):
         """
-        wait pattern in console output show n times
+        wait pattern in console output, if timeout, throw exception
         """
 
-    def assert_wait_string_ntimes(self, s: str, n: int, timeout: int):
+    def try_wait_string(self, s: str, timeout: int) -> bool:
         """
-        wait pattern in console output, if timeout, throw error
+        wait pattern in console output, return bool
         """
 
     def ssh_assert_script_run(self, cmd: str, timeout: int) -> str:

@@ -315,18 +315,17 @@ impl Service {
             MsgReq::WaitString {
                 console,
                 s,
-                n,
                 timeout,
             } => {
                 if let Err(e) = match (console, self.ssh.is_some(), self.serial.is_some()) {
                     (None | Some(t_binding::TextConsole::Serial), _, true) => self
                         .serial
-                        .map_mut(|c| c.wait_string_ntimes(timeout, &s, n as usize))
+                        .map_mut(|c| c.wait_string(timeout, &s))
                         .expect("no serial")
                         .map_err(|_| MsgResError::Timeout),
                     (None | Some(t_binding::TextConsole::SSH), true, _) => self
                         .ssh
-                        .map_mut(|c| c.wait_string_ntimes(timeout, &s, n as usize))
+                        .map_mut(|c| c.wait_string(timeout, &s))
                         .expect("no ssh")
                         .map_err(|_| MsgResError::Timeout),
                     _ => Err(MsgResError::String("no console supported".to_string())),

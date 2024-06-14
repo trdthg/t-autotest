@@ -1,5 +1,6 @@
 use crate::base::evloop::EventLoop;
 use crate::base::tty::Tty;
+use crate::base::tty::TtySetting;
 use crate::term::Term;
 use crate::ConsoleError;
 use std::net::TcpStream;
@@ -61,6 +62,12 @@ impl SSH {
         };
 
         let (stop_tx, stop_rx) = mpsc::channel();
+
+        let setting = TtySetting {
+            disable_echo: c.enable_echo.unwrap_or(false),
+            linebreak: c.linebreak.clone().unwrap_or("\n".to_string()),
+        };
+
         let inner = SSHClient::connect(
             c.timeout,
             &auth,
@@ -68,6 +75,7 @@ impl SSH {
             format!("{}:{}", c.host, c.port.unwrap_or(22)),
             c.log_file.clone(),
             stop_rx,
+            setting,
         )?;
         Ok(Self { stop_tx, inner })
     }
@@ -131,6 +139,7 @@ where
         addrs: A,
         log_file: Option<PathBuf>,
         stop_rx: Receiver<()>,
+        setting: TtySetting,
     ) -> std::result::Result<Self, ConsoleError> {
         let tcp = TcpStream::connect(addrs).map_err(ConsoleError::IO)?;
         let mut sess = ssh2::Session::new().map_err(ConsoleError::SSH2)?;
@@ -171,6 +180,7 @@ where
                     log_file,
                 )?,
                 stop_rx,
+                setting,
             ),
             pts_file: "".to_string(),
         };
@@ -230,8 +240,7 @@ mod test {
             ssh2.exec_seperate(format!(r#"sleep 5 && echo "asdfg" > {}"#, tty).as_str())
         });
 
-        ssh.wait_string_ntimes(Duration::from_secs(1), "asdfg", 1)
-            .unwrap();
+        ssh.wait_string(Duration::from_secs(1), "asdfg").unwrap();
     }
 
     #[test]

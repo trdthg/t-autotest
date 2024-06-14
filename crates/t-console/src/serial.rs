@@ -1,5 +1,6 @@
 use crate::base::evloop::EventLoop;
 use crate::base::tty::Tty;
+use crate::base::tty::TtySetting;
 use crate::term::Term;
 use crate::ConsoleError;
 use crate::Result;
@@ -32,13 +33,21 @@ impl DerefMut for Serial {
 
 impl Serial {
     pub fn new(c: t_config::ConsoleSerial) -> Result<Self> {
-        // init tty
-        t_util::execute_shell(
-            format!("stty -F {} -echo -icrnl -onlcr -icanon", c.serial_file).as_str(),
-        )
-        .map_err(|_| ConsoleError::NoBashSupport("stty run failed".to_string()))?;
-
         let (stop_tx, stop_rx) = mpsc::channel();
+
+        let setting = TtySetting {
+            disable_echo: c.disable_echo.unwrap_or(false),
+            linebreak: c.linebreak.clone().unwrap_or("\n".to_string()),
+        };
+
+        #[cfg(never)]
+        if setting.disable_echo {
+            // init tty
+            t_util::execute_shell(
+                format!("stty -F {} echo -icrnl -onlcr -icanon", c.serial_file).as_str(),
+            )
+            .map_err(|_| ConsoleError::NoBashSupport("stty run failed".to_string()))?;
+        }
 
         let inner: Box<dyn SerialClient<crate::VT102> + Send + Sync> = match c.r#type {
             #[cfg(target_os = "linux")]
@@ -46,6 +55,7 @@ impl Serial {
                 &c.serial_file,
                 c.log_file.clone(),
                 stop_rx,
+                setting,
             )?),
             _ => {
                 let ssh_client = PtyClient::connect(
@@ -53,6 +63,7 @@ impl Serial {
                     c.bund_rate.unwrap_or(115200),
                     c.log_file.clone(),
                     stop_rx,
+                    setting,
                 )?;
                 Box::new(ssh_client)
             }
@@ -110,6 +121,7 @@ where
         bund_rate: u32,
         log_file: Option<PathBuf>,
         stop_rx: Receiver<()>,
+        setting: TtySetting,
     ) -> Result<Self> {
         // connect serial
         let file = file.to_string();
@@ -132,7 +144,7 @@ where
         );
 
         Ok(Self {
-            tty: Tty::new(evloop?, stop_rx),
+            tty: Tty::new(evloop?, stop_rx, setting),
             path: "".to_string(),
         })
     }
@@ -155,7 +167,12 @@ impl<T> SockClient<T>
 where
     T: Term,
 {
-    pub fn connect(file: &str, log_file: Option<PathBuf>, stop_rx: Receiver<()>) -> Result<Self> {
+    pub fn connect(
+        file: &str,
+        log_file: Option<PathBuf>,
+        stop_rx: Receiver<()>,
+        setting: TtySetting,
+    ) -> Result<Self> {
         let file = file.to_string();
 
         let evloop = EventLoop::spawn(
@@ -173,7 +190,7 @@ where
         );
 
         Ok(Self {
-            tty: Tty::new(evloop?, stop_rx),
+            tty: Tty::new(evloop?, stop_rx, setting),
             path: "".to_string(),
         })
     }
@@ -188,7 +205,10 @@ where
 mod test {
     use t_config::{Config, ConsoleSerial};
 
-    use crate::term::{Term, VT102};
+    use crate::{
+        base::tty::TtySetting,
+        term::{Term, VT102},
+    };
     use std::{
         env,
         io::{ErrorKind, Read},
@@ -248,6 +268,10 @@ mod test {
             serial.bund_rate.unwrap_or(115200),
             None,
             rx,
+            TtySetting {
+                disable_echo: serial.disable_echo.unwrap_or(false),
+                linebreak: serial.linebreak.clone().unwrap_or("\n".to_string()),
+            },
         )
         .unwrap()
     }

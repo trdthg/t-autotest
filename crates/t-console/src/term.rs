@@ -1,28 +1,4 @@
-const LF: &str = "\n";
-#[allow(unused)]
-const CR: &str = "\r";
-#[allow(unused)]
-const CR_LF: &str = "\r\n";
-
 pub trait Term {
-    fn enter_input() -> &'static str {
-        CR
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn enter_output() -> &'static str {
-        LF
-    }
-
-    #[cfg(target_os = "windows")]
-    fn enter_output() -> &'static str {
-        CR_LF
-    }
-
-    fn linebreak() -> &'static str {
-        Self::enter_output()
-    }
-
     fn parse_and_strip(bytes: &[u8]) -> String {
         // bytes to string
         let text = String::from_utf8_lossy(bytes);

@@ -149,32 +149,14 @@ impl Driver {
             .map_err(into_pyerr)
     }
 
-    fn wait_string_ntimes(
-        &self,
-        py: Python<'_>,
-        s: String,
-        n: i32,
-        timeout: i32,
-    ) -> PyResult<bool> {
-        PyApi::new(&self.tx, py)
-            .wait_string_ntimes(s, n, timeout)
-            .map_err(into_pyerr)
+    fn try_wait_string(&self, py: Python<'_>, s: String, timeout: i32) -> PyResult<bool> {
+        Ok(PyApi::new(&self.tx, py).wait_string(s, timeout).is_ok())
     }
 
-    fn assert_wait_string_ntimes(
-        &self,
-        py: Python<'_>,
-        s: String,
-        n: i32,
-        timeout: i32,
-    ) -> PyResult<bool> {
-        if !PyApi::new(&self.tx, py)
-            .wait_string_ntimes(s, n, timeout)
-            .map_err(into_pyerr)?
-        {
-            return Err(AssertException::new_err("wait failed"));
-        }
-        Ok(true)
+    fn wait_string(&self, py: Python<'_>, s: String, timeout: i32) -> PyResult<()> {
+        PyApi::new(&self.tx, py)
+            .wait_string(s, timeout)
+            .map_err(into_pyerr)
     }
 
     // ssh

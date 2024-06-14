@@ -54,6 +54,8 @@ pub struct ConsoleSSH {
     pub password: Option<String>,
     pub private_key: Option<String>,
     pub timeout: Option<Duration>,
+    pub enable_echo: Option<bool>,
+    pub linebreak: Option<String>,
 
     #[serde(skip_serializing)]
     pub log_file: Option<PathBuf>,
@@ -64,6 +66,8 @@ pub struct ConsoleSerial {
     pub serial_file: String,
     pub bund_rate: Option<u32>,
     pub r#type: Option<ConsoleSerialType>,
+    pub disable_echo: Option<bool>,
+    pub linebreak: Option<String>,
 
     #[serde(skip_serializing)]
     pub log_file: Option<PathBuf>,

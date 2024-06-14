@@ -18,11 +18,17 @@ struct State {
     last_buffer_start: usize,
 }
 
+pub struct TtySetting {
+    pub disable_echo: bool,
+    pub linebreak: String,
+}
+
 pub struct Tty<T: Term> {
     // interface for communicate with tty file
     ctl: EvLoopCtl,
     stop_rx: Mutex<Receiver<()>>,
     state: Mutex<State>,
+    setting: TtySetting,
     // Term decide how to decode output bytes
     phantom: PhantomData<T>,
 }
@@ -38,7 +44,7 @@ impl<Tm> Tty<Tm>
 where
     Tm: Term,
 {
-    pub fn new(ctl: EvLoopCtl, stop_rx: Receiver<()>) -> Self {
+    pub fn new(ctl: EvLoopCtl, stop_rx: Receiver<()>, setting: TtySetting) -> Self {
         Self {
             ctl,
             stop_rx: Mutex::new(stop_rx),
@@ -46,6 +52,7 @@ where
                 history: Vec::new(),
                 last_buffer_start: 0,
             }),
+            setting,
             phantom: PhantomData {},
         }
     }
@@ -72,22 +79,16 @@ where
         Ok(())
     }
 
-    pub fn wait_string_ntimes(
-        &mut self,
-        timeout: Duration,
-        pattern: &str,
-        repeat: usize,
-    ) -> Result<String> {
-        info!(msg = "wait_string_ntimes", pattern = pattern);
+    pub fn wait_string(&mut self, timeout: Duration, pattern: &str) -> Result<String> {
+        info!(msg = "wait_string", pattern = pattern);
         self.comsume_buffer_and_map(timeout, |buffer, new| {
             {
                 let buffer_str = Tm::parse_and_strip(buffer);
                 let new_str = Tm::parse_and_strip(new);
-                let res = count_substring(&buffer_str, pattern, repeat);
+                let res = count_substring(&buffer_str, pattern, 1);
                 info!(
-                    msg = "wait_string_ntimes",
+                    msg = "wait_string",
                     pattern = pattern,
-                    repeat = repeat,
                     res = res,
                     new_buffer = new_str,
                 );
@@ -99,6 +100,7 @@ where
 
     pub fn exec(&mut self, timeout: Duration, cmd: &str) -> Result<(i32, String)> {
         info!(msg = "exec", cmd = cmd);
+        let enter_input: &'static str = "\r";
 
         // wait for prompt show, cmd may write too fast before prompt show, which will broken regex
         std::thread::sleep(Duration::from_millis(70));
@@ -106,16 +108,24 @@ where
         // prepare
         let nanoid = nanoid::nanoid!(6);
 
-        let cmd = format!("echo {nanoid}; {cmd}; echo $?{nanoid}{}", Tm::enter_input(),);
-        let match_left = &format!("{nanoid}{}", Tm::linebreak());
-        let match_right = &format!("{nanoid}{}", Tm::linebreak());
+        let res_flag_sep = "-";
 
-        #[cfg(never)]
-        {
-            // if echo is can't be disabled(like windows), the following may be useful
-            let cmd = format!("{cmd}; echo $?{nanoid}{}", Tm::enter_input(),);
-            let match_left = &format!("{nanoid}{}{}", Tm::linebreak(), Tm::enter_input());
+        let (cmd, match_left) = if self.setting.disable_echo {
+            // echo -$?$nanoid; cmd; echo $?$nanoid\r
+            let cmd = format!("echo {nanoid}; {cmd}; echo -$?{nanoid}{}", enter_input);
+            // $nanoid\nresult-0$nanoid\n
+            let match_left = format!("{nanoid}{}", &self.setting.linebreak);
+            (cmd, match_left)
+        } else {
+            // cmd; echo -$?$nanoid\r
+            let cmd = format!("{cmd}; echo {}$?{nanoid}{}", res_flag_sep, enter_input);
+            // cmd; echo -$?$nanoid\rresult-0$nanoid\n
+            let match_left = format!("{nanoid}{}{}", &self.setting.linebreak, enter_input);
+            (cmd, match_left)
         };
+
+        // result-0$nanoid\n
+        let match_right = &format!("{nanoid}{}", &self.setting.linebreak);
 
         // run command
         self.write_string(&cmd, timeout)?;
@@ -134,14 +144,14 @@ where
             );
 
             let Ok(catched_output) =
-                t_util::assert_capture_between(&buffer_str, match_left, match_right)
+                t_util::assert_capture_between(&buffer_str, &match_left, match_right)
             else {
                 return ConsumeAction::BreakValue((1, "invalid consume regex".to_string()));
             };
             match catched_output {
                 Some((_pos, v)) => {
                     info!(msg = "catched_output", nanoid = nanoid, catched_output = v,);
-                    if let Some((res, flag)) = v.rsplit_once(Tm::linebreak()) {
+                    if let Some((res, flag)) = v.rsplit_once(res_flag_sep) {
                         info!(
                             msg = "catched_output_splited",
                             nanoid = nanoid,

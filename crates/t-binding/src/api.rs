@@ -1,7 +1,7 @@
 use super::error::{ApiError, Result};
 use crate::{
     msg::{TextConsole, VNC},
-    MsgReq, MsgRes, MsgResError,
+    MsgReq, MsgRes,
 };
 use std::{
     sync::{mpsc, Arc},
@@ -98,21 +98,13 @@ pub trait Api {
         }
     }
 
-    fn _wait_string_ntimes(
-        &self,
-        console: Option<TextConsole>,
-        s: String,
-        n: i32,
-        timeout: i32,
-    ) -> Result<bool> {
+    fn _wait_string(&self, console: Option<TextConsole>, s: String, timeout: i32) -> Result<()> {
         match self.req(MsgReq::WaitString {
             console,
             s,
-            n,
             timeout: Duration::from_secs(timeout as u64),
         })? {
-            MsgRes::Done => Ok(true),
-            MsgRes::Error(MsgResError::Timeout) => Ok(false),
+            MsgRes::Done => Ok(()),
             MsgRes::Error(e) => Err(e.into()),
             _ => Err(ApiError::ServerInvalidResponse),
         }
@@ -162,8 +154,12 @@ pub trait Api {
         self._write(s, None)
     }
 
-    fn wait_string_ntimes(&self, s: String, n: i32, timeout: i32) -> Result<bool> {
-        self._wait_string_ntimes(None, s, n, timeout)
+    fn try_wait_string(&self, s: String, timeout: i32) -> bool {
+        self._wait_string(None, s, timeout).is_ok()
+    }
+
+    fn wait_string(&self, s: String, timeout: i32) -> Result<()> {
+        self._wait_string(None, s, timeout)
     }
 
     // serial
