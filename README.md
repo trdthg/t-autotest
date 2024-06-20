@@ -13,7 +13,7 @@ you can also install with scripts:
 ### linux / mac
 
 ```bash
-curl -sSL https://github.com/trdthg/t-autotest/blob/main/scripts/install.sh | bash -
+curl -sSL https://github.com/trdthg/t-autotest/raw/main/scripts/install.sh | bash -
 ```
 
 ### windows
