@@ -6,10 +6,6 @@ class Driver:
     """
 
     def __init__(self, toml_str: str) -> Driver: ...
-    def start(self):
-        """
-        start the runner
-        """
 
     def stop(self):
         """
@@ -46,14 +42,14 @@ class Driver:
         write string with '\n' to console
         """
 
-    def wait_string(self, s: str, timeout: int):
-        """
-        wait pattern in console output, if timeout, throw exception
-        """
-
-    def try_wait_string(self, s: str, timeout: int) -> bool:
+    def wait_string(self, s: str, timeout: int) -> bool:
         """
         wait pattern in console output, return bool
+        """
+
+    def assert_wait_string(self, s: str, timeout: int):
+        """
+        wait pattern in console output, if timeout, throw exception
         """
 
     def ssh_assert_script_run(self, cmd: str, timeout: int) -> str:
@@ -114,6 +110,16 @@ class Driver:
     def vnc_refresh(self):
         """
         force refresh
+        """
+
+    def check_and_click(self, tag: str, timeout: int) -> bool:
+        """
+        check screen, click if similar to tag
+        """
+
+    def assert_and_click(self, tag: str, timeout: int):
+        """
+        check screen, click if similar to tag, throw exception if timeout
         """
 
     def mouse_click(self):
