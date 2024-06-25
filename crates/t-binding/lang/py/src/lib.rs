@@ -81,7 +81,7 @@ fn init_logger() {
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
-#[pyclass]
+#[pyclass(module = "pyautotest")]
 struct Driver {
     config: Config,
     driver: InnerDriver,
@@ -290,7 +290,7 @@ impl Driver {
     }
 }
 
-#[pyclass]
+#[pyclass(module = "pyautotest")]
 struct DriverSSH {
     inner: SSH,
 }
