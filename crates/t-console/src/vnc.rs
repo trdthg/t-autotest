@@ -122,7 +122,7 @@ pub enum VNCEventReq {
     MoveUp(u8),
     MouseHide,
     GetScreenShot,
-    TakeScreenShot(String),
+    TakeScreenShot(String, Option<String>),
     Refresh,
 }
 
@@ -139,7 +139,16 @@ pub struct VNC {
     pub stop_tx: Sender<Sender<()>>,
 }
 
-pub type ScreenShotTx = Sender<(Arc<Container>, String, Sender<()>)>;
+pub enum Log {
+    Screenshot {
+        screen: Arc<PNG>,
+        name: String,
+        span: Option<String>,
+        done_tx: Sender<()>,
+    },
+}
+
+pub type LogTx = Sender<Log>;
 
 #[derive(Debug)]
 pub enum VNCError {
@@ -210,7 +219,7 @@ impl VNC {
     pub fn connect(
         addr: SocketAddr,
         password: Option<String>,
-        screenshot_tx: Option<ScreenShotTx>,
+        screenshot_tx: Option<LogTx>,
     ) -> Result<Self, VNCError> {
         let vnc = Self::make_conn(&addr, password.clone())?;
 
@@ -316,7 +325,7 @@ struct VncClientInner {
     event_rx: Receiver<(VNCEventReq, Sender<VNCEventRes>)>,
     stop_rx: Receiver<Sender<()>>,
 
-    screenshot_tx: Option<ScreenShotTx>,
+    screenshot_tx: Option<LogTx>,
     screenshot_buffer: std::collections::VecDeque<Arc<PNG>>,
 }
 
@@ -504,7 +513,7 @@ impl VncClientInner {
             VNCEventReq::MoveUp(button) => self.handle_mouse_up(button),
             VNCEventReq::Refresh => self.handle_screen_refresh(),
             VNCEventReq::GetScreenShot => self.handle_screen_getlatest(),
-            VNCEventReq::TakeScreenShot(name) => self.handle_screen_takeshot(name),
+            VNCEventReq::TakeScreenShot(name, span) => self.handle_screen_takeshot(name, span),
             VNCEventReq::MouseHide => self.handle_mouse_hide(),
         }
     }
@@ -599,12 +608,21 @@ impl VncClientInner {
         Ok(VNCEventRes::NoConnection)
     }
 
-    fn handle_screen_takeshot(&mut self, name: String) -> Result<VNCEventRes, t_vnc::Error> {
+    fn handle_screen_takeshot(
+        &mut self,
+        name: String,
+        span: Option<String>,
+    ) -> Result<VNCEventRes, t_vnc::Error> {
         if let Some(screenshot) = self.screenshot_buffer.back() {
             if let Some(tx) = &self.screenshot_tx {
                 // if has new frame, then save
                 let (done_tx, done_rx) = mpsc::channel();
-                if let Err(e) = tx.send((screenshot.clone(), name, done_tx)) {
+                if let Err(e) = tx.send(Log::Screenshot {
+                    screen: screenshot.clone(),
+                    name,
+                    span,
+                    done_tx,
+                }) {
                     error!(msg = "screenshot channel closed", reason = ?e);
                     self.screenshot_tx = None;
                 }

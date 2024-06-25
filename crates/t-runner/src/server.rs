@@ -12,7 +12,7 @@ use std::{
 };
 use t_binding::{MsgReq, MsgRes, MsgResError};
 use t_config::{Config, ConsoleVNC};
-use t_console::{key, ConsoleError, Serial, VNCEventReq, VNCEventRes, PNG, SSH, VNC};
+use t_console::{key, ConsoleError, Log, Serial, VNCEventReq, VNCEventRes, PNG, SSH, VNC};
 use t_util::{get_time, AMOption};
 use tracing::{debug, error, info, warn};
 
@@ -111,51 +111,76 @@ pub(crate) struct Service {
 }
 
 impl Service {
-    fn save_screenshots(screenshot_rx: Receiver<(Arc<PNG>, String, Sender<()>)>, dir: PathBuf) {
+    fn start_save_logs(log_rx: Receiver<Log>, dir: PathBuf) {
         let path = dir;
         thread::spawn(move || {
-            info!(msg = "vnc screenshot save thread started");
-            // push ymdhms to path
-            let path = path.join(get_time());
-
+            info!(msg = "log save thread started");
             let mut path = path;
             if let Err(e) = std::fs::create_dir_all(&path) {
-                warn!(msg="create screenshot dir failed", reason=?e);
+                warn!(msg="create dir failed", reason=?e);
                 return;
             }
-            let mut i = 0;
-            let mut last = None::<Arc<PNG>>;
-            while let Ok((screen, name, done_tx)) = screenshot_rx.recv() {
-                i += 1;
-                if let Some(ref last) = last {
-                    if last.cmp(screen.as_ref()) {
+            let mut trace_id = 0;
+            let mut span_id = 0;
+            let mut last_png = None::<Arc<PNG>>;
+            let mut last_span = None::<String>;
+            while let Ok(log) = log_rx.recv() {
+                trace_id += 1;
+                match log {
+                    Log::Screenshot {
+                        screen,
+                        name,
+                        span,
+                        done_tx,
+                    } => {
+                        if span.is_none() || span != last_span {
+                            span_id += 1;
+                            last_span.clone_from(&span);
+                        }
+
+                        // skip same screen
+                        if let Some(ref last) = last_png {
+                            if last.cmp(screen.as_ref()) {
+                                if let Err(e) = done_tx.send(()) {
+                                    warn!(msg="done send failed", reason=?e);
+                                }
+                                debug!(msg = "skip save screenshot, screen no change");
+                                continue;
+                            }
+                        }
+
+                        // prepare dir
+                        if let Some(span) = span.as_ref() {
+                            path.push(format!("{span_id:05}-{span}"));
+                            if let Err(e) = std::fs::create_dir_all(&path) {
+                                warn!(msg="create span dir failed", reason=?e);
+                                return;
+                            }
+                        }
+
+                        // save file
+                        let image_name =
+                            format!("{span_id:05}-{trace_id:05}-{}-{name}.png", get_time());
+                        path.push(&image_name);
+                        if let Err(e) = screen.as_img().save(&path) {
+                            warn!(msg="screenshot save failed", reason=?e);
+                        }
+
+                        // reset path
+                        if span.is_some() {
+                            path.pop();
+                        }
+                        path.pop();
+
+                        // done
+                        last_png = Some(screen);
                         if let Err(e) = done_tx.send(()) {
                             warn!(msg="done send failed", reason=?e);
                         }
-                        debug!(msg = "skip save screenshot, screen no change");
-                        continue;
                     }
                 }
-                let p = screen.as_img();
-                let image_name = format!("output-{i:05}-{}-{name}.png", get_time(),);
-                path.push(&image_name);
-                if let Err(e) = p.save(&path) {
-                    warn!(msg="screenshot save failed", reason=?e);
-                }
-                path.pop();
-                if let Err(e) = done_tx.send(()) {
-                    warn!(msg="done send failed", reason=?e);
-                }
-                last = Some(screen);
             }
-            let image_name = format!("output-{i:05}-{}-last.png", get_time(),);
-            path.push(&image_name);
-            if let Some(last) = last {
-                if last.as_img().save(&path).is_err() {
-                    warn!(msg="save last image failed", path=?path);
-                }
-            }
-            info!(msg = "vnc screenshot save thread stopped");
+            info!(msg = "vnc log save thread stopped");
         });
     }
 
@@ -200,9 +225,9 @@ impl Service {
                 .parse()
                 .map_err(|e| ConsoleError::NoConnection(format!("vnc addr is not valid, {}", e)))?;
 
-            let tx = if let Some(screenshot_dir) = vnc.screenshot_dir.as_ref() {
+            let tx = if let Some(log_dir) = c.log_dir.as_ref() {
                 let (tx, rx) = mpsc::channel();
-                Self::save_screenshots(rx, screenshot_dir.clone());
+                Self::start_save_logs(rx, log_dir.clone().into());
                 Some(tx)
             } else {
                 None
@@ -358,23 +383,24 @@ impl Service {
             let res = match req {
                 t_binding::msg::VNC::TakeScreenShot => {
                     take_screenshot = false;
-                    screenshotname = "user";
+                    screenshotname = "user".to_string();
                     match c.send(VNCEventReq::TakeScreenShot(
-                        screenshotname.to_string(),
+                        screenshotname.clone(),
+                        None
                     )) {
                         Ok(VNCEventRes::Done) => MsgRes::Done,
                         _ => MsgRes::Error(MsgResError::Timeout),
                     }
                 }
                 t_binding::msg::VNC::GetScreenShot => {
-                    screenshotname = "user";
+                    screenshotname = "user".to_string();
                     match c.send(VNCEventReq::GetScreenShot) {
                         Ok(VNCEventRes::Screen(res)) => MsgRes::Screenshot(res),
                         _ => MsgRes::Error(MsgResError::Timeout),
                     }
                 }
                 t_binding::msg::VNC::Refresh => {
-                    screenshotname = "refresh";
+                    screenshotname = "refresh".to_string();
                     match c.send(VNCEventReq::Refresh) {
                         Ok(VNCEventRes::Screen(res)) => MsgRes::Screenshot(res),
                         _ => MsgRes::Error(MsgResError::Timeout),
@@ -389,7 +415,7 @@ impl Service {
                     delay,
                 } => {
                     take_screenshot = false;
-                    screenshotname = "checkscreen";
+                    screenshotname = format!("checkscreen-{tag}");
                     let deadline = time::Instant::now() + timeout;
                     let mut similarity: f32 = 0.;
                     let mut i = 0;
@@ -408,8 +434,8 @@ impl Service {
                                     let msg = "assert screen failed, needle file not found";
                                     error!(msg = msg, tag = tag);
                                     if self.enable_screenshot && c.send(VNCEventReq::TakeScreenShot(format!(
-                                        "{screenshotname}-{i}-failed-noneedle"
-                                    )))
+                                        "{i}-failed-noneedle"
+                                    ), Some(screenshotname.to_string())))
                                     .is_err()
                                     {
                                         warn!("take screenshot failed, vnc server may stopped unexpectedly")
@@ -477,9 +503,7 @@ impl Service {
                                     break 'res MsgRes::Done;
                                 } else {
                                     if  self.enable_screenshot && c.send(VNCEventReq::TakeScreenShot(
-                                        format!(
-                                            "{screenshotname}-{i}-success"
-                                        ),
+                                        format!("{i}-success"), Some(screenshotname.clone())
                                     )).is_err() {
                                         warn!("take screenshot failed, vnc server may stopped unexpectedly")
                                     }
@@ -495,21 +519,21 @@ impl Service {
                     }
                 }
                 t_binding::msg::VNC::MouseMove { x, y } => {
-                    screenshotname = "mousemove";
+                    screenshotname = "mousemove".to_string();
                     match c.send(VNCEventReq::MouseMove(x, y)) {
                         Ok(VNCEventRes::Done) => MsgRes::Done,
                         _ => MsgRes::Error(MsgResError::Timeout),
                     }
                 }
                 t_binding::msg::VNC::MouseDrag { x, y } => {
-                    screenshotname = "mousedrag";
+                    screenshotname = "mousedrag".to_string();
                     match c.send(VNCEventReq::MouseDrag(x, y)) {
                         Ok(VNCEventRes::Done) => MsgRes::Done,
                         _ => MsgRes::Error(MsgResError::Timeout),
                     }
                 }
                 t_binding::msg::VNC::MouseHide => {
-                    screenshotname = "mousehide";
+                    screenshotname = "mousehide".to_string();
                     match c.send(VNCEventReq::MouseHide) {
                         Ok(VNCEventRes::Done) => MsgRes::Done,
                         _ => MsgRes::Error(MsgResError::Timeout),
@@ -517,7 +541,7 @@ impl Service {
                 }
                 t_binding::msg::VNC::MouseClick
                 | t_binding::msg::VNC::MouseRClick => {
-                    screenshotname = "mouseclick";
+                    screenshotname = "mouseclick".to_string();
                     let button = match req {
                         t_binding::msg::VNC::MouseClick => 1,
                         t_binding::msg::VNC::MouseRClick => 1 << 2,
@@ -530,7 +554,7 @@ impl Service {
                 }
                 t_binding::msg::VNC::MouseKeyDown(down) => {
                     screenshotname =
-                        if down { "mousekeydown" } else { "mousekeyup" };
+                        if down { "mousekeydown".to_string() } else { "mousekeyup".to_string() };
                     match c.send(if down {
                         VNCEventReq::MoveDown(1)
                     } else {
@@ -541,7 +565,7 @@ impl Service {
                     }
                 }
                 t_binding::msg::VNC::SendKey(s) => {
-                    screenshotname = "sendkey";
+                    screenshotname = "sendkey".to_string();
                     let mut keys = Vec::new();
                     if s == "-" { keys.push(b'-' as u32)} else {
                         let parts = s.split('-');
@@ -557,7 +581,7 @@ impl Service {
                     }
                 }
                 t_binding::msg::VNC::TypeString(s) => {
-                    screenshotname = "typestring";
+                    screenshotname = "typestring".to_string();
                     match c.send(VNCEventReq::TypeString(s)) {
                         Ok(VNCEventRes::Done) => MsgRes::Done,
                         _ => MsgRes::Error(MsgResError::Timeout),
@@ -565,7 +589,7 @@ impl Service {
                 }
             };
             // take a screenshot after the action
-            if self.enable_screenshot && c.send(VNCEventReq::TakeScreenShot(screenshotname.to_string())).is_err() {
+            if self.enable_screenshot && c.send(VNCEventReq::TakeScreenShot(screenshotname, None)).is_err() {
                 warn!(msg="take screenshot failed");
             }
             res
