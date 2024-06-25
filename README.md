@@ -2,7 +2,7 @@
 
 Autotest framework.
 
-## Get Start
+## Get Started
 
 ### Python(Recommend)
 
@@ -122,7 +122,11 @@ export function afterhook() {
 
 ## More Example
 
-## linebreak and echo
+### enable debug log
+
+set env: `RUST_LOG=error|warn|info|debug|trace`
+
+### linebreak and echo
 
 - some pts's echo is disabled, like sh
 - some serial's linebreak is `\\r\\n`, like lpi4A(test with revyos), you should set linebreak to `\\r\\n`
